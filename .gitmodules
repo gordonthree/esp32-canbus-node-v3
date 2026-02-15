@@ -1,0 +1,6 @@
+[submodule "lib/can-canbus-data"]
+	path = lib/can-canbus-data
+	url = https://github.com/gordonthree/can-canbus-data.git
+[submodule "lib/espcyd"]
+	path = lib/espcyd
+	url = https://github.com/gordonthree/esp32-canbus-espcyd.git
