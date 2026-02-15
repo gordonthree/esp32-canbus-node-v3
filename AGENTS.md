@@ -1,0 +1,1 @@
+Whenever possible use dOxygen style comments (/** */) for C and C++ code, with proper trailing formatting (/**< */) when applicable. If a dOxygen style comment is not appropriate, use a block style comment (/* */) instead.

@@ -1,0 +1,37 @@
+Function,ESP32-S3 GPIO,Note
+LCD PCLK,7,Pixel Clock
+LCD VSYNC,3,Vertical Sync
+LCD HSYNC,46,Horizontal Sync
+LCD DE,5,Data Enable
+LCD Data,(Various),"R: 1, 2, 42, 41, 40"
+I2C SDA,8,Touch / IO Expander
+I2C SCL,9,Touch / IO Expander
+Touch INT,4,Interrupt
+
+
+/**
+ * @file main.cpp
+ * @brief Basic initialization for Waveshare 7-inch ESP32-S3
+ */
+
+#include <Arduino.h>
+#include <Wire.h>
+
+/** * @brief Enables the backlight via the CH422G IO Expander 
+ */
+void initBacklight() {
+    Wire.begin(8, 9);
+    Wire.beginTransmission(0x24); // CH422G I2C Address
+    Wire.write(0x01);             // Set output mode
+    Wire.endTransmission();
+}
+
+void setup() {
+    Serial.begin(115200);
+    initBacklight();
+    /* Initialize Arduino_GFX or LVGL here */
+}
+
+void loop() {
+    // Application logic
+}
