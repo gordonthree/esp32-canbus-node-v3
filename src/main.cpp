@@ -41,6 +41,9 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 #include "colorpalette.h"
 #endif
 
+struct canNodeInfo nodeInfo; /**< Store information about this node */
+
+
 /* Task handles */
 TaskHandle_t xTWAIHandle = NULL; /* declared and defined */
 
@@ -146,6 +149,13 @@ void TaskOTA(void *pvParameters) {
 
   ArduinoOTA.onStart([]() {
     can_suspended = true; /* Stop the task logic */
+
+    /* stop timer0 isr if running */
+    if (Timer0_Cfg != NULL) {
+      timerAlarmDisable(Timer0_Cfg);
+      timerDetachInterrupt(Timer0_Cfg);
+    }
+
     /* 1. Kill the tasks using hardware first */
     if (xTWAIHandle != NULL) vTaskSuspend(xTWAIHandle);
 #ifdef ESP32CYD    
@@ -200,9 +210,35 @@ void readMacAddress() {
   Serial.println();
 }
 
-void nodeInfo() {
+/**
+ * @brief Sets up the node info based on the node type
+ * @details Configure information on the node and submodules based on the node type and data provided by the user
+ * 
+ * @param nodeType 
+ */
+void setupNodeInfo(const uint32_t nodeType) {
+  nodeInfo.nodeID         = packBytes32((const uint8_t*)myNodeID); /**< convert node id string into a uint32 */
+
+  switch (nodeType) {
+    case (IFACE_ARGB_MULTI_ID):
+      nodeInfo.nodeTypeMsg    = IFACE_ARGB_MULTI_ID;
+      nodeInfo.nodeTypeDLC    = IFACE_ARGB_MULTI_DLC;
+      nodeInfo.featureMask[0] = 0; /* no features */
+      nodeInfo.featureMask[1] = 0; /* no features */
+      nodeInfo.subModCnt = 2;
+
+      nodeInfo.subModules[0].modType         = INPUT_ANALOG_KNOB_ID;
+      nodeInfo.subModules[0].dataMsgId       = DATA_ANALOG_KNOB1_ID;
+      nodeInfo.subModules[0].useFeatureMask  = false;
+
+      nodeInfo.subModules[1].modType         = NODE_CPU_TEMP_ID;
+      nodeInfo.subModules[1].dataMsgId       = DATA_NODE_CPU_TEMP_ID;
+      nodeInfo.subModules[1].useFeatureMask  = false;
+  }
+  /* Initialize nodeInfo */
   
 }
+
 void wifiOnConnect(){
   Serial.println("STA Connected");
   Serial.print("STA SSID: ");
