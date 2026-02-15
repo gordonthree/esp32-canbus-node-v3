@@ -41,6 +41,9 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 #include "colorpalette.h"
 #endif
 
+/* Task handles */
+TaskHandle_t xTWAIHandle = NULL; /* declared and defined */
+
 /* OTA task control */
 volatile bool ota_enabled = false;
 volatile bool ota_started = false;
@@ -143,12 +146,17 @@ void TaskOTA(void *pvParameters) {
 
   ArduinoOTA.onStart([]() {
     can_suspended = true; /* Stop the task logic */
-    
-    /* Stop and Uninstall the TWAI driver */
+    /* 1. Kill the tasks using hardware first */
+    if (xTWAIHandle != NULL) vTaskSuspend(xTWAIHandle);
+#ifdef ESP32CYD    
+    if (xDisplayHandle != NULL) vTaskSuspend(xDisplayHandle);
+    if (xTouchHandle != NULL) vTaskSuspend(xTouchHandle);
+#endif
+    /* Stop the TWAI driver */
     twai_stop();
-    twai_driver_uninstall();
+    // twai_driver_uninstall();
     
-    Serial.println("OTA Started: CAN Bus Suspended\nProgress: ");
+    Serial.println("OTA Start: App tasks suspended, starting flash... ");
   });
   ArduinoOTA.onEnd([]() {
     Serial.println("\nOTA End");
@@ -192,6 +200,9 @@ void readMacAddress() {
   Serial.println();
 }
 
+void nodeInfo() {
+  
+}
 void wifiOnConnect(){
   Serial.println("STA Connected");
   Serial.print("STA SSID: ");
@@ -274,6 +285,9 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
   
 /* Attempt transmission with a 10ms timeout */
   if (twai_transmit(&message, pdMS_TO_TICKS(10)) == ESP_OK) {
+#ifdef ESP32CYD
+    digitalWrite(LED_RED, LOW); /* Turn on RED LED */
+#endif
     failCount = 0; /* Reset counter on successful queueing */
     Serial.printf("ID: 0x%03X queued\n", msgid);
   } else {
@@ -295,7 +309,11 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
       failCount = 0; /* Reset after recovery attempt */
     }
   }
-  // vTaskDelay(100);
+  // vTaskDelay(10);
+#ifdef ESP32CYD
+  digitalWrite(LED_RED, HIGH); /* Turn off RED LED */
+#endif
+
 }
 
 /**
@@ -643,21 +661,25 @@ void handleCanRX(twai_message_t& msg) {
             rxProcessMessage(msg);
             break;
 
-        case MODULE_DISPLAY: /* 0x700*/
-            #ifdef ESP32CYD /* Handle Node Discovery and ARGB Commands */
-            if (msg.data_length_code >= 8) { /*  Ensure all 4 bytes of ID are present */
-              if (msg.identifier == 0x701 || msg.identifier == 0x702 || msg.identifier == 0x711) {
-                uint32_t remoteNodeId; /* Holder for the 32-bit Node ID */
-                remoteNodeId = ((uint32_t)msg.data[4] << 24) | 
-                                ((uint32_t)msg.data[5] << 16) | 
-                                ((uint32_t)msg.data[6] << 8)  | 
-                                (uint32_t)msg.data[7]; /* Extract the Node ID using bit-shifting */
-                if (remoteNodeId != 0) registerARGBNode(remoteNodeId); /* Record the ARGB Node ID as long as the ID is not 0 (error condition) */
-              }
-            }
+        case MODULE_DISPLAY: /* 0x700 */
+            #ifdef ESP32CYD
+            if (msg.identifier == 0x701 || msg.identifier == 0x702 || msg.identifier == 0x711) {
+                if (msg.data_length_code >= 4) { /**< Changed from 8 to 4 to be more lenient */
+                    uint32_t remoteNodeId;
+                    /* Use bytes 0-3 to match your sendIntroduction format */
+                    remoteNodeId = ((uint32_t)msg.data[0] << 24) | 
+                                   ((uint32_t)msg.data[1] << 16) | 
+                                   ((uint32_t)msg.data[2] << 8)  | 
+                                   (uint32_t)msg.data[3];
 
+                    if (remoteNodeId != 0) {
+                        registerARGBNode(remoteNodeId);
+                    } else {
+                        Serial.println("RX: ARGB ID was 0, ignoring.");
+                    }
+                }
+            }
             #endif   
-            // rxProcessMessage(msg);
             break;
 
         default:
@@ -732,12 +754,15 @@ void TaskTWAI(void *pvParameters) {
   f_config.acceptance_code = (code1 << 16) | code2;
   f_config.acceptance_mask = (mask1 << 16) | mask2;
 
-  // Initialize configuration structures using macro initializers
+  /* Initialize configuration structures using macro initializers */
   twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)TX_PIN, (gpio_num_t)RX_PIN, TWAI_MODE_NORMAL);  // TWAI_MODE_NO_ACK , TWAI_MODE_LISTEN_ONLY , TWAI_MODE_NORMAL
   twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();  //Look in the api-reference for other speed sets.
-  // twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
-  // Install TWAI driver
+  /* just accept all messages for debugging purposes */
+  f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+  // twai_filter_config_t 
+
+  /* Install TWAI driver */
   if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
     Serial.println("TWAI installed");
   } else {
@@ -745,7 +770,7 @@ void TaskTWAI(void *pvParameters) {
     vTaskDelete(NULL); /* <--- Safety fix */
   }
 
-  // Start TWAI driver
+  /* Start TWAI driver */
   if (twai_start() == ESP_OK) {
     Serial.println("TWAI started");
   } else {
@@ -753,7 +778,7 @@ void TaskTWAI(void *pvParameters) {
     vTaskDelete(NULL); /* <--- Safety fix */
   }
 
-  // Reconfigure alerts to detect frame receive, Bus-Off error and RX queue full states
+  /* Reconfigure alerts to detect frame receive, Bus-Off error and RX queue full states */
   uint32_t alerts_to_enable = TWAI_ALERT_RX_DATA | TWAI_ALERT_ERR_PASS | TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_TX_FAILED | TWAI_ALERT_BUS_ERROR;
   if (twai_reconfigure_alerts(alerts_to_enable, NULL) == ESP_OK) {
     Serial.println("TWAI alerts reconfigured");
@@ -762,7 +787,7 @@ void TaskTWAI(void *pvParameters) {
     vTaskDelete(NULL); /* <--- Safety fix */
   }
 
-  // TWAI driver is now successfully installed and started
+  /* TWAI driver is now successfully installed and started */
   can_driver_installed = true;
   FLAG_SEND_INTRODUCTION = true; /* send an introduction message */
   int loopCount = 0;
@@ -773,7 +798,7 @@ void TaskTWAI(void *pvParameters) {
       vTaskDelay(pdMS_TO_TICKS(100)); /* Idle the task */
       continue; /* Skip the rest of the loop */
     }
-    // Check if alert happened
+    /* Check if alert happened */
     uint32_t alerts_triggered;
     twai_read_alerts(&alerts_triggered, pdMS_TO_TICKS(10));
     twai_status_info_t twaistatus;
@@ -818,9 +843,15 @@ void TaskTWAI(void *pvParameters) {
     /* Check if message is received */
     if (alerts_triggered & TWAI_ALERT_RX_DATA) {
       /* One or more messages received. Handle all. */
+#ifdef ESP32CYD
+      digitalWrite(LED_BLUE, LOW); /* Turn blue LED on (inverse logic) */
+#endif
       twai_message_t message;
       while (twai_receive(&message, 0) == ESP_OK) {
         handleCanRX(message); 
+#ifdef ESP32CYD
+        digitalWrite(LED_BLUE, !digitalRead(LED_BLUE)); /* Toggle blue LED */
+#endif
       }
     }
     /* Send message */
@@ -834,13 +865,16 @@ void TaskTWAI(void *pvParameters) {
       }
       if (loopCount >= 10) {
         sendCanUint32(getEpochTime(), DATA_EPOCH_ID, DATA_EPOCH_DLC); /* Send epoch time as a heartbeat */
-        FLAG_SEND_INTRODUCTION = false; /* Reset flag */
-        sendIntroduction(); /* Send introduction message */
+        FLAG_SEND_INTRODUCTION = true; /* Reset flag */
         loopCount = 0;
       }
       // send_message(REQ_NODE_INTRO_ID, NULL, REQ_NODE_INTRO_DLC); // send our introduction request
     }
     vTaskDelay(10);
+#ifdef ESP32CYD
+    digitalWrite(LED_BLUE, HIGH); /* Turn blue LED off (inverse logic) */
+#endif
+
   }
 }
 
@@ -889,7 +923,7 @@ void setup() {
     4096,         /* Stack size of task */
     NULL,         /* parameter of the task */
     2,            /* priority of the task */
-    NULL          /* Task handle to keep track of created task */
+    &xTWAIHandle   /* Task handle to keep track of created task */
   );              
 
   /* Start OTA task  */
