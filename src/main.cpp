@@ -3,10 +3,11 @@
  * @brief Gateway controller for CAN-based ARGB and Vehicle Control system.
  * @details Handles Wi-Fi/OTA, TWAI (CAN) hardware lifecycle, and node discovery.
  * Acts as the bridge between the CYD UI and the distributed hardware nodes.
- * * @note Acceptance Filters:
- * - Filter 1: 0x200-0x23F (Control/Interface)
- * - Filter 2: 0x400-0x43F & 0x700-0x73F (Telemetry/ARGB)
+ * 
+ * @author Gordon McLellan
+ * @date 2026-02-16
  */
+
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 
@@ -43,10 +44,6 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 #if defined(ARGB_LED) || defined(ESP32CYD)
 #include "colorpalette.h"
 #endif
-
-struct nodeInfo_t node; /**< Store information about this node */
-volatile uint16_t node_crc = 0xffff; /**< CRC-16 for the node configuration */
-volatile int introMsgPtr = 0;  /**< Pointer for the introduction and interview process */
 
 /**
  * @enum ConfigStatus
@@ -85,6 +82,11 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 #define CAN_MY_IFACE_TYPE (0x701U) /* ARGB LED */
 #define CAN_SELF_MSG 1
 
+/* dynamic discovery stuff */
+nodeInfo_t node; /**< Store information about this node */
+volatile uint16_t node_crc = 0xffff; /**< CRC-16 for the node configuration */
+volatile int introMsgPtr;  /**< Pointer for the introduction and interview process */
+volatile bool FLAG_VALID_CONFIG = false;
 
 /* esp32 native TWAI CAN library */
 #include "driver/twai.h"
@@ -105,8 +107,8 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 #endif
 
 /* CAN bus stuff: */
-#define TRANSMIT_RATE_MS 1000
-#define POLLING_RATE_MS 1000
+#define TRANSMIT_RATE_MS 100
+#define POLLING_RATE_MS 100
 
 volatile bool can_suspended = false;
 volatile bool can_driver_installed = false;
@@ -135,16 +137,8 @@ int8_t ipCnt = 0;
 unsigned long time_now = 0;
 
 #ifdef ARGB_LED
-// setup the ARGB led for Fastled
-#ifndef ARGB_NUM_LEDS
-#define ARGB_NUM_LEDS 1
-#endif
-
-#ifndef ARGB_DATA_PIN
-#define ARGB_DATA_PIN 27
-#endif
-
-CRGB leds[ARGB_NUM_LEDS];
+#define MAX_LEDS_PER_STRIP 255 /**< Maximum LEDs supported per submodule */
+CRGB ledData[4][MAX_LEDS_PER_STRIP]; /**< Buffers for 4 possible strips / submodules */
 #endif
 
 unsigned long ota_progress_millis = 0;
@@ -155,6 +149,93 @@ volatile uint8_t myNodeID[4]; /**< node ID comprised of four bytes from MAC addr
 void IRAM_ATTR Timer0_ISR()
 {
   isrFlag = true;
+}
+
+
+/**
+ * @brief Configures physical IO pins and peripherals based on NVS settings.
+ */
+/**
+ * @brief Initializes physical hardware peripherals based on the loaded nodeInfo_t.
+ */
+void initHardware() {
+    for (int i = 0; i < node.subModCnt; i++) {
+        /** Use reference for readability and to satisfy Doxygen standards */
+        subModule_t& sub = node.subModule[i]; 
+
+        /** * Use introMsgId to determine the personality. 
+         * Example: 0x701 = ARGB, 0x711 = Digital Input, etc.
+         */
+        switch (sub.introMsgId) {
+            case DISP_ARGBW_LED_STRIP_ID: /**< 0x701 */
+              {
+#ifdef ARGB_LED
+                uint8_t pin = sub.config.argbLed.outputPin;
+                uint8_t count = sub.config.argbLed.ledCount;
+
+                /* Ensure we don't exceed allocated memory */
+                if (count > MAX_LEDS_PER_STRIP) {
+                    count = MAX_LEDS_PER_STRIP; /* Max bounds check */
+                }
+
+                switch (pin) {
+                    case 18: 
+                        FastLED.addLeds<WS2812B, 18, GRB>(ledData[i], count); 
+                        break;
+                    case 19: 
+                        FastLED.addLeds<WS2812B, 19, GRB>(ledData[i], count); 
+                        break;
+                    case 25: 
+                        FastLED.addLeds<WS2812B, 25, GRB>(ledData[i], count); 
+                        break;
+                    case 26: 
+                        FastLED.addLeds<WS2812B, 26, GRB>(ledData[i], count); 
+                        break;
+                    default:
+                        Serial.printf("Error: Pin %d not hardware-capable for FastLED\n", pin);
+                        break;
+                }
+                Serial.printf("Submod %d: ARGB Init (Pin %d, Count %d)\n", i, pin, count);                
+#endif
+              }
+              break;
+
+            case CFG_DIGITAL_INPUT_ID: /**< 0x711 */
+                /* 0=Floating, 1=Pull-up, 2=Pull-down */
+                if (sub.config.digitalInput.outputRes == 1) {
+                    pinMode(sub.config.digitalInput.inputPin, INPUT_PULLUP);
+                } else if (sub.config.digitalInput.outputRes == 2) {
+                    pinMode(sub.config.digitalInput.inputPin, INPUT_PULLDOWN);
+                } else {
+                    pinMode(sub.config.digitalInput.inputPin, INPUT);
+                }
+                break;
+
+            case CFG_DIGITAL_OUTPUT_ID: /**< 0x712 */
+                pinMode(sub.config.digitalOutput.outputPin, OUTPUT);
+                /* Default to 'off' based on outputMode configuration */
+                digitalWrite(sub.config.digitalOutput.outputPin, sub.config.digitalOutput.outputMode ? HIGH : LOW);
+                break;
+
+            case CFG_PWM_OUTPUT_ID: /**< 0x713 */
+                /* ESP32 LEDC setup: channel = i, frequency = config * 100, resolution = 8-bit */
+                ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * 100, 8); 
+                ledcAttachPin(sub.config.pwmOutput.outputPin, i);
+                break;
+
+            case CFG_ANALOG_INPUT_ID: /**< 0x714 */
+                pinMode(sub.config.analogInput.inputPin, ANALOG);
+                break;
+
+            case CFG_BLINK_OUTPUT_ID: /**< 0x715 */
+                pinMode(sub.config.blinkOutput.outputPin, OUTPUT);
+                break;
+
+            default:
+                Serial.printf("Submod %d: No hardware init for ID 0x%03X\n", i, sub.introMsgId);
+                break;
+        }
+    }
 }
 
 /**
@@ -420,7 +501,9 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
   if (dlc > 8) dlc = 8; /* Safety check */
   memcpy(message.data, data, dlc);  /**< copy data to message data field */
   
-/* Attempt transmission with a 10ms timeout */
+  // Serial.printf("Sending message ID: 0x%03X\n", msgid);
+
+  /* Attempt transmission with a 10ms timeout */
   if (twai_transmit(&message, pdMS_TO_TICKS(10)) == ESP_OK) {
 #ifdef ESP32CYD
     digitalWrite(LED_RED, LOW); /* Turn on RED LED */
@@ -454,16 +537,35 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
 }
 
 /**
- * @brief Updates LED strip based on received CAN color index
- * @param index The 1-byte color index from the CAN message
+ * @brief Updates a specific LED strip based on received CAN color index.
+ * @param ledIndex The submodule index (0-7).
+ * @param colorIndex The 1-byte color index from the CAN message.
  */
 void handleColorCommand(uint8_t ledIndex, uint8_t colorIndex) {
 #ifdef ARGB_LED
+    /* 1. Range check the submodule index */
+    if (ledIndex >= 8) return;
+
+    /* 2. Verify this submodule is actually an ARGB strip */
+    if (node.subModule[ledIndex].introMsgId != DISP_ARGBW_LED_STRIP_ID) {
+        return; /**< Not an ARGB module, ignore command */
+    }
+
+    /* 3. Range check the color index against your palette */
     if (colorIndex < 32) {
         CRGB targetColor = SystemPalette[colorIndex];
-        fill_solid(leds, ARGB_NUM_LEDS, targetColor);
+        
+        /* Fetch the dynamic count from the configuration struct */
+        uint16_t count = node.subModule[ledIndex].config.argbLed.ledCount;
+
+        /** * 4. Update only the specific buffer for this submodule.
+         * ledData[ledIndex] was assigned to FastLED during initHardware().
+         */
+        fill_solid(ledData[ledIndex], count, targetColor);
+        
         FastLED.show();
-        Serial.printf("Color for LED array %u updated to index %u\n", ledIndex, colorIndex);
+        
+        Serial.printf("Submod %u (ARGB): Updated to palette index %u\n", ledIndex, colorIndex);
     }
 #endif
 }
@@ -602,16 +704,36 @@ static void setSwitchState(uint8_t *data, uint8_t swState) {
 #endif
 
 /** Load CYD node info into the nodeInfo struct */
-void nodeInfoCYD() {
+void nodeInfoCYD() { /* remote node type IFACE_TOUCHSCREEN_TYPE_A_ID 0x792 */
   node.nodeID      = unpackBytestoUint32((const uint8_t*)&myNodeID[0]);
   node.nodeTypeMsg = IFACE_TOUCHSCREEN_TYPE_A_ID;
   node.nodeTypeDLC = IFACE_TOUCHSCREEN_TYPE_A_DLC;
-  node.subModCnt   = 0; /* no sub modules */
   node_crc         = 0xffff; /* set the CRC to an invalid value indicating node has not received a configuration */
+  node.subModCnt   = 2; /* sub modules */
+
+  /* sub modules: lcd touch screen, analog backlight */
+  node.subModule[0].introMsgId  = DISP_TOUCHSCREEN_LCD_ID; /* touch screen */
+  node.subModule[0].introMsgDLC = DISP_TOUCHSCREEN_LCD_DLC;
+  node.subModule[0].dataMsgId   = DATA_TOUCHSCREEN_EVENT_ID;
+  node.subModule[0].dataMsgDLC  = DATA_TOUCHSCREEN_EVENT_DLC;
+  node.subModule[0].saveState   = true;
+  node.subModule[0].config.rawConfig[0] = 0; /* no configuration for the touch screen */
+  node.subModule[0].config.rawConfig[1] = 0;
+  node.subModule[0].config.rawConfig[2] = 0;
+
+  node.subModule[1].introMsgId  = DISP_ANALOG_BACKLIGHT_ID; /* analog backlight */
+  node.subModule[1].introMsgDLC = DISP_ANALOG_BACKLIGHT_DLC;
+  node.subModule[1].dataMsgId   = DATA_DISPLAY_MODE_ID;
+  node.subModule[1].dataMsgDLC  = DATA_DISPLAY_MODE_DLC;
+  node.subModule[1].saveState   = true;
+  node.subModule[1].config.digitalOutput.outputPin   = 21; /* TODO: This should be a #define, CYD Backlight Pin */
+  node.subModule[1].config.digitalOutput.outputMode  = OUT_MODE_TOGGLE;
+  node.subModule[1].config.digitalOutput.momPressDur = 0; /* not used */
+
 }
 
 /** Load ARGB node info into the nodeInfo struct */
-void nodeInfoARGB() {
+void nodeInfoARGB() { /* remote node type IFACE_ARGB_MULTI_ID 0x79C */
   node.nodeID      = unpackBytestoUint32((const uint8_t*)&myNodeID[0]);
   node.nodeTypeMsg = IFACE_ARGB_MULTI_ID;
   node.nodeTypeDLC = IFACE_ARGB_MULTI_DLC;
@@ -719,6 +841,78 @@ static void setEpochTime(uint32_t epochTime) {
   
 }
 
+
+/**
+ * @brief Send an introduction message about the node
+ * 
+ * This function is called in response to a request from the master node
+ * to introduce the node. The function will send an introduction message
+ * with the node type and sub-module count. The function will
+ * also send an introduction message for each sub-module with the
+ * sub-module type and configuration.
+ * 
+ * The function uses a cooldown to prevent spamming the bus every 100ms tick
+ */
+void sendIntroduction(int msgPtr = 0) {
+  uint32_t currentTick = millis();
+  uint16_t txMsgID  = 0;
+  uint32_t txMsgDLC = 8U; /* Default to 8 bytes */
+  uint8_t msgData[8];
+
+  memset(&msgData, 0, sizeof(msgData)); /* wipe the buffer before using it */
+
+  /* Consistent 32-bit Node ID across all intro frames */
+  packUint32ToBytes(node.nodeID, &msgData[0]);
+
+/* 0: Node Identity */
+  if (msgPtr == 0) {
+    /* Check FLAG_VALID_CONFIG flag, if it's set use the in-memory CRC, if not use 0xFFFF */    
+    uint16_t txCrc = FLAG_VALID_CONFIG ? getConfigurationCRC(node) : 0xFFFF;
+    
+    txMsgID    = node.nodeTypeMsg;
+    msgData[4] = node.subModCnt;
+    msgData[5] = (uint8_t)(txCrc >> 8);
+    msgData[6] = (uint8_t)(txCrc);
+    Serial.printf("TX INTRO: NODE 0x%08X SUBMOD %02u (Type: 0x%03X, CRC: 0x%04X)\n", node.nodeID, msgData[4], txMsgID, txCrc);
+  } 
+/* >0: Sub-module Identity (Part A and Part B) */
+  else {
+    uint8_t modIdx = (uint8_t)((msgPtr - 1) / 2); /**< Map ptr to sub-module index */
+    bool isPartB   = ((msgPtr - 1) % 2) != 0;      /**< Alternate A/B sequence */
+    
+    if (modIdx >= node.subModCnt) return;
+    subModule_t& sub = node.subModule[modIdx];
+
+    txMsgID = sub.introMsgId;
+    
+    if (!isPartB) {
+        /* Part A: Configuration Data */
+        msgData[4] = modIdx; /**< bits 0-6: index, bit 7: 0 (Part A) */
+        msgData[5] = sub.config.rawConfig[0];
+        msgData[6] = sub.config.rawConfig[1];
+        msgData[7] = sub.config.rawConfig[2];
+    } else {
+        /* Part B: Telemetry/Operational Data */
+        msgData[4] = modIdx | 0x80; /**< Set bit 7 to indicate Part B */
+        msgData[5] = (uint8_t)(sub.dataMsgId >> 8);
+        msgData[6] = (uint8_t)(sub.dataMsgId);
+        /* Pack DLC (4 bits) and SaveState (1 bit) into byte 7 */
+        msgData[7] = (sub.dataMsgDLC & 0x0F) | (sub.saveState ? 0x80 : 0x00);
+    }
+
+    if (txMsgID == 0) {
+        return;  /* error condition, msg ID is invalid, exit the routine */
+    }
+
+    Serial.printf("TX INTRO: MOD 0x%03X at Idx %i (Cfg: %02X %02X %02X)\n", 
+                  txMsgID, msgData[4], msgData[5], msgData[6], msgData[7]);
+  }
+  /* put the message on the bus */
+  send_message(txMsgID, msgData, txMsgDLC);
+
+} /* end sendIntroduction */
+
+
 static void rxProcessMessage(twai_message_t &message) {
   // twai_message_t altmessage;
   bool msgFlag = false;
@@ -771,7 +965,7 @@ static void rxProcessMessage(twai_message_t &message) {
       setDisplayMode(message.data, 1); 
       break;    
     case SET_ARGB_STRIP_COLOR_ID:          /* set ARGB color */
-      handleColorCommand(0, message.data[5]); /* byte 4 is the display or led array index, byte 5 is the color index */
+      handleColorCommand(message.data[4], message.data[5]); /* byte 4 is the sub module index, byte 5 is the color index */
       break;
     case CFG_ARGB_STRIP_ID:                                                     /* setup ARGB channel */
       {
@@ -843,6 +1037,12 @@ static void rxProcessMessage(twai_message_t &message) {
         /** message.data[7] is reserved/padding */
       }
       break;      
+    case CFG_REBOOT_ID: /**< 0x41C: Master requesting reboot */
+      {
+        Serial.println("Master requesting reboot...");
+        ESP.restart();
+      }
+      break;
     case CFG_WRITE_NVS_ID: /**< 0x41D: Master requesting NVS commit */
       {
         /** * Verify this message is for us. 
@@ -865,7 +1065,8 @@ static void rxProcessMessage(twai_message_t &message) {
             if (masterCrc == localCrc) {
                 /** CRCs match, attempt to persist to flash */
                 if (saveConfig(node) == CFG_OK) {
-                    /** SUCCESS: Send back the verified CRC */
+                    /** SUCCESS: Set the flag indicating config is valid and send back the verified CRC */
+                    FLAG_VALID_CONFIG = true;
                     send_message(DATA_CONFIG_CRC_ID, responseData, DATA_CONFIG_CRC_DLC);
                     Serial.println("NVS Commit Successful");
                 } else {
@@ -882,13 +1083,19 @@ static void rxProcessMessage(twai_message_t &message) {
       }
       break;    
     case REQ_NODE_INTRO_ID:
-      Serial.println("Interface intro request, responding with 0x702");
-      FLAG_SEND_INTRODUCTION = true; /* set flag to send introduction message */
+      Serial.println("Interface intro request, responding with our introduction");
+      // FLAG_SEND_INTRODUCTION = true; /* set flag to send introduction message */
+      introMsgPtr = 0;               /* reset introduction message pointer */
+      sendIntroduction(introMsgPtr); /* send the introduction message immediately */
       break;
     case ACK_INTRO_ID:
       Serial.println("Received introduction acknowledgement, advance pointer");
-      volatile int introPtr = 0;  /**< Pointer for the introduction and interview process */
-
+      introMsgPtr++;
+      /* Sequence length is now 1 (node) + 2 messages per submodule */
+      if (introMsgPtr > (node.subModCnt * 2)) {
+          introMsgPtr = 0;
+      }
+      sendIntroduction(introMsgPtr);
       break;
     case DATA_EPOCH_ID:
       // Use explicit casting to prevent shift overflow
@@ -939,135 +1146,39 @@ void handleCanRX(twai_message_t& msg) {
     rxProcessMessage(msg);
 }
 
-/* Format the introduction message */
-void sendIntroduction() {
-  if (FLAG_SEND_INTRODUCTION == false) return; /* exit if not time to send */
 
-  /* Cooldown to prevent spamming the bus every 100ms tick */
-  static uint32_t lastSendTick = 0;
-  uint32_t currentTick = millis();
-  uint16_t txMsgID  = 0;
-  uint32_t txMsgDLC = 8U; /* Default to 8 bytes */
-  
-  if (currentTick - lastSendTick < 250) {
-      return; /* Wait at least 500ms before re-transmitting the same packet */
-  }
-  lastSendTick = currentTick;
+/**
+ * @brief Manages periodic transmissions in TaskTWAI
+ */
+void managePeriodicMessages() {
+    static uint32_t lastHeartbeat = 0;
+    static uint32_t lastIntro = 0;
+    uint32_t currentMillis = millis();
 
-  uint8_t msgData[8];
-  memset(&msgData, 0, sizeof(msgData)); /* wipe the buffer before using it */
+    /** Introduction as Heartbeat - Every 10 Seconds 
+        We send this as the heartbeat to save bandwidth,
+        unless FLAG_SEND_INTRODUCTION is manually set by a Master request. */
+    if (currentMillis - lastIntro >= 10000) {
+        lastIntro = currentMillis;
+        Serial.printf("Sending heartbeat (ptr = %i)\n", introMsgPtr);
+        sendIntroduction(0); /* send the node introduction message as heartbeat */
 
-  /* Copy our node ID into the message buffer */
-  msgData[0] = (uint8_t)(myNodeID[0]);
-  msgData[1] = (uint8_t)(myNodeID[1]);
-  msgData[2] = (uint8_t)(myNodeID[2]);
-  msgData[3] = (uint8_t)(myNodeID[3]);
-
-  /* Introduce the Node, send sub module count and config crc */
-  if (introMsgPtr == 0) {
-      Serial.printf("TX INTRO: NODE INTRO Type %03x\n", node.nodeTypeMsg);
-
-      txMsgID    = node.nodeTypeMsg;          /* Retrieve node type aka can message ID */
-      txMsgDLC   = node.nodeTypeDLC;          /* set DLC based on message type */
-      msgData[4] = node.subModCnt;            /* Byte 4 is the submodule count */      
-      msgData[5] = (uint8_t)(node_crc >> 8);  /* Bytes 5 and 6 are the configuration CRC big endian */
-      msgData[6] = (uint8_t)(node_crc);  
-  } 
-  /* Introduce Sub-Modules */
-  else {
-      uint8_t modIdx = (uint8_t)(introMsgPtr - 1);     /* Sub-modules start at ptr 1 */
-      
-      if (modIdx >= node.subModCnt) {                  /* overflow, exit the routine */
-          return;
-      }
-
-      txMsgID    = node.subModule[modIdx].introMsgId;   /* Introduce sub-module with this message ID */
-      txMsgDLC   = node.subModule[modIdx].introMsgDLC;  /* set DLC based on message type */
-      msgData[4] = (uint8_t)(modIdx);                   /* Byte 4 is the Sub-module index */
-
-      if (txMsgID == 0) {
-          introMsgPtr++;                                /* Error, skip empty slot and move to next */
-          return;
-      }
-
-      Serial.printf("TX INTRO: MOD INTRO Type %03x at Idx %i\n", txMsgID, modIdx);
-  }
-  /* put the message on the bus */
-  send_message(txMsgID, msgData, txMsgDLC);
-
+        /* If we are stuck mid-sequence, reset after 10s of silence */
+        if (introMsgPtr != 0) {
+            Serial.println("Intro sequence timed out, resetting pointer.");
+            introMsgPtr = 0;
+        }
+    }
 }
 
 void TaskTWAI(void *pvParameters) {
   // give some time at boot for the cpu setup other parameters
-  vTaskDelay(1000 / portTICK_PERIOD_MS);
-
-
-  /** Range 1: 0x200 to 0x23F (Binary: 010 0000 0000 to 010 0011 1111)
-   * Range 2: 0x400 to 0x43F (Binary: 100 0000 0000 to 100 0011 1111)
-   */
-
-  /* * Acceptance Code: Defines the bits that must match.
-  * Code 1 (High 16 bits): 0x4000 (ID 0x200 shifted for SJA1000)
-  * Code 2 (Low 16 bits):  0x8000 (ID 0x400 shifted for SJA1000)
-  */
-  // uint32_t acc_code = 0x40008000;
-
-  /* * Acceptance Mask: Defines "don't care" bits.
-  * For the SJA1000, a '1' in the mask means "don't care".
-  * We want to ignore the lower 6 bits of the ID.
-  */
-  // uint32_t acc_mask = 0x07F807F8; 
-
-  // twai_filter_config_t f_config = {
-  //     .acceptance_code = acc_code,
-  //     .acceptance_mask = acc_mask,
-  //     .single_filter = false /* false = Dual Filter Mode */
-  // };
-
-  /** Hardware filter configuration for two ID ranges.
-  * Range 1: 0x200 - 0x23F
-  * Range 2: 0x400 - 0x43F
-  */
-  twai_filter_config_t f_config;
-  f_config.single_filter = false; /* Enable Dual Filter Mode */
-
-  /** Filter 1:
-  * Code: Base ID shifted left 5 bits.
-  * Mask: The bits we want to ignore (0x3F) shifted left 5, 
-  * OR'd with the lower 5 bits (0x1F) which are used for 
-  * flags like RTR that we also want to ignore here.
-  */
-  uint32_t code1 = (0x200 << 5);
-  uint32_t mask1 = (0x03F << 5) | 0x1F;
-
-  /** Filter 2:
-  * Same logic for the 0x400 range.
-  */
-  // uint32_t code2 = (0x400 << 5);
-  // uint32_t mask2 = (0x03F << 5) | 0x1F;
-
-  /** Filter 2: Expanded to cover 0x400 AND 0x700 ranges
-   * Base Code: 0x400
-   * Mask: Ignore 0x300 (bits 8 and 9) + Ignore 0x03F (bits 0-5)
-   * This effectively accepts anything matching 0x400, 0x500, 0x600, or 0x700 
-   * that ends in the 0x00-0x3F range.
-   */
-  uint32_t code2 = (0x400 << 5); 
-  uint32_t mask2 = (0x33F << 5) | 0x1F;
-
-  /** Combine into the 32-bit acceptance registers.
-  * Filter 1 occupies the high 16 bits, Filter 2 the low 16 bits.
-  */
-  f_config.acceptance_code = (code1 << 16) | code2;
-  f_config.acceptance_mask = (mask1 << 16) | mask2;
+  vTaskDelay(100 / portTICK_PERIOD_MS);
 
   /* Initialize configuration structures using macro initializers */
-  twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)TX_PIN, (gpio_num_t)RX_PIN, TWAI_MODE_NORMAL);  // TWAI_MODE_NO_ACK , TWAI_MODE_LISTEN_ONLY , TWAI_MODE_NORMAL
-  twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();  //Look in the api-reference for other speed sets.
-
-  /* just accept all messages for debugging purposes */
-  f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
-  // twai_filter_config_t 
+  twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)TX_PIN, (gpio_num_t)RX_PIN, TWAI_MODE_NORMAL); 
+  twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();  
+  twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL(); /* accept all messages, filter in software */
 
   /* Install TWAI driver */
   if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
@@ -1096,10 +1207,13 @@ void TaskTWAI(void *pvParameters) {
 
   /* TWAI driver is now successfully installed and started */
   can_driver_installed = true;
-  FLAG_SEND_INTRODUCTION = true; /* send an introduction message */
+  // FLAG_SEND_INTRODUCTION = true; /* send an introduction message */
+  introMsgPtr = 0;  /* reset the intro message pointer */
+  sendIntroduction(0); /* send the first introduction message */
   int loopCount = 0;
 
-  for (;;) {
+  /** Begin main can bus RX/TX loop */
+  for (;;) { 
     if (!can_driver_installed || can_suspended) {
       /* Driver not installed or bus suspended */
       vTaskDelay(pdMS_TO_TICKS(100)); /* Idle the task */
@@ -1149,10 +1263,10 @@ void TaskTWAI(void *pvParameters) {
 
     /* Check if message is received */
     if (alerts_triggered & TWAI_ALERT_RX_DATA) {
-      /* One or more messages received. Handle all. */
 #ifdef ESP32CYD
       digitalWrite(LED_BLUE, LOW); /* Turn blue LED on (inverse logic) */
 #endif
+      /* One or more messages received. Handle all. */
       twai_message_t message;
       while (twai_receive(&message, 0) == ESP_OK) {
         handleCanRX(message); 
@@ -1161,22 +1275,10 @@ void TaskTWAI(void *pvParameters) {
 #endif
       }
     }
-    /* Send message */
-    unsigned long currentMillis = millis();
-    if (currentMillis - previousMillis >= TRANSMIT_RATE_MS) {
-      loopCount++;
-      previousMillis = currentMillis;
-      if (FLAG_SEND_INTRODUCTION) {
-        FLAG_SEND_INTRODUCTION = false; /* Reset flag */
-        sendIntroduction(); /* Send introduction message */
-      }
-      if (loopCount >= 10) {
-        sendCanUint32(getEpochTime(), DATA_EPOCH_ID, DATA_EPOCH_DLC); /* Send epoch time as a heartbeat */
-        FLAG_SEND_INTRODUCTION = true; /* Reset flag */
-        loopCount = 0;
-      }
-      // send_message(REQ_NODE_INTRO_ID, NULL, REQ_NODE_INTRO_DLC); // send our introduction request
-    }
+
+    /* Send periodic messages */
+    managePeriodicMessages();
+
     vTaskDelay(10);
 #ifdef ESP32CYD
     digitalWrite(LED_BLUE, HIGH); /* Turn blue LED off (inverse logic) */
@@ -1197,21 +1299,20 @@ void setup() {
   digitalWrite(LED_GREEN, HIGH);
 #endif
 
+  memset(&node, 0, sizeof(nodeInfo_t)); /**< Clear the struct */
+  
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   delay(2500); /* Provide time for the board's usb interface to change from flash to uart mode */
+
+  /* Debug check for memory alignment */
+  Serial.printf("\nStruct Sizes - nodeInfo_t: %d, subModule_t: %d\n", 
+              sizeof(nodeInfo_t), sizeof(subModule_t));
 
   WiFi.onEvent(WiFiEvent);
   WiFi.mode(WIFI_MODE_APSTA);
   WiFi.softAP(AP_SSID);
   WiFi.begin(ssid, password);
-  // delay(1000); /* Wait for wifi to connect */
-
-  Serial.println("AP Started");
-  Serial.print("AP SSID: ");
-  Serial.println(AP_SSID);
-  Serial.print("AP IPv4: ");
-  Serial.println(WiFi.softAPIP());
   
   /* set up some clock parameters */
   setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1);
@@ -1224,19 +1325,20 @@ void setup() {
   ConfigStatus loadCfgStatus;
   int retries = 0;
 
-  Serial.println("Loading config...");
+  Serial.println("\nLoading config...");
 
   do {
       loadCfgStatus = loadConfig(node); 
 
       if (loadCfgStatus == CFG_OK) {
           Serial.println("Config loaded successfully.");
+          initHardware(); /**< Initialize the hardware */
           break; 
       } 
       
       if (loadCfgStatus == CFG_ERR_CRC || loadCfgStatus == CFG_ERR_NOT_FOUND) {
           Serial.println("Invalid config - Starting in PROVISIONING MODE");
-          loadDefaults(NODEMSGID); /* load defaults from build flag node type */
+          loadDefaults(NODEMSGID); /**< load defaults from build flag node type */
           break; 
       } 
 
@@ -1264,7 +1366,7 @@ void setup() {
     4096,         /* Stack size of task */
     NULL,         /* parameter of the task */
     2,            /* priority of the task */
-    &xTWAIHandle   /* Task handle to keep track of created task */
+    &xTWAIHandle  /* Task handle to keep track of created task */
   );              
 
   /* Start OTA task  */
@@ -1276,15 +1378,6 @@ void setup() {
     4,
     NULL
   );
-
-#ifdef ARGB_LED
-  FastLED.addLeds<SK6812, ARGB_DATA_PIN, GRB>(leds, ARGB_NUM_LEDS);
-  leds[0] = CRGB::Black;
-  FastLED.show();
-#endif
-
-
-
 }
 
 void printWifi() {
