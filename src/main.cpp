@@ -46,6 +46,7 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 
 struct nodeInfo_t node; /**< Store information about this node */
 volatile uint16_t node_crc = 0xffff; /**< CRC-16 for the node configuration */
+volatile int introMsgPtr = 0;  /**< Pointer for the introduction and interview process */
 
 /**
  * @enum ConfigStatus
@@ -84,7 +85,6 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 #define CAN_MY_IFACE_TYPE (0x701U) /* ARGB LED */
 #define CAN_SELF_MSG 1
 
-volatile int introPtr = 0;  /**< Pointer for the introduction and interview process */
 
 /* esp32 native TWAI CAN library */
 #include "driver/twai.h"
@@ -606,7 +606,7 @@ void nodeInfoCYD() {
   node.nodeID      = unpackBytestoUint32((const uint8_t*)&myNodeID[0]);
   node.nodeTypeMsg = IFACE_TOUCHSCREEN_TYPE_A_ID;
   node.nodeTypeDLC = IFACE_TOUCHSCREEN_TYPE_A_DLC;
-  node.subModCnt   = 0; /* two sub modules */
+  node.subModCnt   = 0; /* no sub modules */
   node_crc         = 0xffff; /* set the CRC to an invalid value indicating node has not received a configuration */
 }
 
@@ -619,18 +619,20 @@ void nodeInfoARGB() {
   node.subModCnt   = 2; /* two sub modules */
 
   /* first sub module setup defaults */
-  node.subModule[0].modType    = DISP_ARGBW_LED_STRIP_ID; /* digital addressable led strip */
-  node.subModule[0].dataMsgId  = SET_ARGB_STRIP_COLOR_ID;
-  node.subModule[0].dataMsgDLC = SET_ARGB_STRIP_COLOR_DLC;
-  node.subModule[0].saveState  = true;
+  node.subModule[0].introMsgId  = DISP_ARGBW_LED_STRIP_ID; /* digital addressable led strip */
+  node.subModule[0].introMsgDLC = DISP_ARGBW_LED_STRIP_DLC;
+  node.subModule[0].dataMsgId   = SET_ARGB_STRIP_COLOR_ID;
+  node.subModule[0].dataMsgDLC  = SET_ARGB_STRIP_COLOR_DLC;
+  node.subModule[0].saveState   = true;
   node.subModule[0].config.argbLed.ledCount  = 1;
   node.subModule[0].config.argbLed.outputPin = 27;
 
   /* second sub module setup defaults */
-  node.subModule[1].modType    = INPUT_DIGITAL_GPIO_ID; /* digital input gpio type*/
-  node.subModule[1].dataMsgId  = DATA_BUTTON_DOWN_ID;
-  node.subModule[1].dataMsgDLC = DATA_BUTTON_DOWN_DLC;
-  node.subModule[1].saveState  = false;
+  node.subModule[1].introMsgId  = INPUT_DIGITAL_GPIO_ID; /* digital input gpio type*/
+  node.subModule[1].introMsgDLC = INPUT_DIGITAL_GPIO_DLC;
+  node.subModule[1].dataMsgId   = DATA_BUTTON_DOWN_ID;
+  node.subModule[1].dataMsgDLC  = DATA_BUTTON_DOWN_DLC;
+  node.subModule[1].saveState   = false;
   node.subModule[1].config.digitalInput.inputPin = 39;
   node.subModule[1].config.digitalInput.outputRes = INPUT_RES_PULLUP;
 }
@@ -736,14 +738,9 @@ static void rxProcessMessage(twai_message_t &message) {
     }
   } else {
     msgFlag = true; // general broadcast message is valid
-    Serial.printf("RX MSG: 0x%x NO DATA\n", message.identifier);
+    Serial.printf("RX BROADCAST MSG: 0x%x NO DATA\n", message.identifier);
   }
 
-  /*   
-  if (msgFlag == false) {
-    return; // message is not for us, exit function
-  }
- */
   if (!msgFlag) {
     // Serial.println("Message does not match our ID, end of process.");
     return;
@@ -776,14 +773,122 @@ static void rxProcessMessage(twai_message_t &message) {
     case SET_ARGB_STRIP_COLOR_ID:          /* set ARGB color */
       handleColorCommand(0, message.data[5]); /* byte 4 is the display or led array index, byte 5 is the color index */
       break;
+    case CFG_ARGB_STRIP_ID:                                                     /* setup ARGB channel */
+      {
+      uint8_t modIdx = message.data[4];                                         /* byte 4 holds the sub module index */
+      node.subModule[modIdx].config.argbLed.outputPin = message.data[5];        /* byte 5 holds the output pin */
+      node.subModule[modIdx].config.argbLed.ledCount = message.data[6];         /* bytes 6 hold the number of LEDs (max 255)*/
+      node.subModule[modIdx].config.argbLed.colorOrder = message.data[7];       /* byte 7 holds the color order */
+      }
+      break;
+    case CFG_DIGITAL_INPUT_ID: /**< Setup digital input channel */
+      {
+        uint8_t modIdx = message.data[4];
+        node.subModule[modIdx].config.digitalInput.inputPin  = message.data[5];
+        node.subModule[modIdx].config.digitalInput.outputRes = message.data[6];
+        node.subModule[modIdx].config.digitalInput.isInverted = message.data[7];
+      }
+      break;
+
+    case CFG_ANALOG_INPUT_ID: /**< Setup analog ADC input channel */
+      {
+        uint8_t modIdx = message.data[4];
+        node.subModule[modIdx].config.analogInput.inputPin = message.data[5];
+        /** bytes 6 and 7 hold the 16-bit oversampling count */
+        node.subModule[modIdx].config.analogInput.overSampleCnt = (message.data[6] << 8) | message.data[7];
+      }
+      break;
+
+    case CFG_DIGITAL_OUTPUT_ID: /**< Setup digital output channel (relays/mosfets) */
+      {
+        uint8_t modIdx = message.data[4];
+        node.subModule[modIdx].config.digitalOutput.outputPin   = message.data[5];
+        node.subModule[modIdx].config.digitalOutput.momPressDur = message.data[6];
+        node.subModule[modIdx].config.digitalOutput.outputMode  = message.data[7];
+      }
+      break;
+
+    case CFG_PWM_OUTPUT_ID: /**< Setup PWM output channel */
+      {
+        uint8_t modIdx = message.data[4];
+        node.subModule[modIdx].config.pwmOutput.outputPin  = message.data[5];
+        node.subModule[modIdx].config.pwmOutput.pwmFreq    = message.data[6];
+        node.subModule[modIdx].config.pwmOutput.isInverted = message.data[7];
+      }
+      break;
+
+    case CFG_BLINK_OUTPUT_ID: /**< Setup blinking/strobing output channel */
+      {
+        uint8_t modIdx = message.data[4];
+        node.subModule[modIdx].config.blinkOutput.outputPin  = message.data[5];
+        node.subModule[modIdx].config.blinkOutput.blinkDelay = message.data[6];
+        node.subModule[modIdx].config.blinkOutput.strobePat  = message.data[7];
+      }
+      break;
+
+    case CFG_ANALOG_STRIP_ID: /**< Setup analog RGB/RGBW strip */
+      {
+        uint8_t modIdx = message.data[4];
+        node.subModule[modIdx].config.analogStrip.stripIndex = message.data[5];
+        node.subModule[modIdx].config.analogStrip.colorIndex = message.data[6];
+        node.subModule[modIdx].config.analogStrip.pinIndex   = message.data[7];
+      }
+      break;
+
+    case CFG_ANALOG_OUTPUT_ID: /**< Setup analog DAC output channel */
+      {
+        uint8_t modIdx = message.data[4];
+        node.subModule[modIdx].config.analogOutput.outputPin  = message.data[5];
+        node.subModule[modIdx].config.analogOutput.outputMode = message.data[6];
+        /** message.data[7] is reserved/padding */
+      }
+      break;      
+    case CFG_WRITE_NVS_ID: /**< 0x41D: Master requesting NVS commit */
+      {
+        /** * Verify this message is for us. 
+         * Bytes 0-3: Target Node ID
+         * Bytes 4-5: Expected CRC
+         */
+        uint32_t targetID = (message.data[0] << 24) | (message.data[1] << 16) | 
+                            (message.data[2] << 8)  |  message.data[3];
+        
+        if (targetID == node.nodeID) {
+            uint16_t masterCrc = (message.data[4] << 8) | message.data[5];
+            uint16_t localCrc  = getConfigurationCRC(node);
+            
+            uint8_t responseData[6];
+            /** Prepare response: [NodeID_B0..B3] [CRC_Hi] [CRC_Lo] */
+            packUint32ToBytes(node.nodeID, &responseData[0]);
+            responseData[4] = (uint8_t)(localCrc >> 8);
+            responseData[5] = (uint8_t)(localCrc & 0xFF);
+
+            if (masterCrc == localCrc) {
+                /** CRCs match, attempt to persist to flash */
+                if (saveConfig(node) == CFG_OK) {
+                    /** SUCCESS: Send back the verified CRC */
+                    send_message(DATA_CONFIG_CRC_ID, responseData, DATA_CONFIG_CRC_DLC);
+                    Serial.println("NVS Commit Successful");
+                } else {
+                    /** Flash hardware error */
+                    send_message(DATA_CFGWRITE_FAILED_ID, responseData, DATA_CFGWRITE_FAILED_DLC);
+                    Serial.println("NVS Commit Failed: Flash Error");
+                }
+            } else {
+                /** CRC Mismatch: Provisioning corrupted or incomplete */
+                send_message(DATA_CFGWRITE_FAILED_ID, responseData, DATA_CFGWRITE_FAILED_DLC);
+                Serial.printf("NVS Commit Failed: CRC Mismatch (M:%04X L:%04X)\n", masterCrc, localCrc);
+            }
+        }
+      }
+      break;    
     case REQ_NODE_INTRO_ID:
       Serial.println("Interface intro request, responding with 0x702");
-      FLAG_SEND_INTRODUCTION = true; // set flag to send introduction message
-      sendIntroduction(); // send our introduction message
+      FLAG_SEND_INTRODUCTION = true; /* set flag to send introduction message */
       break;
     case ACK_INTRO_ID:
       Serial.println("Received introduction acknowledgement, advance pointer");
-      txSwitchState((uint8_t *)myNodeID, 32, 1); 
+      volatile int introPtr = 0;  /**< Pointer for the introduction and interview process */
+
       break;
     case DATA_EPOCH_ID:
       // Use explicit casting to prevent shift overflow
@@ -836,6 +941,19 @@ void handleCanRX(twai_message_t& msg) {
 
 /* Format the introduction message */
 void sendIntroduction() {
+  if (FLAG_SEND_INTRODUCTION == false) return; /* exit if not time to send */
+
+  /* Cooldown to prevent spamming the bus every 100ms tick */
+  static uint32_t lastSendTick = 0;
+  uint32_t currentTick = millis();
+  uint16_t txMsgID  = 0;
+  uint32_t txMsgDLC = 8U; /* Default to 8 bytes */
+  
+  if (currentTick - lastSendTick < 250) {
+      return; /* Wait at least 500ms before re-transmitting the same packet */
+  }
+  lastSendTick = currentTick;
+
   uint8_t msgData[8];
   memset(&msgData, 0, sizeof(msgData)); /* wipe the buffer before using it */
 
@@ -845,15 +963,37 @@ void sendIntroduction() {
   msgData[2] = (uint8_t)(myNodeID[2]);
   msgData[3] = (uint8_t)(myNodeID[3]);
 
-  /* Byte 4 is the submodule count */
-  msgData[4] = node.subModCnt;
+  /* Introduce the Node, send sub module count and config crc */
+  if (introMsgPtr == 0) {
+      Serial.printf("TX INTRO: NODE INTRO Type %03x\n", node.nodeTypeMsg);
 
-  /* Bytes 5 and 6 are the configuration CRC big endian */
-  msgData[5] = (uint8_t)(node_crc >> 8);
-  msgData[6] = (uint8_t)(node_crc);
+      txMsgID    = node.nodeTypeMsg;          /* Retrieve node type aka can message ID */
+      txMsgDLC   = node.nodeTypeDLC;          /* set DLC based on message type */
+      msgData[4] = node.subModCnt;            /* Byte 4 is the submodule count */      
+      msgData[5] = (uint8_t)(node_crc >> 8);  /* Bytes 5 and 6 are the configuration CRC big endian */
+      msgData[6] = (uint8_t)(node_crc);  
+  } 
+  /* Introduce Sub-Modules */
+  else {
+      uint8_t modIdx = (uint8_t)(introMsgPtr - 1);     /* Sub-modules start at ptr 1 */
+      
+      if (modIdx >= node.subModCnt) {                  /* overflow, exit the routine */
+          return;
+      }
 
+      txMsgID    = node.subModule[modIdx].introMsgId;   /* Introduce sub-module with this message ID */
+      txMsgDLC   = node.subModule[modIdx].introMsgDLC;  /* set DLC based on message type */
+      msgData[4] = (uint8_t)(modIdx);                   /* Byte 4 is the Sub-module index */
+
+      if (txMsgID == 0) {
+          introMsgPtr++;                                /* Error, skip empty slot and move to next */
+          return;
+      }
+
+      Serial.printf("TX INTRO: MOD INTRO Type %03x at Idx %i\n", txMsgID, modIdx);
+  }
   /* put the message on the bus */
-  send_message(node.nodeTypeMsg, msgData, node.nodeTypeDLC);
+  send_message(txMsgID, msgData, txMsgDLC);
 
 }
 
