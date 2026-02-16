@@ -12,6 +12,9 @@
 
 #include <stdio.h>
 
+#include <Preferences.h>
+#include <rom/crc.h>
+
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -41,8 +44,23 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 #include "colorpalette.h"
 #endif
 
-struct canNodeInfo nodeInfo; /**< Store information about this node */
+struct nodeInfo_t node; /**< Store information about this node */
+volatile uint16_t node_crc = 0xffff; /**< CRC-16 for the node configuration */
 
+/**
+ * @enum ConfigStatus
+ * @brief Result codes for NVS operations.
+ */
+enum ConfigStatus {
+    CFG_OK = 0,        /**< Load successful and CRC valid */
+    CFG_ERR_MUTEX,     /**< Failed to acquire flash mutex */
+    CFG_ERR_NOT_FOUND, /**< No configuration exists in NVS */
+    CFG_ERR_CRC,       /**< Data found but CRC is invalid (corrupt) */
+    CFG_ERR_NVS_OPEN   /**< Failed to open NVS namespace */
+};
+
+
+static SemaphoreHandle_t flashMutex = xSemaphoreCreateMutex(); /**< mutex for flash safety */
 
 /* Task handles */
 TaskHandle_t xTWAIHandle = NULL; /* declared and defined */
@@ -66,6 +84,7 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 #define CAN_MY_IFACE_TYPE (0x701U) /* ARGB LED */
 #define CAN_SELF_MSG 1
 
+volatile int introPtr = 0;  /**< Pointer for the introduction and interview process */
 
 /* esp32 native TWAI CAN library */
 #include "driver/twai.h"
@@ -81,16 +100,18 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 #define TX_PIN 21
 #endif
 
-
+#ifndef NODEMSGID
+#define NODEMSGID 0x701
+#endif
 
 /* CAN bus stuff: */
 #define TRANSMIT_RATE_MS 1000
 #define POLLING_RATE_MS 1000
+
 volatile bool can_suspended = false;
 volatile bool can_driver_installed = false;
 
 unsigned long previousMillis = 0;  /* will store last time a message was sent */
-String texto;
 String wifiIP;
 
 static const char *TAG = "canesp32";
@@ -136,6 +157,108 @@ void IRAM_ATTR Timer0_ISR()
   isrFlag = true;
 }
 
+/**
+ * @brief Calculates a 16-bit CRC for the node configuration.
+ * @details Uses the ESP32 ROM CRC16 implementation (CCITT).
+ * @param node Reference to the canNodeInfo struct.
+ * @return uint16_t The calculated checksum.
+ */
+uint16_t crc16_ccitt(const uint8_t* data, size_t length) {
+    uint16_t crc = 0xFFFF; // Initial value
+    while (length--) {
+        crc ^= (uint16_t)*data++ << 8;
+        for (int i = 0; i < 8; i++) {
+            if (crc & 0x8000) {
+                crc = (crc << 1) ^ 0x1021; // Polynomial
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    return crc;
+}
+
+/**
+ * @brief Calculates a 16-bit CRC for the entire node configuration.
+ */
+uint16_t getConfigurationCRC(const nodeInfo_t& node) {
+    // Hash the entire struct without worrying about internal fields
+    return crc16_ccitt((const uint8_t*)&node, sizeof(nodeInfo_t));
+}
+
+/**
+ * @brief Saves the node configuration to NVS and updates the external CRC.
+ * @param node Reference to the nodeInfo_t struct to persist.
+ * @return CFG_OK on success, or CFG_ERR_MUTEX if flash is busy.
+ */
+ConfigStatus saveConfig(const nodeInfo_t& node) {
+    /* Attempt to acquire the flash mutex */
+    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return CFG_ERR_MUTEX;
+    }
+
+    Preferences prefs;
+    /* Open namespace in read/write mode */
+    if (!prefs.begin("node_cfg", false)) {
+        xSemaphoreGive(flashMutex);
+        return CFG_ERR_NVS_OPEN; /* Return error if NVS open fails */
+    }
+
+    /** Calculate the CRC of the current RAM buffer before saving */
+    uint16_t currentCrc = getConfigurationCRC(node);
+
+    /** Write the configuration blob and the CRC key separately */
+    prefs.putBytes("node_data", &node, sizeof(nodeInfo_t));
+    prefs.putUShort("node_crc", currentCrc);
+
+    prefs.end();
+    xSemaphoreGive(flashMutex);
+
+    return CFG_OK;
+}
+
+
+/**
+ * @brief Loads the current node configuration and CRC from NVS.
+ * @param[in,out] node Reference to the nodeInfo_t struct to be loaded.
+ * @return ConfigStatus indicating the result of the operation.
+ * @retval CFG_OK Load successful and CRC valid.
+ * @retval CFG_ERR_MUTEX Failed to acquire flash mutex.
+ * @retval CFG_ERR_NOT_FOUND No configuration exists in NVS.
+ * @retval CFG_ERR_CRC Data found but CRC is invalid (corrupt).
+ */
+ConfigStatus loadConfig(nodeInfo_t& node) {
+    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return CFG_ERR_MUTEX;
+    }
+
+    Preferences prefs;
+    if (!prefs.begin("node_cfg", true)) {
+        xSemaphoreGive(flashMutex);
+        return CFG_ERR_NOT_FOUND;
+    }
+    
+    // Check if the key exists before reading
+    if (!prefs.isKey("node_data")) {
+        prefs.end();
+        xSemaphoreGive(flashMutex);
+        return CFG_ERR_NOT_FOUND;
+    }
+
+    // Read data and stored CRC
+    prefs.getBytes("node_data", &node, sizeof(nodeInfo_t));
+    uint16_t storedCrc = prefs.getUShort("node_crc", 0);
+    
+    prefs.end();
+    xSemaphoreGive(flashMutex);
+
+    // Validate
+    if (getConfigurationCRC(node) != storedCrc) {
+        return CFG_ERR_CRC;
+    }
+
+    return CFG_OK;
+}
 
 void TaskOTA(void *pvParameters) {
   /* Wait until WiFi is connected */
@@ -216,28 +339,6 @@ void readMacAddress() {
  * 
  * @param nodeType 
  */
-void setupNodeInfo(const uint32_t nodeType) {
-  nodeInfo.nodeID         = packBytes32((const uint8_t*)myNodeID); /**< convert node id string into a uint32 */
-
-  switch (nodeType) {
-    case (IFACE_ARGB_MULTI_ID):
-      nodeInfo.nodeTypeMsg    = IFACE_ARGB_MULTI_ID;
-      nodeInfo.nodeTypeDLC    = IFACE_ARGB_MULTI_DLC;
-      nodeInfo.featureMask[0] = 0; /* no features */
-      nodeInfo.featureMask[1] = 0; /* no features */
-      nodeInfo.subModCnt = 2;
-
-      nodeInfo.subModules[0].modType         = INPUT_ANALOG_KNOB_ID;
-      nodeInfo.subModules[0].dataMsgId       = DATA_ANALOG_KNOB1_ID;
-      nodeInfo.subModules[0].useFeatureMask  = false;
-
-      nodeInfo.subModules[1].modType         = NODE_CPU_TEMP_ID;
-      nodeInfo.subModules[1].dataMsgId       = DATA_NODE_CPU_TEMP_ID;
-      nodeInfo.subModules[1].useFeatureMask  = false;
-  }
-  /* Initialize nodeInfo */
-  
-}
 
 void wifiOnConnect(){
   Serial.println("STA Connected");
@@ -500,27 +601,53 @@ static void setSwitchState(uint8_t *data, uint8_t swState) {
 #define NODE_DLC BOX_MULTI_IO_DLC
 #endif
 
-/**
- * @brief Send an introduction message to the gateway node with the node's ID and feature mask.
- *
- * This function is used to send the node's ID and feature mask to the gateway node.
- * The feature mask is used to indicate which features the node supports.
- *
- * @param None
- * @return None
- */
-static void sendIntroduction() {
-  uint8_t dataBytes[NODE_DLC];
-  dataBytes[0] = myNodeID[0]; // set node ID
-  dataBytes[1] = myNodeID[1]; // set node ID
-  dataBytes[2] = myNodeID[2]; // set node ID
-  dataBytes[3] = myNodeID[3]; // set node ID
-  dataBytes[4] = (0x0F);      // display id
-  dataBytes[5] = (0xA0);      // feature mask 0
-  dataBytes[6] = (0xB0);      // feature mask 1
+/** Load CYD node info into the nodeInfo struct */
+void nodeInfoCYD() {
+  node.nodeID      = unpackBytestoUint32((const uint8_t*)&myNodeID[0]);
+  node.nodeTypeMsg = IFACE_TOUCHSCREEN_TYPE_A_ID;
+  node.nodeTypeDLC = IFACE_TOUCHSCREEN_TYPE_A_DLC;
+  node.subModCnt   = 0; /* two sub modules */
+  node_crc         = 0xffff; /* set the CRC to an invalid value indicating node has not received a configuration */
+}
 
-  send_message(NODE_ID, (uint8_t *)dataBytes, NODE_DLC); /**< send introduction message to the gateway node with the node's ID and feature mask */
+/** Load ARGB node info into the nodeInfo struct */
+void nodeInfoARGB() {
+  node.nodeID      = unpackBytestoUint32((const uint8_t*)&myNodeID[0]);
+  node.nodeTypeMsg = IFACE_ARGB_MULTI_ID;
+  node.nodeTypeDLC = IFACE_ARGB_MULTI_DLC;
+  node_crc         = 0xffff; /* set the CRC to an invalid value indicating node has not received a configuration */
+  node.subModCnt   = 2; /* two sub modules */
 
+  /* first sub module setup defaults */
+  node.subModule[0].modType    = DISP_ARGBW_LED_STRIP_ID; /* digital addressable led strip */
+  node.subModule[0].dataMsgId  = SET_ARGB_STRIP_COLOR_ID;
+  node.subModule[0].dataMsgDLC = SET_ARGB_STRIP_COLOR_DLC;
+  node.subModule[0].saveState  = true;
+  node.subModule[0].config.argbLed.ledCount  = 1;
+  node.subModule[0].config.argbLed.outputPin = 27;
+
+  /* second sub module setup defaults */
+  node.subModule[1].modType    = INPUT_DIGITAL_GPIO_ID; /* digital input gpio type*/
+  node.subModule[1].dataMsgId  = DATA_BUTTON_DOWN_ID;
+  node.subModule[1].dataMsgDLC = DATA_BUTTON_DOWN_DLC;
+  node.subModule[1].saveState  = false;
+  node.subModule[1].config.digitalInput.inputPin = 39;
+  node.subModule[1].config.digitalInput.outputRes = INPUT_RES_PULLUP;
+}
+
+static void loadDefaults(uint16_t nodeType) {
+  switch (nodeType) {
+      case (IFACE_ARGB_MULTI_ID): /* ARGB multi */
+        nodeInfoARGB(); /* load node info */
+        break;
+      case (IFACE_TOUCHSCREEN_TYPE_A_ID): /* touchscreen type a */
+        nodeInfoCYD(); /* load node info */
+        break;
+
+      default:
+        nodeInfoARGB(); /* load node info */
+        break;
+  }
 }
 
 static void sendIntroack() {
@@ -655,8 +782,7 @@ static void rxProcessMessage(twai_message_t &message) {
       sendIntroduction(); // send our introduction message
       break;
     case ACK_INTRO_ID:
-      Serial.println("Received introduction acknowledgement, clearing flag");    
-      FLAG_SEND_INTRODUCTION = false; // stop sending introduction messages
+      Serial.println("Received introduction acknowledgement, advance pointer");
       txSwitchState((uint8_t *)myNodeID, 32, 1); 
       break;
     case DATA_EPOCH_ID:
@@ -682,48 +808,53 @@ static void rxProcessMessage(twai_message_t &message) {
  * @param msg The TWAI message frame received from the bus
  */
 void handleCanRX(twai_message_t& msg) {
-    /* 1. Extract the "Base" of the ID by masking out the lower 6 bits (0x3F) */
-    uint16_t idBase = msg.identifier & ~0x3F;
+  /* Extract the "Base" of the ID by masking out the lower 6 bits (0x3F) */
+  uint16_t idBase = msg.identifier & ~0x3F;
 
-    /* 2. Software Filter: Only enter if it matches our three target ranges */
-    switch (idBase) {
-        case MSG_CTRL_IFACE: /* 0x200 */
-            /* Handle Switch/Input Messages */
-            rxProcessMessage(msg);
-            break;
+  /* Software filter: only log introductions for remote ARGB nodes (for the CYD) */
+#ifdef ESP32CYD
+  if (msg.identifier == 0x701 || msg.identifier == 0x702 || msg.identifier == 0x711) {
+      if (msg.data_length_code >= 4) { /* Need at least 4 bytes to proceed */
+          uint32_t remoteNodeId;
+          /* Use bytes 0-3 to match your sendIntroduction format */
+          remoteNodeId = ((uint32_t)msg.data[0] << 24) | 
+                          ((uint32_t)msg.data[1] << 16) | 
+                          ((uint32_t)msg.data[2] << 8)  | 
+                          (uint32_t)msg.data[3];
 
-        case MSG_REQ_INTRO: /* 0x400 */
-            /* Handle Status/Telemetry Messages */
-            rxProcessMessage(msg);
-            break;
-
-        case MODULE_DISPLAY: /* 0x700 */
-            #ifdef ESP32CYD
-            if (msg.identifier == 0x701 || msg.identifier == 0x702 || msg.identifier == 0x711) {
-                if (msg.data_length_code >= 4) { /**< Changed from 8 to 4 to be more lenient */
-                    uint32_t remoteNodeId;
-                    /* Use bytes 0-3 to match your sendIntroduction format */
-                    remoteNodeId = ((uint32_t)msg.data[0] << 24) | 
-                                   ((uint32_t)msg.data[1] << 16) | 
-                                   ((uint32_t)msg.data[2] << 8)  | 
-                                   (uint32_t)msg.data[3];
-
-                    if (remoteNodeId != 0) {
-                        registerARGBNode(remoteNodeId);
-                    } else {
-                        Serial.println("RX: ARGB ID was 0, ignoring.");
-                    }
-                }
-            }
-            #endif   
-            break;
-
-        default:
-            /** * DISCARD "leaked" messages (e.g., 0x500 or 0x600) 
-             * that passed the hardware filter but isn't for us.
-             */
-            return;
+          if (remoteNodeId != 0) { /* Sanity check, only register if node ID is non-zero */
+              registerARGBNode(remoteNodeId);
+          } 
+      }
+      return;
     }
+#endif   
+
+    /* Pass everything else onto rxProcessMessage */
+    rxProcessMessage(msg);
+}
+
+/* Format the introduction message */
+void sendIntroduction() {
+  uint8_t msgData[8];
+  memset(&msgData, 0, sizeof(msgData)); /* wipe the buffer before using it */
+
+  /* Copy our node ID into the message buffer */
+  msgData[0] = (uint8_t)(myNodeID[0]);
+  msgData[1] = (uint8_t)(myNodeID[1]);
+  msgData[2] = (uint8_t)(myNodeID[2]);
+  msgData[3] = (uint8_t)(myNodeID[3]);
+
+  /* Byte 4 is the submodule count */
+  msgData[4] = node.subModCnt;
+
+  /* Bytes 5 and 6 are the configuration CRC big endian */
+  msgData[5] = (uint8_t)(node_crc >> 8);
+  msgData[6] = (uint8_t)(node_crc);
+
+  /* put the message on the bus */
+  send_message(node.nodeTypeMsg, msgData, node.nodeTypeDLC);
+
 }
 
 void TaskTWAI(void *pvParameters) {
@@ -934,7 +1065,7 @@ void setup() {
   WiFi.mode(WIFI_MODE_APSTA);
   WiFi.softAP(AP_SSID);
   WiFi.begin(ssid, password);
-  delay(1000);
+  // delay(1000); /* Wait for wifi to connect */
 
   Serial.println("AP Started");
   Serial.print("AP SSID: ");
@@ -947,6 +1078,40 @@ void setup() {
   tzset();
 
   readMacAddress(); /**< Read the ESP32 station MAC address and program myNodeID */
+
+  /* Node Setup Logic */
+  memset(&node, 0, sizeof(nodeInfo_t)); /* Clear the struct */
+  ConfigStatus loadCfgStatus;
+  int retries = 0;
+
+  Serial.println("Loading config...");
+
+  do {
+      loadCfgStatus = loadConfig(node); 
+
+      if (loadCfgStatus == CFG_OK) {
+          Serial.println("Config loaded successfully.");
+          break; 
+      } 
+      
+      if (loadCfgStatus == CFG_ERR_CRC || loadCfgStatus == CFG_ERR_NOT_FOUND) {
+          Serial.println("Invalid config - Starting in PROVISIONING MODE");
+          loadDefaults(NODEMSGID); /* load defaults from build flag node type */
+          break; 
+      } 
+
+      if (loadCfgStatus == CFG_ERR_MUTEX) {
+          Serial.printf("Flash busy - Retry %d/3...\n", retries + 1);
+          vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
+      }
+
+  } while ((loadCfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
+
+  if (loadCfgStatus == CFG_ERR_MUTEX) {
+      Serial.println("Critical Error: Could not access NVS (Mutex Timeout)");
+      loadDefaults(NODEMSGID); /* load defaults from build flag node type */
+  }
+
 
   #ifdef ESP32CYD
   initCYD(); /* Initialize CYD interface */
