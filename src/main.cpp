@@ -78,6 +78,7 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 
 /* my can bus stuff */
 #include "canbus_project.h"
+#include "byte_conversion.h"
 
 #define CAN_MY_IFACE_TYPE (0x701U) /* ARGB LED */
 #define CAN_SELF_MSG 1
@@ -191,6 +192,9 @@ void initHardware() {
                     case 26: 
                         FastLED.addLeds<WS2812B, 26, GRB>(ledData[i], count); 
                         break;
+                    case 27: 
+                        FastLED.addLeds<WS2812B, 27, GRB>(ledData[i], count); 
+                        break;
                     default:
                         Serial.printf("Error: Pin %d not hardware-capable for FastLED\n", pin);
                         break;
@@ -211,16 +215,26 @@ void initHardware() {
                 }
                 break;
 
+            case DISP_ANALOG_BACKLIGHT_ID: /**< 0x70A */
+                pinMode(sub.config.digitalOutput.outputPin, OUTPUT);
+                /* Default to 'off' based on outputMode configuration */
+                // digitalWrite(sub.config.digitalOutput.outputPin, sub.config.digitalOutput.outputMode ? HIGH : LOW);
+                break;
+
             case CFG_DIGITAL_OUTPUT_ID: /**< 0x712 */
                 pinMode(sub.config.digitalOutput.outputPin, OUTPUT);
                 /* Default to 'off' based on outputMode configuration */
-                digitalWrite(sub.config.digitalOutput.outputPin, sub.config.digitalOutput.outputMode ? HIGH : LOW);
+                // digitalWrite(sub.config.digitalOutput.outputPin, sub.config.digitalOutput.outputMode ? HIGH : LOW);
                 break;
 
             case CFG_PWM_OUTPUT_ID: /**< 0x713 */
                 /* ESP32 LEDC setup: channel = i, frequency = config * 100, resolution = 8-bit */
                 ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * 100, 8); 
                 ledcAttachPin(sub.config.pwmOutput.outputPin, i);
+                break;
+
+            case INPUT_DIGITAL_GPIO_ID: /**< 0x711 */
+                pinMode(sub.config.digitalInput.inputPin, INPUT);
                 break;
 
             case CFG_ANALOG_INPUT_ID: /**< 0x714 */
@@ -741,8 +755,8 @@ void nodeInfoARGB() { /* remote node type IFACE_ARGB_MULTI_ID 0x79C */
   node.subModCnt   = 2; /* two sub modules */
 
   /* first sub module setup defaults */
-  node.subModule[0].introMsgId  = DISP_ARGBW_LED_STRIP_ID; /* digital addressable led strip */
-  node.subModule[0].introMsgDLC = DISP_ARGBW_LED_STRIP_DLC;
+  node.subModule[0].introMsgId  = DISP_ARGB_LED_STRIP_ID; /* digital addressable led strip */
+  node.subModule[0].introMsgDLC = DISP_ARGB_LED_STRIP_DLC;
   node.subModule[0].dataMsgId   = SET_ARGB_STRIP_COLOR_ID;
   node.subModule[0].dataMsgDLC  = SET_ARGB_STRIP_COLOR_DLC;
   node.subModule[0].saveState   = true;
@@ -759,6 +773,27 @@ void nodeInfoARGB() { /* remote node type IFACE_ARGB_MULTI_ID 0x79C */
   node.subModule[1].config.digitalInput.outputRes = INPUT_RES_PULLUP;
 }
 
+/** * @brief Prints a hex dump of a memory block to the Serial console.
+ * @param ptr Pointer to the memory block
+ * @param size Size of the block in bytes
+ */
+void printHexDump(const void* ptr, size_t size) {
+    const uint8_t* p = (const uint8_t*)ptr;
+    char buf[16]; /* Buffer for hex formatting */
+    
+    Serial.println("\n--- nodeInfo_t Hex Dump ---");
+    for (size_t i = 0; i < size; i++) {
+        /* Print address offset every 16 bytes */
+        if (i % 16 == 0) {
+            if (i > 0) Serial.println();
+            Serial.printf("%04X: ", (uint16_t)i);
+        }
+        
+        Serial.printf("%02X ", p[i]);
+    }
+    Serial.println("\n---------------------------");
+}
+
 static void loadDefaults(uint16_t nodeType) {
   switch (nodeType) {
       case (IFACE_ARGB_MULTI_ID): /* ARGB multi */
@@ -772,12 +807,13 @@ static void loadDefaults(uint16_t nodeType) {
         nodeInfoARGB(); /* load node info */
         break;
   }
+  printHexDump(&node, sizeof(node));
 }
 
-static void sendIntroack() {
-  // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55}; // data bytes
-  send_message(ACK_INTRO_ID, (uint8_t *)myNodeID, ACK_INTRO_DLC);
-}
+// static void sendIntroack() {
+//   // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55}; // data bytes
+//   send_message(ACK_INTRO_ID, (uint8_t *)myNodeID, ACK_INTRO_DLC);
+// }
 
 /**
  * @brief Get the current epoch time from the system clock.
@@ -867,7 +903,8 @@ void sendIntroduction(int msgPtr = 0) {
 /* 0: Node Identity */
   if (msgPtr == 0) {
     /* Check FLAG_VALID_CONFIG flag, if it's set use the in-memory CRC, if not use 0xFFFF */    
-    uint16_t txCrc = FLAG_VALID_CONFIG ? getConfigurationCRC(node) : 0xFFFF;
+    // uint16_t txCrc = FLAG_VALID_CONFIG ? getConfigurationCRC(node) : 0xFFFF;
+    uint16_t txCrc = getConfigurationCRC(node);
     
     txMsgID    = node.nodeTypeMsg;
     msgData[4] = node.subModCnt;
@@ -1045,40 +1082,32 @@ static void rxProcessMessage(twai_message_t &message) {
       break;
     case CFG_WRITE_NVS_ID: /**< 0x41D: Master requesting NVS commit */
       {
-        /** * Verify this message is for us. 
-         * Bytes 0-3: Target Node ID
-         * Bytes 4-5: Expected CRC
-         */
-        uint32_t targetID = (message.data[0] << 24) | (message.data[1] << 16) | 
-                            (message.data[2] << 8)  |  message.data[3];
-        
-        if (targetID == node.nodeID) {
-            uint16_t masterCrc = (message.data[4] << 8) | message.data[5];
-            uint16_t localCrc  = getConfigurationCRC(node);
-            
-            uint8_t responseData[6];
-            /** Prepare response: [NodeID_B0..B3] [CRC_Hi] [CRC_Lo] */
-            packUint32ToBytes(node.nodeID, &responseData[0]);
-            responseData[4] = (uint8_t)(localCrc >> 8);
-            responseData[5] = (uint8_t)(localCrc & 0xFF);
 
-            if (masterCrc == localCrc) {
-                /** CRCs match, attempt to persist to flash */
-                if (saveConfig(node) == CFG_OK) {
-                    /** SUCCESS: Set the flag indicating config is valid and send back the verified CRC */
-                    FLAG_VALID_CONFIG = true;
-                    send_message(DATA_CONFIG_CRC_ID, responseData, DATA_CONFIG_CRC_DLC);
-                    Serial.println("NVS Commit Successful");
-                } else {
-                    /** Flash hardware error */
-                    send_message(DATA_CFGWRITE_FAILED_ID, responseData, DATA_CFGWRITE_FAILED_DLC);
-                    Serial.println("NVS Commit Failed: Flash Error");
-                }
+        uint16_t masterCrc = (message.data[4] << 8) | message.data[5];
+        uint16_t localCrc  = getConfigurationCRC(node);
+        
+        uint8_t responseData[6];
+        /** Prepare response: [NodeID_B0..B3] [CRC_Hi] [CRC_Lo] */
+        packUint32ToBytes(node.nodeID, &responseData[0]);
+        responseData[4] = (uint8_t)(localCrc >> 8);
+        responseData[5] = (uint8_t)(localCrc & 0xFF);
+
+        if (masterCrc == localCrc) {
+            /** CRCs match, attempt to persist to flash */
+            if (saveConfig(node) == CFG_OK) {
+                /** SUCCESS: Set the flag indicating config is valid and send back the verified CRC */
+                FLAG_VALID_CONFIG = true;
+                send_message(DATA_CONFIG_CRC_ID, responseData, DATA_CONFIG_CRC_DLC);
+                Serial.println("NVS Commit Successful");
             } else {
-                /** CRC Mismatch: Provisioning corrupted or incomplete */
+                /** Flash hardware error */
                 send_message(DATA_CFGWRITE_FAILED_ID, responseData, DATA_CFGWRITE_FAILED_DLC);
-                Serial.printf("NVS Commit Failed: CRC Mismatch (M:%04X L:%04X)\n", masterCrc, localCrc);
+                Serial.println("NVS Commit Failed: Flash Error");
             }
+        } else {
+            /** CRC Mismatch: Provisioning corrupted or incomplete */
+            send_message(DATA_CFGWRITE_FAILED_ID, responseData, DATA_CFGWRITE_FAILED_DLC);
+            Serial.printf("NVS Commit Failed: CRC Mismatch (M:%04X L:%04X)\n", masterCrc, localCrc);
         }
       }
       break;    
@@ -1300,7 +1329,7 @@ void setup() {
 #endif
 
   memset(&node, 0, sizeof(nodeInfo_t)); /**< Clear the struct */
-  
+
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   delay(2500); /* Provide time for the board's usb interface to change from flash to uart mode */
