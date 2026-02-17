@@ -550,40 +550,6 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
 
 }
 
-/**
- * @brief Updates a specific LED strip based on received CAN color index.
- * @param ledIndex The submodule index (0-7).
- * @param colorIndex The 1-byte color index from the CAN message.
- */
-void handleColorCommand(uint8_t ledIndex, uint8_t colorIndex) {
-#ifdef ARGB_LED
-    /* 1. Range check the submodule index */
-    if (ledIndex >= 8) return;
-
-    /* 2. Verify this submodule is actually an ARGB strip */
-    if (node.subModule[ledIndex].introMsgId != DISP_ARGBW_LED_STRIP_ID) {
-        return; /**< Not an ARGB module, ignore command */
-    }
-
-    /* 3. Range check the color index against your palette */
-    if (colorIndex < 32) {
-        CRGB targetColor = SystemPalette[colorIndex];
-        
-        /* Fetch the dynamic count from the configuration struct */
-        uint16_t count = node.subModule[ledIndex].config.argbLed.ledCount;
-
-        /** * 4. Update only the specific buffer for this submodule.
-         * ledData[ledIndex] was assigned to FastLED during initHardware().
-         */
-        fill_solid(ledData[ledIndex], count, targetColor);
-        
-        FastLED.show();
-        
-        Serial.printf("Submod %u (ARGB): Updated to palette index %u\n", ledIndex, colorIndex);
-    }
-#endif
-}
-
 static void setDisplayMode(uint8_t *data, uint8_t displayMode) {
   // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55, 0x7F, 0xE4}; // data bytes
   uint16_t rxdisplayID = (data[4] << 8) | data[5]; // switch ID
@@ -877,6 +843,84 @@ static void setEpochTime(uint32_t epochTime) {
   
 }
 
+/**
+ * @brief Updates a specific LED strip based on received CAN color index.
+ * @param ledIndex The submodule index (0-7).
+ * @param colorIndex The 1-byte color index from the CAN message.
+ */
+void handleColorCommand(uint8_t ledIndex, uint8_t colorIndex) {
+#ifdef ARGB_LED
+    /* 1. Range check the submodule index */
+    if (ledIndex >= 8) return;
+
+    /* 2. Verify this submodule is actually an ARGB strip */
+    if (node.subModule[ledIndex].introMsgId != DISP_ARGBW_LED_STRIP_ID) {
+        return; /**< Not an ARGB module, ignore command */
+    }
+
+    /* 3. Range check the color index against your palette */
+    if (colorIndex < 32) {
+        CRGB targetColor = SystemPalette[colorIndex];
+        
+        /* Fetch the dynamic count from the configuration struct */
+        uint16_t count = node.subModule[ledIndex].config.argbLed.ledCount;
+
+        /** * 4. Update only the specific buffer for this submodule.
+         * ledData[ledIndex] was assigned to FastLED during initHardware().
+         */
+        fill_solid(ledData[ledIndex], count, targetColor);
+        
+        FastLED.show();
+        
+        Serial.printf("Submod %u (ARGB): Updated to palette index %u\n", ledIndex, colorIndex);
+    }
+#endif
+}
+
+/**
+ * @brief Attempts to load the configuration from NVS.
+ *
+ * This function attempts to load the configuration from NVS and
+ * initializes the hardware if successful. If the configuration
+ * is invalid or not found, it loads the default configuration from
+ * the build flag node type and starts in PROVISIONING MODE. If the
+ * function is unable to access NVS due to a mutex timeout, it
+ * loads the default configuration from the build flag node type.
+ */
+void handleReadNVS() {
+  ConfigStatus loadCfgStatus;
+  int retries = 0;
+
+  Serial.println("\nLoading config...");
+
+  do {
+      loadCfgStatus = loadConfig(node); 
+
+      if (loadCfgStatus == CFG_OK) {
+          Serial.println("Config loaded successfully.");
+          FLAG_VALID_CONFIG = true;
+          initHardware(); /**< Initialize the hardware */
+          break; 
+      } 
+      
+      if (loadCfgStatus == CFG_ERR_CRC || loadCfgStatus == CFG_ERR_NOT_FOUND) {
+          Serial.println("Invalid config - Starting in PROVISIONING MODE");
+          loadDefaults(NODEMSGID); /**< load defaults from build flag node type */
+          break; 
+      } 
+
+      if (loadCfgStatus == CFG_ERR_MUTEX) {
+          Serial.printf("Flash busy - Retry %d/3...\n", retries + 1);
+          vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
+      }
+
+  } while ((loadCfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
+
+  if (loadCfgStatus == CFG_ERR_MUTEX) {
+      Serial.println("Critical Error: Could not access NVS (Mutex Timeout)");
+      loadDefaults(NODEMSGID); /* load defaults from build flag node type */
+  }
+}
 
 /**
  * @brief Send an introduction message about the node
@@ -903,8 +947,8 @@ void sendIntroduction(int msgPtr = 0) {
 /* 0: Node Identity */
   if (msgPtr == 0) {
     /* Check FLAG_VALID_CONFIG flag, if it's set use the in-memory CRC, if not use 0xFFFF */    
-    // uint16_t txCrc = FLAG_VALID_CONFIG ? getConfigurationCRC(node) : 0xFFFF;
-    uint16_t txCrc = getConfigurationCRC(node);
+    uint16_t txCrc = FLAG_VALID_CONFIG ? getConfigurationCRC(node) : 0xFFFF;
+    // uint16_t txCrc = getConfigurationCRC(node);
     
     txMsgID    = node.nodeTypeMsg;
     msgData[4] = node.subModCnt;
@@ -977,6 +1021,13 @@ static void rxProcessMessage(twai_message_t &message) {
     return;
   }
 
+  /* debug: dump message data */
+  Serial.printf("RX MSG: 0x%03X DATA: ", message.identifier);
+  for (int i = 0; i < message.data_length_code; i++) {
+    Serial.printf("0x%02X ", message.data[i]);
+  }
+  Serial.println();
+
   switch (message.identifier) {
     case SW_SET_OFF_ID:            // set output switch off
       setSwitchState(message.data, 0);
@@ -1007,16 +1058,16 @@ static void rxProcessMessage(twai_message_t &message) {
     case CFG_ARGB_STRIP_ID:                                                     /* setup ARGB channel */
       {
       uint8_t modIdx = message.data[4];                                         /* byte 4 holds the sub module index */
-      node.subModule[modIdx].config.argbLed.outputPin = message.data[5];        /* byte 5 holds the output pin */
-      node.subModule[modIdx].config.argbLed.ledCount = message.data[6];         /* bytes 6 hold the number of LEDs (max 255)*/
+      node.subModule[modIdx].config.argbLed.outputPin  = message.data[5];        /* byte 5 holds the output pin */
+      node.subModule[modIdx].config.argbLed.ledCount   = message.data[6];         /* bytes 6 hold the number of LEDs (max 255)*/
       node.subModule[modIdx].config.argbLed.colorOrder = message.data[7];       /* byte 7 holds the color order */
       }
       break;
     case CFG_DIGITAL_INPUT_ID: /**< Setup digital input channel */
       {
         uint8_t modIdx = message.data[4];
-        node.subModule[modIdx].config.digitalInput.inputPin  = message.data[5];
-        node.subModule[modIdx].config.digitalInput.outputRes = message.data[6];
+        node.subModule[modIdx].config.digitalInput.inputPin   = message.data[5];
+        node.subModule[modIdx].config.digitalInput.outputRes  = message.data[6];
         node.subModule[modIdx].config.digitalInput.isInverted = message.data[7];
       }
       break;
@@ -1111,6 +1162,23 @@ static void rxProcessMessage(twai_message_t &message) {
         }
       }
       break;    
+    case CFG_READ_NVS_ID: /**< 0x41E: Master requesting NVS read */
+      {
+        Serial.println("NVS Read Request");
+        uint16_t masterCrc = (message.data[4] << 8) | message.data[5];
+        
+        handleReadNVS();
+
+        uint16_t localCrc  = getConfigurationCRC(node);
+        uint8_t responseData[6];
+
+        /** Prepare response: [NodeID_B0..B3] [CRC_Hi] [CRC_Lo] */
+        packUint32ToBytes(node.nodeID, &responseData[0]);
+        responseData[4] = (uint8_t)(localCrc >> 8);
+        responseData[5] = (uint8_t)(localCrc & 0xFF);
+
+        send_message(DATA_CONFIG_CRC_ID, responseData, DATA_CONFIG_CRC_DLC);
+      }
     case REQ_NODE_INTRO_ID:
       Serial.println("Interface intro request, responding with our introduction");
       // FLAG_SEND_INTRODUCTION = true; /* set flag to send introduction message */
@@ -1351,37 +1419,7 @@ void setup() {
 
   /* Node Setup Logic */
   memset(&node, 0, sizeof(nodeInfo_t)); /* Clear the struct */
-  ConfigStatus loadCfgStatus;
-  int retries = 0;
-
-  Serial.println("\nLoading config...");
-
-  do {
-      loadCfgStatus = loadConfig(node); 
-
-      if (loadCfgStatus == CFG_OK) {
-          Serial.println("Config loaded successfully.");
-          initHardware(); /**< Initialize the hardware */
-          break; 
-      } 
-      
-      if (loadCfgStatus == CFG_ERR_CRC || loadCfgStatus == CFG_ERR_NOT_FOUND) {
-          Serial.println("Invalid config - Starting in PROVISIONING MODE");
-          loadDefaults(NODEMSGID); /**< load defaults from build flag node type */
-          break; 
-      } 
-
-      if (loadCfgStatus == CFG_ERR_MUTEX) {
-          Serial.printf("Flash busy - Retry %d/3...\n", retries + 1);
-          vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
-      }
-
-  } while ((loadCfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
-
-  if (loadCfgStatus == CFG_ERR_MUTEX) {
-      Serial.println("Critical Error: Could not access NVS (Mutex Timeout)");
-      loadDefaults(NODEMSGID); /* load defaults from build flag node type */
-  }
+  handleReadNVS(); /* Read the NVS data from flash and init hardware */
 
 
   #ifdef ESP32CYD
