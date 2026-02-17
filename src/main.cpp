@@ -3,6 +3,8 @@
  * @brief Gateway controller for CAN-based ARGB and Vehicle Control system.
  * @details Handles Wi-Fi/OTA, TWAI (CAN) hardware lifecycle, and node discovery.
  * Acts as the bridge between the CYD UI and the distributed hardware nodes.
+ * Additional roles: ARGB LED control
+ * Planned roles: Interface with i2c and SPI sensors, LCD and OLED displays, and button / keypad input
  * 
  * @author Gordon McLellan
  * @date 2026-02-16
@@ -41,7 +43,7 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 #include "secrets.h"
 
 /* my colors */
-#if defined(ARGB_LED) || defined(ESP32CYD)
+#if defined(ARGB_LED) || defined(ESP32CYD) || defined(ARGBW_LED)
 #include "colorpalette.h"
 #endif
 
@@ -82,6 +84,14 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 
 #define CAN_MY_IFACE_TYPE (0x701U) /* ARGB LED */
 #define CAN_SELF_MSG 1
+
+/* hardware definitions */
+#define CYD_BACKLIGHT_PIN     21
+#define CYD_LED_RED_PIN        4                
+#define CYD_LED_BLUE_PIN      17
+#define CYD_LED_GREEN_PIN     16
+#define CYD_LDR_PIN           34
+#define CYD_SPEAKER_PIN       26
 
 /* dynamic discovery stuff */
 nodeInfo_t node; /**< Store information about this node */
@@ -168,7 +178,7 @@ void initHardware() {
          * Example: 0x701 = ARGB, 0x711 = Digital Input, etc.
          */
         switch (sub.introMsgId) {
-            case DISP_ARGBW_LED_STRIP_ID: /**< 0x701 */
+            case DISP_ARGB_LED_STRIP_ID: /**< 0x702 */
               {
 #ifdef ARGB_LED
                 uint8_t pin = sub.config.argbLed.outputPin;
@@ -204,7 +214,7 @@ void initHardware() {
               }
               break;
 
-            case CFG_DIGITAL_INPUT_ID: /**< 0x711 */
+            case INPUT_DIGITAL_GPIO_ID: /**< 0x711 */
                 /* 0=Floating, 1=Pull-up, 2=Pull-down */
                 if (sub.config.digitalInput.outputRes == 1) {
                     pinMode(sub.config.digitalInput.inputPin, INPUT_PULLUP);
@@ -213,40 +223,42 @@ void initHardware() {
                 } else {
                     pinMode(sub.config.digitalInput.inputPin, INPUT);
                 }
+                Serial.printf("Submod %d: Digital Input Init (Pin %d)\n", i, sub.config.digitalInput.inputPin);
                 break;
 
             case DISP_ANALOG_BACKLIGHT_ID: /**< 0x70A */
                 pinMode(sub.config.digitalOutput.outputPin, OUTPUT);
                 /* Default to 'off' based on outputMode configuration */
                 // digitalWrite(sub.config.digitalOutput.outputPin, sub.config.digitalOutput.outputMode ? HIGH : LOW);
+                Serial.printf("Submod %d: Analog Backlight Init (Pin %d)\n", i, sub.config.digitalOutput.outputPin);
                 break;
 
-            case CFG_DIGITAL_OUTPUT_ID: /**< 0x712 */
+            case OUT_GPIO_DIGITAL_ID: /**< 0x744 */
                 pinMode(sub.config.digitalOutput.outputPin, OUTPUT);
                 /* Default to 'off' based on outputMode configuration */
                 // digitalWrite(sub.config.digitalOutput.outputPin, sub.config.digitalOutput.outputMode ? HIGH : LOW);
+                Serial.printf("Submod %d: Digital Output Init (Pin %d)\n", i, sub.config.digitalOutput.outputPin);
                 break;
 
-            case CFG_PWM_OUTPUT_ID: /**< 0x713 */
+            case OUT_GPIO_PWM_ID: /**< 0x745 */
                 /* ESP32 LEDC setup: channel = i, frequency = config * 100, resolution = 8-bit */
                 ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * 100, 8); 
                 ledcAttachPin(sub.config.pwmOutput.outputPin, i);
+                Serial.printf("Submod %d: PWM Output Init (Pin %d, Freq %d)\n", i, sub.config.pwmOutput.outputPin, (sub.config.pwmOutput.pwmFreq * 100));
                 break;
 
-            case INPUT_DIGITAL_GPIO_ID: /**< 0x711 */
-                pinMode(sub.config.digitalInput.inputPin, INPUT);
-                break;
-
-            case CFG_ANALOG_INPUT_ID: /**< 0x714 */
+            case INPUT_ANALOG_ADC_ID: /**< 0x710 */
                 pinMode(sub.config.analogInput.inputPin, ANALOG);
+                Serial.printf("Submod %d: Analog Input Init (Pin %d)\n", i, sub.config.analogInput.inputPin);
                 break;
 
-            case CFG_BLINK_OUTPUT_ID: /**< 0x715 */
+            case DISP_STROBE_MODULE_ID: /**< 0x715 */
                 pinMode(sub.config.blinkOutput.outputPin, OUTPUT);
+                Serial.printf("Submod %d: Blink / Strobe Output Init (Pin %d)\n", i, sub.config.blinkOutput.outputPin);
                 break;
 
             default:
-                Serial.printf("Submod %d: No hardware init for ID 0x%03X\n", i, sub.introMsgId);
+                Serial.printf("Submod %d: No hardware init defined for ID 0x%03X\n", i, sub.introMsgId);
                 break;
         }
     }
@@ -678,11 +690,6 @@ static void setSwitchState(uint8_t *data, uint8_t swState) {
   }
 }
 
-#ifndef NODE_ID
-#define NODE_ID BOX_MULTI_IO_ID // default node ID
-#define NODE_DLC BOX_MULTI_IO_DLC
-#endif
-
 /** Load CYD node info into the nodeInfo struct */
 void nodeInfoCYD() { /* remote node type IFACE_TOUCHSCREEN_TYPE_A_ID 0x792 */
   node.nodeID      = unpackBytestoUint32((const uint8_t*)&myNodeID[0]);
@@ -706,10 +713,36 @@ void nodeInfoCYD() { /* remote node type IFACE_TOUCHSCREEN_TYPE_A_ID 0x792 */
   node.subModule[1].dataMsgId   = DATA_DISPLAY_MODE_ID;
   node.subModule[1].dataMsgDLC  = DATA_DISPLAY_MODE_DLC;
   node.subModule[1].saveState   = true;
-  node.subModule[1].config.digitalOutput.outputPin   = 21; /* TODO: This should be a #define, CYD Backlight Pin */
+  node.subModule[1].config.digitalOutput.outputPin   = CYD_BACKLIGHT_PIN; 
   node.subModule[1].config.digitalOutput.outputMode  = OUT_MODE_TOGGLE;
   node.subModule[1].config.digitalOutput.momPressDur = 0; /* not used */
 
+  node.subModule[2].introMsgId  = DISP_ANALOG_LED_STRIP_ID;
+  node.subModule[2].introMsgDLC = DISP_ANALOG_LED_STRIP_DLC;
+  node.subModule[2].dataMsgId   = SET_ANALOG_STRIP_COLOR_ID;
+  node.subModule[2].dataMsgDLC  = SET_ANALOG_STRIP_COLOR_DLC;
+  node.subModule[2].saveState   = true;
+  node.subModule[2].config.analogStrip.stripIndex = 0;
+  node.subModule[2].config.analogStrip.pinIndex   = CYD_LED_BLUE_PIN;
+  node.subModule[2].config.analogStrip.colorIndex = ANALOG_STRIP_BLUE;
+
+  node.subModule[3].introMsgId  = DISP_ANALOG_LED_STRIP_ID;
+  node.subModule[3].introMsgDLC = DISP_ANALOG_LED_STRIP_DLC;
+  node.subModule[3].dataMsgId   = SET_ANALOG_STRIP_COLOR_ID;
+  node.subModule[3].dataMsgDLC  = SET_ANALOG_STRIP_COLOR_DLC;
+  node.subModule[3].saveState   = true;
+  node.subModule[3].config.analogStrip.stripIndex = 1;
+  node.subModule[3].config.analogStrip.pinIndex   = CYD_LED_GREEN_PIN;
+  node.subModule[3].config.analogStrip.colorIndex = ANALOG_STRIP_GREEN;
+
+  node.subModule[4].introMsgId  = DISP_ANALOG_LED_STRIP_ID;
+  node.subModule[4].introMsgDLC = DISP_ANALOG_LED_STRIP_DLC;
+  node.subModule[4].dataMsgId   = SET_ANALOG_STRIP_COLOR_ID;
+  node.subModule[4].dataMsgDLC  = SET_ANALOG_STRIP_COLOR_DLC;
+  node.subModule[4].saveState   = true;
+  node.subModule[4].config.analogStrip.stripIndex = 2;
+  node.subModule[4].config.analogStrip.pinIndex   = CYD_LED_RED_PIN;
+  node.subModule[4].config.analogStrip.colorIndex = ANALOG_STRIP_RED;
 }
 
 /** Load ARGB node info into the nodeInfo struct */
