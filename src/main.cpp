@@ -82,8 +82,9 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 #include "canbus_project.h"
 #include "byte_conversion.h"
 
-#define CAN_MY_IFACE_TYPE (0x701U) /* ARGB LED */
-#define CAN_SELF_MSG 1
+#define CRC_INVALID_CONFIG     0xFFFF
+#define MAX_SUB_MODULES        8
+#define PWM_SCALING_FACTOR     (100U)
 
 /* hardware definitions */
 #define CYD_BACKLIGHT_PIN     21
@@ -92,6 +93,10 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 #define CYD_LED_GREEN_PIN     16
 #define CYD_LDR_PIN           34
 #define CYD_SPEAKER_PIN       26
+#define M5STAMP_ARGB_PIN      27
+#define M5STAMP_ARGB_COUNT     1
+#define M5STAMP_BUTTON_PIN    39
+
 
 /* dynamic discovery stuff */
 nodeInfo_t node; /**< Store information about this node */
@@ -157,68 +162,65 @@ unsigned long ota_progress_millis = 0;
 volatile bool wifi_connected = false;
 volatile uint8_t myNodeID[4]; /**< node ID comprised of four bytes from MAC address */ 
 
-void IRAM_ATTR Timer0_ISR()
-{
-  isrFlag = true;
+// void IRAM_ATTR Timer0_ISR()
+// {
+//   isrFlag = true;
+// }
+
+/**
+ * @brief Handles specialized FastLED initialization for ARGB sub-modules.
+ * @param index The sub-module index (used to index ledData arrays).
+ * @param sub   Reference to the sub-module configuration.
+ */
+void initArgbHardware(uint8_t index, subModule_t& sub) {
+#ifdef ARGB_LED
+    uint8_t pin = sub.config.argbLed.outputPin;
+    uint8_t count = sub.config.argbLed.ledCount;
+
+    /* Max bounds check against pre-allocated memory */
+    if (count > MAX_LEDS_PER_STRIP) {
+        count = MAX_LEDS_PER_STRIP;
+    }
+
+    /** * FastLED requires static pin definitions. 
+     * We map the dynamic config pin to the appropriate template. 
+     */
+    switch (pin) {
+        case 18: FastLED.addLeds<WS2812B, 18, GRB>(ledData[index], count); break;
+        case 19: FastLED.addLeds<WS2812B, 19, GRB>(ledData[index], count); break;
+        case 25: FastLED.addLeds<WS2812B, 25, GRB>(ledData[index], count); break;
+        case 26: FastLED.addLeds<WS2812B, 26, GRB>(ledData[index], count); break;
+        case 27: FastLED.addLeds<WS2812B, 27, GRB>(ledData[index], count); break;
+        default:
+            Serial.printf("Error: Pin %d not hardware-capable for FastLED\n", pin);
+            return;
+    }
+    Serial.printf("Submod %d: ARGB Init (Pin %d, Count %d)\n", index, pin, count);                
+#endif
 }
 
-
 /**
- * @brief Configures physical IO pins and peripherals based on NVS settings.
- */
-/**
- * @brief Initializes physical hardware peripherals based on the loaded nodeInfo_t.
+ * @brief Initializes all sub-modules based on their intro message IDs.
+ * @details Iterates through the sub-module array and calls the appropriate init function based on the intro message ID.
+ * @note This function is called once by the main setup() function.
  */
 void initHardware() {
-    for (int i = 0; i < node.subModCnt; i++) {
-        /** Use reference for readability and to satisfy Doxygen standards */
-        subModule_t& sub = node.subModule[i]; 
+    Serial.println("[HW] Initializing sub-modules...");
 
-        /** * Use introMsgId to determine the personality. 
-         * Example: 0x701 = ARGB, 0x711 = Digital Input, etc.
-         */
+    for (int i = 0; i < MAX_SUB_MODULES; i++) {
+        subModule_t& sub = node.subModule[i];
+        
+        if (sub.introMsgId == 0) continue;
+
         switch (sub.introMsgId) {
-            case DISP_ARGB_LED_STRIP_ID: /**< 0x702 */
-              {
-#ifdef ARGB_LED
-                uint8_t pin = sub.config.argbLed.outputPin;
-                uint8_t count = sub.config.argbLed.ledCount;
+            case DISP_ARGB_LED_STRIP_ID:
+                initArgbHardware(i, sub);
+                break;
 
-                /* Ensure we don't exceed allocated memory */
-                if (count > MAX_LEDS_PER_STRIP) {
-                    count = MAX_LEDS_PER_STRIP; /* Max bounds check */
-                }
-
-                switch (pin) {
-                    case 18: 
-                        FastLED.addLeds<WS2812B, 18, GRB>(ledData[i], count); 
-                        break;
-                    case 19: 
-                        FastLED.addLeds<WS2812B, 19, GRB>(ledData[i], count); 
-                        break;
-                    case 25: 
-                        FastLED.addLeds<WS2812B, 25, GRB>(ledData[i], count); 
-                        break;
-                    case 26: 
-                        FastLED.addLeds<WS2812B, 26, GRB>(ledData[i], count); 
-                        break;
-                    case 27: 
-                        FastLED.addLeds<WS2812B, 27, GRB>(ledData[i], count); 
-                        break;
-                    default:
-                        Serial.printf("Error: Pin %d not hardware-capable for FastLED\n", pin);
-                        break;
-                }
-                Serial.printf("Submod %d: ARGB Init (Pin %d, Count %d)\n", i, pin, count);                
-#endif
-              }
-              break;
-
-            case INPUT_DIGITAL_GPIO_ID: /**< 0x711 */
-                /* 0=Floating, 1=Pull-up, 2=Pull-down */
-                if (sub.config.digitalInput.outputRes == 1) {
+            case INPUT_DIGITAL_GPIO_ID:
+                if (sub.config.digitalInput.outputRes == 1) { /* INPUT_RES_PULLUP */
                     pinMode(sub.config.digitalInput.inputPin, INPUT_PULLUP);
-                } else if (sub.config.digitalInput.outputRes == 2) {
+                } else if (sub.config.digitalInput.outputRes == 2) { /* INPUT_RES_PULLDOWN */
                     pinMode(sub.config.digitalInput.inputPin, INPUT_PULLDOWN);
                 } else {
                     pinMode(sub.config.digitalInput.inputPin, INPUT);
@@ -226,35 +228,32 @@ void initHardware() {
                 Serial.printf("Submod %d: Digital Input Init (Pin %d)\n", i, sub.config.digitalInput.inputPin);
                 break;
 
-            case DISP_ANALOG_BACKLIGHT_ID: /**< 0x70A */
+            case OUT_GPIO_DIGITAL_ID:
+            case DISP_ANALOG_BACKLIGHT_ID:
+            case DISP_ANALOG_LED_STRIP_ID:
+            case DISP_STROBE_MODULE_ID:
                 pinMode(sub.config.digitalOutput.outputPin, OUTPUT);
-                /* Default to 'off' based on outputMode configuration */
-                // digitalWrite(sub.config.digitalOutput.outputPin, sub.config.digitalOutput.outputMode ? HIGH : LOW);
-                Serial.printf("Submod %d: Analog Backlight Init (Pin %d)\n", i, sub.config.digitalOutput.outputPin);
+                /* Apply initial state if configured */
+                if (sub.introMsgId == OUT_GPIO_DIGITAL_ID) {
+                    digitalWrite(sub.config.digitalOutput.outputPin, sub.config.digitalOutput.outputMode ? HIGH : LOW);
+                }
+                Serial.printf("Submod %d: Output Init (Pin %d, Type 0x%03X)\n", i, sub.config.digitalOutput.outputPin, sub.introMsgId);
                 break;
 
-            case OUT_GPIO_DIGITAL_ID: /**< 0x744 */
-                pinMode(sub.config.digitalOutput.outputPin, OUTPUT);
-                /* Default to 'off' based on outputMode configuration */
-                // digitalWrite(sub.config.digitalOutput.outputPin, sub.config.digitalOutput.outputMode ? HIGH : LOW);
-                Serial.printf("Submod %d: Digital Output Init (Pin %d)\n", i, sub.config.digitalOutput.outputPin);
-                break;
-
-            case OUT_GPIO_PWM_ID: /**< 0x745 */
+            case OUT_GPIO_PWM_ID:
                 /* ESP32 LEDC setup: channel = i, frequency = config * 100, resolution = 8-bit */
-                ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * 100, 8); 
+                ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR, 8); 
                 ledcAttachPin(sub.config.pwmOutput.outputPin, i);
-                Serial.printf("Submod %d: PWM Output Init (Pin %d, Freq %d)\n", i, sub.config.pwmOutput.outputPin, (sub.config.pwmOutput.pwmFreq * 100));
+                Serial.printf("Submod %d: PWM Output Init (Pin %d, Freq %d)\n", i, sub.config.pwmOutput.outputPin, (sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR));
                 break;
 
-            case INPUT_ANALOG_ADC_ID: /**< 0x710 */
+            case INPUT_ANALOG_ADC_ID:
                 pinMode(sub.config.analogInput.inputPin, ANALOG);
                 Serial.printf("Submod %d: Analog Input Init (Pin %d)\n", i, sub.config.analogInput.inputPin);
                 break;
 
-            case DISP_STROBE_MODULE_ID: /**< 0x715 */
-                pinMode(sub.config.blinkOutput.outputPin, OUTPUT);
-                Serial.printf("Submod %d: Blink / Strobe Output Init (Pin %d)\n", i, sub.config.blinkOutput.outputPin);
+            case DISP_TOUCHSCREEN_LCD_ID:
+                Serial.printf("Submod %d: Touchscreen LCD Identified\n", i);
                 break;
 
             default:
@@ -289,8 +288,40 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t length) {
  * @brief Calculates a 16-bit CRC for the entire node configuration.
  */
 uint16_t getConfigurationCRC(const nodeInfo_t& node) {
-    // Hash the entire struct without worrying about internal fields
+    /* Hash the entire struct without worrying about internal fields */
     return crc16_ccitt((const uint8_t*)&node, sizeof(nodeInfo_t));
+}
+
+/**
+ * @brief Erases the node configuration and CRC from NVS.
+ * @return ConfigStatus status of the erase operation (OK, NOT_FOUND, or MUTEX).
+ */
+ConfigStatus eraseConfig() {
+    /* Attempt to acquire the flash mutex */
+    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return CFG_ERR_MUTEX;
+    }
+
+    Preferences prefs;
+    if (!prefs.begin("node_cfg", false)) {
+        xSemaphoreGive(flashMutex);
+        return CFG_ERR_NVS_OPEN;
+    }
+
+    /* Check if the data key exists before attempting removal */
+    if (!prefs.isKey("node_data")) {
+        prefs.end();
+        xSemaphoreGive(flashMutex);
+        return CFG_ERR_NOT_FOUND;
+    }
+
+    prefs.remove("node_data");
+    prefs.remove("node_crc");
+
+    prefs.end();
+    xSemaphoreGive(flashMutex);
+
+    return CFG_OK;
 }
 
 /**
@@ -690,86 +721,135 @@ static void setSwitchState(uint8_t *data, uint8_t swState) {
   }
 }
 
+/**
+ * @brief Helper to configure a standard digital output submodule
+ * @param idx The submodule index (0-7)
+ * @param pin The GPIO pin number
+ * @param mode Initial output mode or state
+ */
+void setupAnalogStripDigitalOut(uint8_t idx, uint8_t pin, uint8_t mode) {
+  if (idx >= MAX_SUB_MODULES) return; /* Safety check against array bounds */
+
+  subModule_t& sub = node.subModule[idx];
+  sub.introMsgId  = OUT_GPIO_DIGITAL_ID;
+  sub.introMsgDLC = OUT_GPIO_DIGITAL_DLC;
+  sub.dataMsgId   = SET_ANALOG_STRIP_COLOR_ID;
+  sub.dataMsgDLC  = SET_ANALOG_STRIP_COLOR_DLC;
+  sub.saveState   = true;
+  sub.config.digitalOutput.outputPin  = pin;
+  sub.config.digitalOutput.outputMode = mode;
+}
+
+/**
+ * @brief Helper to configure a standard LCD Touchscreen submodule
+ * @param idx The submodule index (0-7)
+ */
+void setupLcdTouchscreen(uint8_t idx) {
+  if (idx >= MAX_SUB_MODULES) return;
+
+  subModule_t& sub = node.subModule[idx];
+  sub.introMsgId  = DISP_TOUCHSCREEN_LCD_ID;
+  sub.introMsgDLC = DISP_TOUCHSCREEN_LCD_DLC;
+  sub.dataMsgId   = DATA_TOUCHSCREEN_EVENT_ID;
+  sub.dataMsgDLC  = DATA_TOUCHSCREEN_EVENT_DLC;
+  sub.saveState   = true;
+}
+
+/**
+ * @brief Helper to configure an Analog Backlight submodule
+ * @param idx The submodule index (0-7)
+ * @param pin The GPIO pin for PWM/Control
+ */
+void setupAnalogBacklight(uint8_t idx, uint8_t pin) {
+  if (idx >= MAX_SUB_MODULES) return;
+
+  subModule_t& sub = node.subModule[idx];
+  sub.introMsgId  = DISP_ANALOG_BACKLIGHT_ID;
+  sub.introMsgDLC = DISP_ANALOG_BACKLIGHT_DLC;
+  sub.dataMsgId   = DATA_DISPLAY_MODE_ID;
+  sub.dataMsgDLC  = DATA_DISPLAY_MODE_DLC;
+  sub.saveState   = true;
+  sub.config.digitalOutput.outputPin  = pin;
+  sub.config.digitalOutput.outputMode = OUT_MODE_TOGGLE;
+}
+
+/**
+ * @brief Helper to configure an ARGB LED Strip submodule
+ * @param idx The submodule index (0-7)
+ * @param pin The GPIO pin for the data signal
+ * @param count Number of LEDs in the strip
+ */
+void setupArgbStrip(uint8_t idx, uint8_t pin, uint16_t count) {
+  if (idx >= MAX_SUB_MODULES) return;
+
+  subModule_t& sub = node.subModule[idx];
+  sub.introMsgId  = DISP_ARGB_LED_STRIP_ID;
+  sub.introMsgDLC = DISP_ARGB_LED_STRIP_DLC;
+  sub.dataMsgId   = SET_ARGB_STRIP_COLOR_ID;
+  sub.dataMsgDLC  = SET_ARGB_STRIP_COLOR_DLC;
+  sub.saveState   = true;
+  sub.config.argbLed.outputPin = pin;
+  sub.config.argbLed.ledCount  = count;
+}
+
+/**
+ * @brief Helper to configure a Digital Input submodule
+ * @param idx The submodule index (0-7)
+ * @param pin The GPIO pin for the input
+ * @param res Internal resistor mode (PULLUP, PULLDOWN, etc.)
+ */
+void setupDigitalInput(uint8_t idx, uint8_t pin, uint8_t res) {
+  if (idx >= MAX_SUB_MODULES) return;
+
+  subModule_t& sub = node.subModule[idx];
+  sub.introMsgId  = INPUT_DIGITAL_GPIO_ID;
+  sub.introMsgDLC = INPUT_DIGITAL_GPIO_DLC;
+  sub.dataMsgId   = DATA_BUTTON_DOWN_ID;
+  sub.dataMsgDLC  = DATA_BUTTON_DOWN_DLC;
+  sub.saveState   = false;
+  sub.config.digitalInput.inputPin = pin;
+  sub.config.digitalInput.outputRes = res;
+}
+
 /** Load CYD node info into the nodeInfo struct */
 void nodeInfoCYD() { /* remote node type IFACE_TOUCHSCREEN_TYPE_A_ID 0x792 */
   node.nodeID      = unpackBytestoUint32((const uint8_t*)&myNodeID[0]);
   node.nodeTypeMsg = IFACE_TOUCHSCREEN_TYPE_A_ID;
   node.nodeTypeDLC = IFACE_TOUCHSCREEN_TYPE_A_DLC;
-  node_crc         = 0xffff; /* set the CRC to an invalid value indicating node has not received a configuration */
-  node.subModCnt   = 2; /* sub modules */
+  node_crc         = CRC_INVALID_CONFIG; /* set the CRC to an invalid value indicating node has not received a configuration */
 
-  /* sub modules: lcd touch screen, analog backlight */
-  node.subModule[0].introMsgId  = DISP_TOUCHSCREEN_LCD_ID; /* touch screen */
-  node.subModule[0].introMsgDLC = DISP_TOUCHSCREEN_LCD_DLC;
-  node.subModule[0].dataMsgId   = DATA_TOUCHSCREEN_EVENT_ID;
-  node.subModule[0].dataMsgDLC  = DATA_TOUCHSCREEN_EVENT_DLC;
-  node.subModule[0].saveState   = true;
-  node.subModule[0].config.rawConfig[0] = 0; /* no configuration for the touch screen */
-  node.subModule[0].config.rawConfig[1] = 0;
-  node.subModule[0].config.rawConfig[2] = 0;
+  /* Touchscreen and backlight: Handled via helper */
+  setupLcdTouchscreen(0);
+  setupAnalogBacklight(1, CYD_BACKLIGHT_PIN);
 
-  node.subModule[1].introMsgId  = DISP_ANALOG_BACKLIGHT_ID; /* analog backlight */
-  node.subModule[1].introMsgDLC = DISP_ANALOG_BACKLIGHT_DLC;
-  node.subModule[1].dataMsgId   = DATA_DISPLAY_MODE_ID;
-  node.subModule[1].dataMsgDLC  = DATA_DISPLAY_MODE_DLC;
-  node.subModule[1].saveState   = true;
-  node.subModule[1].config.digitalOutput.outputPin   = CYD_BACKLIGHT_PIN; 
-  node.subModule[1].config.digitalOutput.outputMode  = OUT_MODE_TOGGLE;
-  node.subModule[1].config.digitalOutput.momPressDur = 0; /* not used */
-
-  node.subModule[2].introMsgId  = DISP_ANALOG_LED_STRIP_ID;
-  node.subModule[2].introMsgDLC = DISP_ANALOG_LED_STRIP_DLC;
-  node.subModule[2].dataMsgId   = SET_ANALOG_STRIP_COLOR_ID;
-  node.subModule[2].dataMsgDLC  = SET_ANALOG_STRIP_COLOR_DLC;
-  node.subModule[2].saveState   = true;
-  node.subModule[2].config.analogStrip.stripIndex = 0;
-  node.subModule[2].config.analogStrip.pinIndex   = CYD_LED_BLUE_PIN;
-  node.subModule[2].config.analogStrip.colorIndex = ANALOG_STRIP_BLUE;
-
-  node.subModule[3].introMsgId  = DISP_ANALOG_LED_STRIP_ID;
-  node.subModule[3].introMsgDLC = DISP_ANALOG_LED_STRIP_DLC;
-  node.subModule[3].dataMsgId   = SET_ANALOG_STRIP_COLOR_ID;
-  node.subModule[3].dataMsgDLC  = SET_ANALOG_STRIP_COLOR_DLC;
-  node.subModule[3].saveState   = true;
-  node.subModule[3].config.analogStrip.stripIndex = 1;
-  node.subModule[3].config.analogStrip.pinIndex   = CYD_LED_GREEN_PIN;
-  node.subModule[3].config.analogStrip.colorIndex = ANALOG_STRIP_GREEN;
-
-  node.subModule[4].introMsgId  = DISP_ANALOG_LED_STRIP_ID;
-  node.subModule[4].introMsgDLC = DISP_ANALOG_LED_STRIP_DLC;
-  node.subModule[4].dataMsgId   = SET_ANALOG_STRIP_COLOR_ID;
-  node.subModule[4].dataMsgDLC  = SET_ANALOG_STRIP_COLOR_DLC;
-  node.subModule[4].saveState   = true;
-  node.subModule[4].config.analogStrip.stripIndex = 2;
-  node.subModule[4].config.analogStrip.pinIndex   = CYD_LED_RED_PIN;
-  node.subModule[4].config.analogStrip.colorIndex = ANALOG_STRIP_RED;
+  /* RGB LED: Handled via helper */
+  setupAnalogStripDigitalOut(2, CYD_LED_BLUE_PIN,  OUT_STATE_ON);  /* Index 2 */
+  setupAnalogStripDigitalOut(3, CYD_LED_GREEN_PIN, OUT_STATE_ON);  /* Index 3 */
+  setupAnalogStripDigitalOut(4, CYD_LED_RED_PIN,   OUT_STATE_OFF); /* Index 4 */
 }
 
-/** Load ARGB node info into the nodeInfo struct */
+
+/**
+ * @brief Load ARGB node info into the nodeInfo struct
+ *
+ * @details This function populates the nodeInfo struct with the
+ *          necessary information for an ARGB node. This includes
+ *          the node ID, node type message ID, node type DLC,
+ *          and the CRC value. Additionally, this function sets
+ *          up the sub modules associated with the node, which are
+ *          the ARGB strip and a digital input.
+ */
 void nodeInfoARGB() { /* remote node type IFACE_ARGB_MULTI_ID 0x79C */
   node.nodeID      = unpackBytestoUint32((const uint8_t*)&myNodeID[0]);
   node.nodeTypeMsg = IFACE_ARGB_MULTI_ID;
   node.nodeTypeDLC = IFACE_ARGB_MULTI_DLC;
-  node_crc         = 0xffff; /* set the CRC to an invalid value indicating node has not received a configuration */
-  node.subModCnt   = 2; /* two sub modules */
+  node_crc         = CRC_INVALID_CONFIG;
 
-  /* first sub module setup defaults */
-  node.subModule[0].introMsgId  = DISP_ARGB_LED_STRIP_ID; /* digital addressable led strip */
-  node.subModule[0].introMsgDLC = DISP_ARGB_LED_STRIP_DLC;
-  node.subModule[0].dataMsgId   = SET_ARGB_STRIP_COLOR_ID;
-  node.subModule[0].dataMsgDLC  = SET_ARGB_STRIP_COLOR_DLC;
-  node.subModule[0].saveState   = true;
-  node.subModule[0].config.argbLed.ledCount  = 1;
-  node.subModule[0].config.argbLed.outputPin = 27;
-
-  /* second sub module setup defaults */
-  node.subModule[1].introMsgId  = INPUT_DIGITAL_GPIO_ID; /* digital input gpio type*/
-  node.subModule[1].introMsgDLC = INPUT_DIGITAL_GPIO_DLC;
-  node.subModule[1].dataMsgId   = DATA_BUTTON_DOWN_ID;
-  node.subModule[1].dataMsgDLC  = DATA_BUTTON_DOWN_DLC;
-  node.subModule[1].saveState   = false;
-  node.subModule[1].config.digitalInput.inputPin = 39;
-  node.subModule[1].config.digitalInput.outputRes = INPUT_RES_PULLUP;
+  /* Configure via specialized helpers */
+  setupArgbStrip(0, M5STAMP_ARGB_PIN, M5STAMP_ARGB_COUNT);
+  setupDigitalInput(1, M5STAMP_BUTTON_PIN, INPUT_RES_PULLUP);
+  
+  /* node.subModCnt will be calculated dynamically during intro */
 }
 
 /** * @brief Prints a hex dump of a memory block to the Serial console.
@@ -911,6 +991,47 @@ void handleColorCommand(uint8_t ledIndex, uint8_t colorIndex) {
 }
 
 /**
+ * @brief Handles the erase NVS command from the master node
+ * 
+ * This function attempts to erase the NVS configuration and
+ * reset the node to its default configuration. If the erase
+ * operation fails due to a mutex timeout, the function will
+ * retry up to 3 times with a short delay in between retries.
+ */
+void handleEraseNVS() {
+  ConfigStatus cfgStatus;
+  int retries = 0;
+
+  Serial.println("\nErasing config...");
+
+  do {
+      cfgStatus = eraseConfig(); 
+
+      if (cfgStatus == CFG_OK) {
+          Serial.println("Config erased successfully, rebooting...");
+          vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before reboot */
+          ESP.restart(); /**< Reboot the ESP32 */
+          break; 
+      } 
+      
+      if (cfgStatus == CFG_ERR_NOT_FOUND) {
+          Serial.println("Config not found.");
+          break; 
+      } 
+
+      if (cfgStatus == CFG_ERR_MUTEX) {
+          Serial.printf("Flash busy - Retry %d/3...\n", retries + 1);
+          vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
+      }
+
+  } while ((cfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
+
+  if (cfgStatus == CFG_ERR_MUTEX) {
+      Serial.println("Critical Error: Could not access NVS (Mutex Timeout)");
+  }
+}
+
+/**
  * @brief Attempts to load the configuration from NVS.
  *
  * This function attempts to load the configuration from NVS and
@@ -956,6 +1077,23 @@ void handleReadNVS() {
 }
 
 /**
+ * @brief Dynamically counts active submodules in the node structure
+ * * Scans the subModule array and counts entries with a non-zero introMsgId.
+ * This eliminates the need to hard-code subModCnt in the default config.
+ * * @return uint8_t Total number of configured submodules
+ */
+uint8_t countActiveSubModules() {
+    uint8_t count = 0;
+    /* Iterate through the maximum possible submodules (8) */
+    for (int i = 0; i < 8; i++) {
+        if (node.subModule[i].introMsgId != 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
+/**
  * @brief Send an introduction message about the node
  * 
  * This function is called in response to a request from the master node
@@ -972,6 +1110,9 @@ void sendIntroduction(int msgPtr = 0) {
   uint32_t txMsgDLC = 8U; /* Default to 8 bytes */
   uint8_t msgData[8];
 
+  /* Update the count dynamically before processing the introduction */
+  node.subModCnt = countActiveSubModules();
+
   memset(&msgData, 0, sizeof(msgData)); /* wipe the buffer before using it */
 
   /* Consistent 32-bit Node ID across all intro frames */
@@ -980,7 +1121,7 @@ void sendIntroduction(int msgPtr = 0) {
 /* 0: Node Identity */
   if (msgPtr == 0) {
     /* Check FLAG_VALID_CONFIG flag, if it's set use the in-memory CRC, if not use 0xFFFF */    
-    uint16_t txCrc = FLAG_VALID_CONFIG ? getConfigurationCRC(node) : 0xFFFF;
+    uint16_t txCrc = FLAG_VALID_CONFIG ? getConfigurationCRC(node) : CRC_INVALID_CONFIG;
     // uint16_t txCrc = getConfigurationCRC(node);
     
     txMsgID    = node.nodeTypeMsg;
@@ -1158,9 +1299,16 @@ static void rxProcessMessage(twai_message_t &message) {
         /** message.data[7] is reserved/padding */
       }
       break;      
+    case CFG_ERASE_NVS_ID: /**< 0x41B: Master requesting NVS erase */
+      {
+        Serial.println("Master requesting NVS erase...");
+        handleEraseNVS();
+      }
+      break;
     case CFG_REBOOT_ID: /**< 0x41C: Master requesting reboot */
       {
-        Serial.println("Master requesting reboot...");
+        Serial.println("Master requested reboot, rebooting...");
+        vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before reboot */
         ESP.restart();
       }
       break;
