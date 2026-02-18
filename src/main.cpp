@@ -10,37 +10,40 @@
  * @date 2026-02-16
  */
 
+ /* === Framework includes === */
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 
 #include <stdio.h>
 
+/* === ESP32 includes === */
 #include <Preferences.h>
 #include <rom/crc.h>
-
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-
-/* Load Wi-Fi networking */
 #include <WiFi.h>
 #include <ESPmDNS.h>
-#include "esp_wifi.h"
+#include <esp_wifi.h>
+#include <time.h>
+
+/* === FreeRTOS includes === */
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #ifdef ARGB_LED
 /* Load FastLED */
 #include <FastLED.h>
 #endif
 
+/* === Local includes === */
+#include "secrets.h"
+
 #ifdef ESP32CYD
 #include "espcyd.h"
+#endif
+
+#ifdef ESP32CYD
 extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cpp
 #endif
 
-/* Timekeeping library */
-#include <time.h>
-
-/* my secrets */
-#include "secrets.h"
 
 /* my colors */
 #if defined(ARGB_LED) || defined(ESP32CYD) || defined(ARGBW_LED)
@@ -87,20 +90,15 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 #include "byte_conversion.h"
 
 #define CAN_ID_MASK            (0x3F)      /**< Mask for lower 6 bits of CAN ID */
-#define COLOR_PALETTE_SIZE     (32U)       /**< Size of the SystemPalette array */
 #define PWM_RES_BITS           (8U)        /**< 8-bit resolution for PWM */
 #define DEFAULT_TIMEZONE       "EST5EDT,M3.2.0,M11.1.0"
 #define ENV_VAL_OVERWRITE      (1U)
 
 #define CRC_INVALID_CONFIG     0xFFFF
-#define MAX_SUB_MODULES        8
 #define PWM_SCALING_FACTOR     (100U)
-#define CAN_MAX_DLC            (8U)
-#define CAN_NODE_ID_LEN        (4U)
 #define SUBMOD_PART_B_FLAG     (0x80U)
-#define MAX_ARGB_SUBMODULES    4  /**< Hardware limit for ARGB strips */
 
-/* hardware definitions */
+/* esp32 specific hardware constants */
 #define CYD_BACKLIGHT_PIN     21
 #define CYD_LED_RED_PIN        4                
 #define CYD_LED_BLUE_PIN      17
@@ -996,6 +994,51 @@ void handleColorCommand(uint8_t ledIndex, uint8_t colorIndex) {
 #endif
 }
 
+void manageColorPickerList(uint16_t cmd, twai_message_t& msg) {
+
+  if (msg.data_length_code < CAN_NODE_ID_LEN) return; /* Need at least 4 bytes to proceed */
+
+  switch (cmd)
+  {
+
+    case COLORPICKER_READ_NVS_ID:
+    {
+      Serial.println("COLORPICKER_READ_NVS_ID");
+      break;
+    }
+    case COLORPICKER_WRITE_NVS_ID:
+    {
+      Serial.println("COLORPICKER_WRITE_NVS_ID");
+      break;
+    }
+    case COLORPICKER_SEND_LIST_ID:
+    {
+      Serial.println("COLORPICKER_SEND_LIST_ID");
+      break;
+    }
+    case COLORPICKER_PURGE_LIST_ID:
+    {
+      Serial.println("COLORPICKER_PURGE_LIST_ID");
+      break;
+    }
+    case COLORPICKER_DEL_NODE_ID:
+    {
+      Serial.println("COLORPICKER_DEL_NODE_ID");
+      break;
+    }
+    case COLORPICKER_ADD_NODE_ID:
+    {
+      Serial.println("COLORPICKER_ADD_NODE_ID");
+      break;
+    }
+    default:
+    {
+      Serial.println("Unknown command");
+      break;
+    }
+  }
+}
+
 /**
  * @brief Handles the erase NVS command from the master node
  * 
@@ -1364,6 +1407,7 @@ static void rxProcessMessage(twai_message_t &message) {
 
         send_message(DATA_CONFIG_CRC_ID, responseData, DATA_CONFIG_CRC_DLC);
       }
+      break;
     case REQ_NODE_INTRO_ID:
       Serial.println("Interface intro request, responding with our introduction");
       // FLAG_SEND_INTRODUCTION = true; /* set flag to send introduction message */
@@ -1380,6 +1424,7 @@ static void rxProcessMessage(twai_message_t &message) {
       sendIntroduction(introMsgPtr);
       break;
     case DATA_EPOCH_ID:
+      { 
       // Use explicit casting to prevent shift overflow
       uint32_t epochTime;
       epochTime = ((uint32_t)message.data[4] << 24) | 
@@ -1388,6 +1433,20 @@ static void rxProcessMessage(twai_message_t &message) {
                    (uint32_t)message.data[7];
       setEpochTime((uint32_t)epochTime);
       Serial.println("Received epoch from master; updating clock");
+      }
+      break;
+    case COLORPICKER_ADD_NODE_ID: /* 0x433: colorpicker add node */
+        manageColorPickerList(COLORPICKER_ADD_NODE_ID, message);
+    case COLORPICKER_DEL_NODE_ID: /* 0x432: colorpicker del node */
+        manageColorPickerList(COLORPICKER_DEL_NODE_ID, message);
+    case COLORPICKER_PURGE_LIST_ID: /* 0x431: colorpicker purge list */
+        manageColorPickerList(COLORPICKER_PURGE_LIST_ID, message); 
+    case COLORPICKER_SEND_LIST_ID: /* 0x430: colorpicker send list */
+        manageColorPickerList(COLORPICKER_SEND_LIST_ID, message);  
+    case COLORPICKER_WRITE_NVS_ID: /* 0x42F: colorpicker write nvs */
+        manageColorPickerList(COLORPICKER_WRITE_NVS_ID, message);
+    case COLORPICKER_READ_NVS_ID: /* 0x42E: colorpicker read nvs */
+        manageColorPickerList(COLORPICKER_READ_NVS_ID, message);
       break;
 
     default:
