@@ -3,6 +3,9 @@
 
 #include <FastLED.h>
 
+#define COLOR_PALETTE_SIZE     (32U)       /**< Size of the SystemPalette array */
+
+
 /** * @brief Global index-based palette.
  * @note Transmit the index (0-31) over CAN to save bandwidth.
  */
@@ -28,7 +31,7 @@
  * @brief Visually corrected 32-color palette.
  * @details Uses a power-law distribution for brightness to appear linear to the eye.
  */
-const CRGB SystemPalette[32] = {
+const CRGB SystemPalette[COLOR_PALETTE_SIZE] = {
     /* Row 1: Very Dim (approx 6% brightness) */
     CRGB::Black, CRGB(32,0,0),   CRGB(0,32,0),   CRGB(0,0,32),   CRGB(20,20,0),  CRGB(0,20,20),  CRGB(20,0,20),  CRGB(32,16,0),
     
