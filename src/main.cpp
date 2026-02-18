@@ -78,6 +78,10 @@ uint8_t FLAG_SEND_HEALTHCHECK  = 0;
 uint8_t FLAG_SEND_NODECHECK    = 0;
 uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 
+/* memory allocation for main tasks */
+#define TASK_TWAI_STACK_SIZE   4096
+#define TASK_OTA_STACK_SIZE    4096
+
 /* my can bus stuff */
 #include "canbus_project.h"
 #include "byte_conversion.h"
@@ -85,6 +89,9 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 #define CRC_INVALID_CONFIG     0xFFFF
 #define MAX_SUB_MODULES        8
 #define PWM_SCALING_FACTOR     (100U)
+#define CAN_MAX_DLC            (8U)
+#define CAN_NODE_ID_LEN        (4U)
+#define SUBMOD_PART_B_FLAG     (0x80U)
 
 /* hardware definitions */
 #define CYD_BACKLIGHT_PIN     21
@@ -162,10 +169,10 @@ unsigned long ota_progress_millis = 0;
 volatile bool wifi_connected = false;
 volatile uint8_t myNodeID[4]; /**< node ID comprised of four bytes from MAC address */ 
 
-// void IRAM_ATTR Timer0_ISR()
-// {
-//   isrFlag = true;
-// }
+void IRAM_ATTR Timer0_ISR()
+{
+  isrFlag = true;
+}
 
 /**
  * @brief Handles specialized FastLED initialization for ARGB sub-modules.
@@ -218,11 +225,11 @@ void initHardware() {
                 break;
 
             case INPUT_DIGITAL_GPIO_ID:
-                if (sub.config.digitalInput.outputRes == 1) { /* INPUT_RES_PULLUP */
+                if (sub.config.digitalInput.outputRes == INPUT_RES_PULLUP) { /* INPUT_RES_PULLUP */
                     pinMode(sub.config.digitalInput.inputPin, INPUT_PULLUP);
-                } else if (sub.config.digitalInput.outputRes == 2) { /* INPUT_RES_PULLDOWN */
+                } else if (sub.config.digitalInput.outputRes == INPUT_RES_PULLDOWN) { /* INPUT_RES_PULLDOWN */
                     pinMode(sub.config.digitalInput.inputPin, INPUT_PULLDOWN);
-                } else {
+                } else { /* INPUT_RES_FLOATING */
                     pinMode(sub.config.digitalInput.inputPin, INPUT);
                 }
                 Serial.printf("Submod %d: Digital Input Init (Pin %d)\n", i, sub.config.digitalInput.inputPin);
@@ -555,11 +562,9 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
   message.dlc_non_comp = 0;         /**< non-compliant DLC (0-8 bytes) */
   message.data_length_code = dlc;   /**< data length code (0-8 bytes) */
 
-  if (dlc > 8) dlc = 8; /* Safety check */
+  if (dlc > CAN_MAX_DLC) dlc = CAN_MAX_DLC; /* Safety check */
   memcpy(message.data, data, dlc);  /**< copy data to message data field */
   
-  // Serial.printf("Sending message ID: 0x%03X\n", msgid);
-
   /* Attempt transmission with a 10ms timeout */
   if (twai_transmit(&message, pdMS_TO_TICKS(10)) == ESP_OK) {
 #ifdef ESP32CYD
@@ -599,16 +604,16 @@ static void setDisplayMode(uint8_t *data, uint8_t displayMode) {
   uint32_t rxunitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
   
   switch (displayMode) {
-    case 0: // display off
+    case DISPLAY_MODE_OFF: // display off
       Serial.printf("Unit %d Display %d OFF\n", rxunitID, rxdisplayID);
       break;
-    case 1: // display on
+    case DISPLAY_MODE_ON: // display on
       Serial.printf("Unit %d Display %d ON\n", rxunitID, rxdisplayID);
       break;
-    case 2: // clear display
+    case DISPLAY_MODE_CLEAR: // clear display
       Serial.printf("Unit %d Display %d CLEAR\n", rxunitID, rxdisplayID);
       break;
-    case 3: // flash display
+    case DISPLAY_MODE_FLASH: // flash display
       Serial.printf("Unit %d Display %d FLASH\n", rxunitID, rxdisplayID);
       break;
     default:
@@ -654,15 +659,15 @@ static void setSwitchMode(uint8_t *data) {
   uint8_t switchMode = data[6]; // switch mode
 
   switch (switchMode) {
-    case 0: // solid state (on/off)
+    case OUT_MODE_TOGGLE: // solid state (on/off)
       break;
-    case 1: // one-shot momentary
+    case OUT_MODE_MOMENTARY: // one-shot momentary
       break;
-    case 2: // blinking
+    case OUT_MODE_BLINKING: // blinking
       break;
-    case 3: // strobing
+    case OUT_MODE_STROBE: // strobing
       break;
-    case 4: // pwm
+    case OUT_MODE_PWM: // pwm
       break;
     default:
       Serial.println("Invalid switch mode");
@@ -684,13 +689,13 @@ static void txSwitchState(uint8_t *txUnitID, uint16_t txSwitchID, uint8_t swStat
 
   switch (swState) {
 
-  case 0: // switch off
+  case OUT_STATE_OFF: // switch off
     send_message(SW_SET_OFF_ID, dataBytes, txDLC);
     break;
-  case 1: // switch on
+  case OUT_STATE_ON: // switch on
     send_message(SW_SET_ON_ID, dataBytes, txDLC);
     break;
-  case 2: // momentary press
+  case OUT_STATE_MOMENTARY: // momentary press
     send_message(SW_MOM_PRESS_ID, dataBytes, txDLC);
     break;
   default: // unsupported state
@@ -706,13 +711,13 @@ static void setSwitchState(uint8_t *data, uint8_t swState) {
   uint8_t unitID[] = {data[0], data[1], data[2], data[3]}; // unit ID
   
   switch (swState) {
-    case 0: // switch off
+    case OUT_STATE_OFF: // switch off
       Serial.printf("Unit %02x:%02x:%02x:%02x Switch %d OFF\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
       break;
-    case 1: // switch on
+    case OUT_STATE_ON: // switch on
       Serial.printf("Unit %02x:%02x:%02x:%02x Switch %d ON\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
       break;
-    case 2: // momentary press
+    case OUT_STATE_MOMENTARY: // momentary press
       Serial.printf("Unit %02x:%02x:%02x:%02x Switch %d MOMENTARY PRESS\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
       break;
     default:
@@ -889,11 +894,6 @@ static void loadDefaults(uint16_t nodeType) {
   printHexDump(&node, sizeof(node));
 }
 
-// static void sendIntroack() {
-//   // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55}; // data bytes
-//   send_message(ACK_INTRO_ID, (uint8_t *)myNodeID, ACK_INTRO_DLC);
-// }
-
 /**
  * @brief Get the current epoch time from the system clock.
  *
@@ -903,6 +903,7 @@ static void loadDefaults(uint16_t nodeType) {
  *
  * @return uint32_t The current epoch time in seconds.
  */
+
 static uint32_t getEpochTime() {
   /* Get time from the system clock and return it as a uint32_t */
   struct timespec newTime;
@@ -1085,7 +1086,7 @@ void handleReadNVS() {
 uint8_t countActiveSubModules() {
     uint8_t count = 0;
     /* Iterate through the maximum possible submodules (8) */
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < MAX_SUB_MODULES; i++) {
         if (node.subModule[i].introMsgId != 0) {
             count++;
         }
@@ -1108,7 +1109,7 @@ void sendIntroduction(int msgPtr = 0) {
   uint32_t currentTick = millis();
   uint16_t txMsgID  = 0;
   uint32_t txMsgDLC = 8U; /* Default to 8 bytes */
-  uint8_t msgData[8];
+  uint8_t  msgData[CAN_MAX_DLC];
 
   /* Update the count dynamically before processing the introduction */
   node.subModCnt = countActiveSubModules();
@@ -1148,11 +1149,11 @@ void sendIntroduction(int msgPtr = 0) {
         msgData[7] = sub.config.rawConfig[2];
     } else {
         /* Part B: Telemetry/Operational Data */
-        msgData[4] = modIdx | 0x80; /**< Set bit 7 to indicate Part B */
+        msgData[4] = modIdx | SUBMOD_PART_B_FLAG; /**< Set bit 7 to indicate Part B */
         msgData[5] = (uint8_t)(sub.dataMsgId >> 8);
         msgData[6] = (uint8_t)(sub.dataMsgId);
         /* Pack DLC (4 bits) and SaveState (1 bit) into byte 7 */
-        msgData[7] = (sub.dataMsgDLC & 0x0F) | (sub.saveState ? 0x80 : 0x00);
+        msgData[7] = (sub.dataMsgDLC & 0x0F) | (sub.saveState ? SUBMOD_PART_B_FLAG : 0x00);
     }
 
     if (txMsgID == 0) {
@@ -1204,12 +1205,10 @@ static void rxProcessMessage(twai_message_t &message) {
 
   switch (message.identifier) {
     case SW_SET_OFF_ID:            // set output switch off
-      setSwitchState(message.data, 0);
-      txSwitchState((uint8_t *)myNodeID, 32, 2); 
+
       break;
     case SW_SET_ON_ID:             // set output switch on
-      setSwitchState(message.data, 1);
-      txSwitchState((uint8_t *)myNodeID, 32, 0); 
+
       break;
     case SW_SET_MODE_ID:           // setup output switch modes
       setSwitchMode(message.data);
@@ -1403,8 +1402,8 @@ void handleCanRX(twai_message_t& msg) {
 
   /* Software filter: only log introductions for remote ARGB nodes (for the CYD) */
 #ifdef ESP32CYD
-  if (msg.identifier == 0x701 || msg.identifier == 0x702 || msg.identifier == 0x711) {
-      if (msg.data_length_code >= 4) { /* Need at least 4 bytes to proceed */
+  if (msg.identifier == DISP_ARGB_LED_STRIP_ID || msg.identifier == DISP_ARGB_BACKLIGHT_ID || msg.identifier == DISP_ARGB_BUTTON_BACKLIGHT_ID) {
+      if (msg.data_length_code >= CAN_NODE_ID_LEN) { /* Need at least 4 bytes to proceed */
           uint32_t remoteNodeId;
           /* Use bytes 0-3 to match your sendIntroduction format */
           remoteNodeId = ((uint32_t)msg.data[0] << 24) | 
@@ -1577,8 +1576,6 @@ void setup() {
   digitalWrite(LED_GREEN, HIGH);
 #endif
 
-  memset(&node, 0, sizeof(nodeInfo_t)); /**< Clear the struct */
-
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   delay(2500); /* Provide time for the board's usb interface to change from flash to uart mode */
@@ -1609,19 +1606,19 @@ void setup() {
 
   /* Start the CAN task */
   xTaskCreate(
-    TaskTWAI,     /* Task function */
-    "Task TWAI",  /*  name of task */
-    4096,         /* Stack size of task */
-    NULL,         /* parameter of the task */
-    2,            /* priority of the task */
-    &xTWAIHandle  /* Task handle to keep track of created task */
+    TaskTWAI,              /* Task function */
+    "Task TWAI",           /*  name of task */
+    TASK_TWAI_STACK_SIZE,  /* Stack size of task */
+    NULL,                  /* parameter of the task */
+    2,                     /* priority of the task */
+    &xTWAIHandle           /* Task handle to keep track of created task */
   );              
 
   /* Start OTA task  */
   xTaskCreate(
     TaskOTA,
     "Task OTA",
-    4096,   
+    TASK_OTA_STACK_SIZE,   
     NULL,
     4,
     NULL
