@@ -79,12 +79,18 @@ uint8_t FLAG_SEND_NODECHECK    = 0;
 uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 
 /* memory allocation for main tasks */
-#define TASK_TWAI_STACK_SIZE   4096
-#define TASK_OTA_STACK_SIZE    4096
+#define TASK_TWAI_STACK_SIZE   (4096U)
+#define TASK_OTA_STACK_SIZE    (4096U)
 
 /* my can bus stuff */
 #include "canbus_project.h"
 #include "byte_conversion.h"
+
+#define CAN_ID_MASK            (0x3F)      /**< Mask for lower 6 bits of CAN ID */
+#define COLOR_PALETTE_SIZE     (32U)       /**< Size of the SystemPalette array */
+#define PWM_RES_BITS           (8U)        /**< 8-bit resolution for PWM */
+#define DEFAULT_TIMEZONE       "EST5EDT,M3.2.0,M11.1.0"
+#define ENV_VAL_OVERWRITE      (1U)
 
 #define CRC_INVALID_CONFIG     0xFFFF
 #define MAX_SUB_MODULES        8
@@ -92,6 +98,7 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 #define CAN_MAX_DLC            (8U)
 #define CAN_NODE_ID_LEN        (4U)
 #define SUBMOD_PART_B_FLAG     (0x80U)
+#define MAX_ARGB_SUBMODULES    4  /**< Hardware limit for ARGB strips */
 
 /* hardware definitions */
 #define CYD_BACKLIGHT_PIN     21
@@ -181,17 +188,20 @@ void IRAM_ATTR Timer0_ISR()
  */
 void initArgbHardware(uint8_t index, subModule_t& sub) {
 #ifdef ARGB_LED
+    /* Rail 1: Ensure we don't exceed the pre-allocated ledData buffer rows */
+    if (index >= MAX_ARGB_SUBMODULES) {
+        Serial.printf("Error: Submod %d exceeds ARGB hardware limit of %d\n", index, MAX_ARGB_SUBMODULES);
+        return;
+    }
+
     uint8_t pin = sub.config.argbLed.outputPin;
     uint8_t count = sub.config.argbLed.ledCount;
 
-    /* Max bounds check against pre-allocated memory */
+    /* Rail 2: Max bounds check against pre-allocated buffer columns */
     if (count > MAX_LEDS_PER_STRIP) {
         count = MAX_LEDS_PER_STRIP;
     }
 
-    /** * FastLED requires static pin definitions. 
-     * We map the dynamic config pin to the appropriate template. 
-     */
     switch (pin) {
         case 18: FastLED.addLeds<WS2812B, 18, GRB>(ledData[index], count); break;
         case 19: FastLED.addLeds<WS2812B, 19, GRB>(ledData[index], count); break;
@@ -249,7 +259,7 @@ void initHardware() {
 
             case OUT_GPIO_PWM_ID:
                 /* ESP32 LEDC setup: channel = i, frequency = config * 100, resolution = 8-bit */
-                ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR, 8); 
+                ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR, PWM_RES_BITS); 
                 ledcAttachPin(sub.config.pwmOutput.outputPin, i);
                 Serial.printf("Submod %d: PWM Output Init (Pin %d, Freq %d)\n", i, sub.config.pwmOutput.outputPin, (sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR));
                 break;
@@ -264,7 +274,7 @@ void initHardware() {
                 break;
 
             default:
-                Serial.printf("Submod %d: No hardware init defined for ID 0x%03X\n", i, sub.introMsgId);
+                Serial.printf("Submod %d: No hardware init available for ID 0x%03X\n", i, sub.introMsgId);
                 break;
         }
     }
@@ -965,15 +975,10 @@ static void setEpochTime(uint32_t epochTime) {
 void handleColorCommand(uint8_t ledIndex, uint8_t colorIndex) {
 #ifdef ARGB_LED
     /* 1. Range check the submodule index */
-    if (ledIndex >= 8) return;
+    if (ledIndex >= MAX_SUB_MODULES) return;
 
-    /* 2. Verify this submodule is actually an ARGB strip */
-    if (node.subModule[ledIndex].introMsgId != DISP_ARGBW_LED_STRIP_ID) {
-        return; /**< Not an ARGB module, ignore command */
-    }
-
-    /* 3. Range check the color index against your palette */
-    if (colorIndex < 32) {
+     /* 3. Range check the color index against your palette */
+    if (colorIndex < COLOR_PALETTE_SIZE) {
         CRGB targetColor = SystemPalette[colorIndex];
         
         /* Fetch the dynamic count from the configuration struct */
@@ -1397,9 +1402,6 @@ static void rxProcessMessage(twai_message_t &message) {
  * @param msg The TWAI message frame received from the bus
  */
 void handleCanRX(twai_message_t& msg) {
-  /* Extract the "Base" of the ID by masking out the lower 6 bits (0x3F) */
-  uint16_t idBase = msg.identifier & ~0x3F;
-
   /* Software filter: only log introductions for remote ARGB nodes (for the CYD) */
 #ifdef ESP32CYD
   if (msg.identifier == DISP_ARGB_LED_STRIP_ID || msg.identifier == DISP_ARGB_BACKLIGHT_ID || msg.identifier == DISP_ARGB_BUTTON_BACKLIGHT_ID) {
@@ -1590,7 +1592,7 @@ void setup() {
   WiFi.begin(ssid, password);
   
   /* set up some clock parameters */
-  setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1);
+  setenv("TZ", DEFAULT_TIMEZONE, ENV_VAL_OVERWRITE);
   tzset();
 
   readMacAddress(); /**< Read the ESP32 station MAC address and program myNodeID */
