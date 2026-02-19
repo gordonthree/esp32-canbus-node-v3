@@ -96,6 +96,7 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 
 #define CRC_INVALID_CONFIG     0xFFFF
 #define PWM_SCALING_FACTOR     (100U)
+#define MOM_SW_SCALING_FACTOR  (10U)
 #define SUBMOD_PART_B_FLAG     (0x80U)
 
 /* esp32 specific hardware constants */
@@ -200,7 +201,7 @@ void initArgbHardware(uint8_t index, subModule_t& sub) {
         count = MAX_LEDS_PER_STRIP;
     }
 
-    switch (pin) {
+    switch (pin) { /* LED type, LED pin, */
         case 18: FastLED.addLeds<WS2812B, 18, GRB>(ledData[index], count); break;
         case 19: FastLED.addLeds<WS2812B, 19, GRB>(ledData[index], count); break;
         case 25: FastLED.addLeds<WS2812B, 25, GRB>(ledData[index], count); break;
@@ -713,20 +714,38 @@ static void txSwitchState(uint8_t *txUnitID, uint16_t txSwitchID, uint8_t swStat
 }
 
 
-static void setSwitchState(uint8_t *data, uint8_t swState) {
+static void setSwitchState(twai_message_t& msg)
+{ /* SET_SWITCH_STATE_ID */
+
   // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55, 0x7F, 0xE4}; // data bytes
-  uint16_t switchID = (data[4] << 8) | data[5]; // switch ID
-  uint8_t unitID[] = {data[0], data[1], data[2], data[3]}; // unit ID
+  uint8_t switchID = msg.data[4]; /* switch ID */
+  uint8_t swState = msg.data[5];  /* switch state */
   
+  if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
+
+  subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
+  uint8_t outPin = sub.config.digitalOutput.outputPin;
+
   switch (swState) {
     case OUT_STATE_OFF: // switch off
-      Serial.printf("Unit %02x:%02x:%02x:%02x Switch %d OFF\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
+      digitalWrite(sub.config.digitalOutput.outputPin, LOW);
+      Serial.printf("Switch %d (pin %d)OFF\n", switchID, outPin);
       break;
     case OUT_STATE_ON: // switch on
-      Serial.printf("Unit %02x:%02x:%02x:%02x Switch %d ON\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
+      digitalWrite(sub.config.digitalOutput.outputPin, HIGH);
+      Serial.printf("Switch %d (pin %d)ON\n", switchID, outPin);
       break;
     case OUT_STATE_MOMENTARY: // momentary press
-      Serial.printf("Unit %02x:%02x:%02x:%02x Switch %d MOMENTARY PRESS\n", unitID[0],unitID[1],unitID[2],unitID[3], switchID);
+    {
+      uint8_t momDur = sub.config.digitalOutput.momPressDur;
+
+      /** Emulate momentary press, turn on, wait, turn off */
+      digitalWrite(sub.config.digitalOutput.outputPin, HIGH);
+      vTaskDelay(pdMS_TO_TICKS((MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur)));
+      digitalWrite(sub.config.digitalOutput.outputPin, LOW);
+
+      Serial.printf("Switch %d (pin %d) MOMENTARY (%d ms)\n", switchID, outPin, (MOM_SW_SCALING_FACTOR * momDur));
+    }
       break;
     default:
       Serial.println("Invalid switch state");
@@ -1259,7 +1278,7 @@ static void rxProcessMessage(twai_message_t &message) {
 
       break;
     case SW_SET_MODE_ID:           // setup output switch modes
-      setSwitchMode(message.data);
+      setSwitchState(message);
       break;
     case SW_SET_BLINK_DELAY_ID:          // set output switch blink delay
       setSwBlinkDelay(message.data);
