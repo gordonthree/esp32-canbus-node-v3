@@ -23,6 +23,7 @@
 #include <ESPmDNS.h>
 #include <esp_wifi.h>
 #include <time.h>
+#include "driver/twai.h" /* esp32 native TWAI CAN library */
 
 /* === FreeRTOS includes === */
 #include <freertos/FreeRTOS.h>
@@ -44,46 +45,15 @@
 extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cpp
 #endif
 
-
 /* my colors */
 #if defined(ARGB_LED) || defined(ESP32CYD) || defined(ARGBW_LED)
 #include "colorpalette.h"
 #endif
 
-/**
- * @enum ConfigStatus
- * @brief Result codes for NVS operations.
- */
-enum ConfigStatus {
-    CFG_OK = 0,        /**< Load successful and CRC valid */
-    CFG_ERR_MUTEX,     /**< Failed to acquire flash mutex */
-    CFG_ERR_NOT_FOUND, /**< No configuration exists in NVS */
-    CFG_ERR_CRC,       /**< Data found but CRC is invalid (corrupt) */
-    CFG_ERR_NVS_OPEN   /**< Failed to open NVS namespace */
-};
-
-
-static SemaphoreHandle_t flashMutex = xSemaphoreCreateMutex(); /**< mutex for flash safety */
-
-/* Task handles */
-TaskHandle_t xTWAIHandle = NULL; /* declared and defined */
-
-/* OTA task control */
-volatile bool ota_enabled = false;
-volatile bool ota_started = false;
-const char* ota_password = SECRET_PSK; // change this
-
-/* memory allocation for the flags */
-uint8_t FLAG_SEND_INTRODUCTION = 0;
-uint8_t FLAG_BEGIN_NORMAL_OPER = 0;
-uint8_t FLAG_HALT_NORMAL_OPER  = 0;
-uint8_t FLAG_SEND_HEALTHCHECK  = 0;
-uint8_t FLAG_SEND_NODECHECK    = 0;
-uint8_t FLAG_PRINT_TIMESTAMP   = 0;
-
 /* memory allocation for main tasks */
 #define TASK_TWAI_STACK_SIZE   (4096U)
 #define TASK_OTA_STACK_SIZE    (4096U)
+#define TASK_SWITCH_STACK_SIZE (4096U)  
 
 /* my can bus stuff */
 #include "canbus_project.h"
@@ -110,19 +80,7 @@ uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 #define M5STAMP_ARGB_COUNT     1
 #define M5STAMP_BUTTON_PIN    39
 
-
-/* dynamic discovery stuff */
-nodeInfo_t node; /**< Store information about this node */
-volatile uint16_t node_crc = 0xffff; /**< CRC-16 for the node configuration */
-volatile int introMsgPtr;  /**< Pointer for the introduction and interview process */
-volatile bool FLAG_VALID_CONFIG = false;
-
-/* esp32 native TWAI CAN library */
-#include "driver/twai.h"
-
-/* Default CAN transceiver pins 
- * Set these as a build_flag in platformio.ini
-*/
+/* Default CAN transceiver pins */
 #ifndef RX_PIN
 #define RX_PIN 22
 #endif
@@ -135,9 +93,50 @@ volatile bool FLAG_VALID_CONFIG = false;
 #define NODEMSGID 0x701
 #endif
 
-/* CAN bus stuff: */
-#define TRANSMIT_RATE_MS 100
-#define POLLING_RATE_MS 100
+/* CAN bus polling intervals */
+#define TRANSMIT_RATE_MS (100U)
+#define POLLING_RATE_MS  (100U)
+
+/* WiFi Constants */
+#define AP_SSID  "canesp32"
+
+/**
+ * @enum ConfigStatus
+ * @brief Result codes for NVS operations.
+ */
+enum ConfigStatus {
+    CFG_OK = 0,        /**< Load successful and CRC valid */
+    CFG_ERR_MUTEX,     /**< Failed to acquire flash mutex */
+    CFG_ERR_NOT_FOUND, /**< No configuration exists in NVS */
+    CFG_ERR_CRC,       /**< Data found but CRC is invalid (corrupt) */
+    CFG_ERR_NVS_OPEN   /**< Failed to open NVS namespace */
+};
+
+
+static SemaphoreHandle_t flashMutex = xSemaphoreCreateMutex(); /**< mutex for flash safety */
+
+/* Task handles */
+TaskHandle_t xTWAIHandle   = NULL; /* declared and defined */
+TaskHandle_t xSwitchHandle = NULL; /**< Handle for the output switch logic task */
+
+/* memory allocation for the flags */
+uint8_t FLAG_SEND_INTRODUCTION = 0;
+uint8_t FLAG_BEGIN_NORMAL_OPER = 0;
+uint8_t FLAG_HALT_NORMAL_OPER  = 0;
+uint8_t FLAG_SEND_HEALTHCHECK  = 0;
+uint8_t FLAG_SEND_NODECHECK    = 0;
+uint8_t FLAG_PRINT_TIMESTAMP   = 0;
+
+/* OTA task control */
+volatile bool ota_enabled = false;
+volatile bool ota_started = false;
+const char* ota_password = SECRET_PSK; // change this
+
+/* dynamic discovery stuff */
+nodeInfo_t node; /**< Store information about this node */
+volatile uint16_t node_crc = 0xffff; /**< CRC-16 for the node configuration */
+volatile int introMsgPtr;  /**< Pointer for the introduction and interview process */
+volatile bool FLAG_VALID_CONFIG = false;
 
 volatile bool can_suspended = false;
 volatile bool can_driver_installed = false;
@@ -146,8 +145,6 @@ unsigned long previousMillis = 0;  /* will store last time a message was sent */
 String wifiIP;
 
 static const char *TAG = "canesp32";
-
-#define AP_SSID  "canesp32"
 
 /* interrupt stuff */
 hw_timer_t *Timer0_Cfg = NULL;
@@ -173,7 +170,7 @@ CRGB ledData[4][MAX_LEDS_PER_STRIP]; /**< Buffers for 4 possible strips / submod
 unsigned long ota_progress_millis = 0;
 
 volatile bool wifi_connected = false;
-volatile uint8_t myNodeID[4]; /**< node ID comprised of four bytes from MAC address */ 
+volatile uint8_t myNodeID[NODE_ID_SIZE]; /**< node ID comprised of four bytes from MAC address */ 
 
 void IRAM_ATTR Timer0_ISR()
 {
