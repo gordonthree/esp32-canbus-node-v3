@@ -54,6 +54,9 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 #define TASK_TWAI_STACK_SIZE   (4096U)
 #define TASK_OTA_STACK_SIZE    (4096U)
 #define TASK_SWITCH_STACK_SIZE (4096U)  
+#define tskLowPriority         (tskIDLE_PRIORITY + 1)
+#define tskNormalPriority      (tskIDLE_PRIORITY + 2)
+#define tskHighPriority        (tskIDLE_PRIORITY + 4)
 
 /* my can bus stuff */
 #include "canbus_project.h"
@@ -67,6 +70,7 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 #define CRC_INVALID_CONFIG     0xFFFF
 #define PWM_SCALING_FACTOR     (100U)
 #define MOM_SW_SCALING_FACTOR  (10U)
+#define BLINK_SCALING_FACTOR   (1U)
 #define SUBMOD_PART_B_FLAG     (0x80U)
 
 /* esp32 specific hardware constants */
@@ -112,6 +116,18 @@ enum ConfigStatus {
     CFG_ERR_NVS_OPEN   /**< Failed to open NVS namespace */
 };
 
+/**
+ * @struct OutputTracker
+ * @brief Tracks the runtime state for non-blocking timing logic.
+ */
+struct outputTracker_t {
+    uint32_t nextActionTime; /**< Timestamp for the next state change */
+    uint8_t  currentStep;     /**< Current step in a multi-stage pattern (strobe) */
+    bool     isActive;        /**< Flag to indicate if a momentary/strobe is running */
+    bool     isConfigured;    /**< Flag to indicate if a switch is configured */
+} ;
+
+outputTracker_t trackers[MAX_SUB_MODULES];
 
 static SemaphoreHandle_t flashMutex = xSemaphoreCreateMutex(); /**< mutex for flash safety */
 
@@ -250,6 +266,7 @@ void initHardware() {
                 if (sub.introMsgId == OUT_GPIO_DIGITAL_ID) {
                     digitalWrite(sub.config.digitalOutput.outputPin, sub.config.digitalOutput.outputMode ? HIGH : LOW);
                 }
+                trackers[i].isConfigured = true; /* Mark as configured */
                 Serial.printf("Submod %d: Output Init (Pin %d, Type 0x%03X)\n", i, sub.config.digitalOutput.outputPin, sub.introMsgId);
                 break;
 
@@ -604,23 +621,25 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
 
 }
 
-static void setDisplayMode(uint8_t *data, uint8_t displayMode) {
-  // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55, 0x7F, 0xE4}; // data bytes
-  uint16_t rxdisplayID = (data[4] << 8) | data[5]; // switch ID
-  uint32_t rxunitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  
+static void setDisplayMode(twai_message_t& msg, uint8_t displayMode = DISPLAY_MODE_OFF) {
+  uint8_t displayID = msg.data[4]; /* display ID */
+
   switch (displayMode) {
     case DISPLAY_MODE_OFF: // display off
-      Serial.printf("Unit %d Display %d OFF\n", rxunitID, rxdisplayID);
+      Serial.printf("Display %d OFF\n", displayID);
       break;
     case DISPLAY_MODE_ON: // display on
-      Serial.printf("Unit %d Display %d ON\n", rxunitID, rxdisplayID);
+      Serial.printf("Display %d ON\n", displayID);
       break;
     case DISPLAY_MODE_CLEAR: // clear display
-      Serial.printf("Unit %d Display %d CLEAR\n", rxunitID, rxdisplayID);
+      Serial.printf("Display %d CLEAR\n", displayID);
       break;
     case DISPLAY_MODE_FLASH: // flash display
-      Serial.printf("Unit %d Display %d FLASH\n", rxunitID, rxdisplayID);
+    {
+      uint8_t flashRate = msg.data[5];
+      Serial.printf("Display %d FLASH AT %d rate\n", displayID, flashRate);
+
+    }
       break;
     default:
       Serial.println("Invalid display mode");
@@ -628,52 +647,95 @@ static void setDisplayMode(uint8_t *data, uint8_t displayMode) {
   }
 }
 
-static void setSwMomDur(uint8_t *data) {
-  uint32_t rxunitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  uint16_t swDuration = (data[6] << 8) | data[7]; // duration in msD 
+static void setSwMomDur(twai_message_t& msg) {
+  uint8_t switchID = msg.data[4]; // switch ID
+  uint8_t momDur = msg.data[5]; // momentary duration
+
+  if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
+
+  subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
+  sub.config.digitalOutput.momPressDur = (momDur * MOM_SW_SCALING_FACTOR); /* update momentary duration */momDur; /* update momentary duration */
+  Serial.printf("Momentary Duration: %d Switch: %d\n", sub.config.digitalOutput.momPressDur, switchID);
 }
 
 
-static void setSwBlinkDelay(uint8_t *data) {
-  uint32_t rxunitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  uint16_t swBlinkDelay = (data[6] << 8) | data[7]; // delay in ms 
+static void setSwBlinkDelay(twai_message_t& msg) {
+  uint8_t switchID = msg.data[4]; // switch ID
+  uint8_t blinkDelay = msg.data[5]; // blink delay
+
+  if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
+
+  subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
+  sub.config.blinkOutput.blinkDelay = (blinkDelay * BLINK_SCALING_FACTOR); /* update blink delay */
+  Serial.printf("Blink Delay: %d Switch: %d\n", sub.config.blinkOutput.blinkDelay, switchID);
 }
 
-static void setSwStrobePat(uint8_t *data) {
-  uint32_t rxunitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  uint8_t swStrobePat = data[6]; // strobe pattern
+static void setSwStrobePat(twai_message_t& msg) {
+  uint8_t switchID = msg.data[4]; /* switch ID */
+  uint8_t strobePat = msg.data[5];  /* strobe pattern */
+  
+  if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
+
+  subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
+  sub.config.blinkOutput.strobePat = strobePat; /* update strobe pattern */
+
 }
 
 
-static void setPWMDuty(uint8_t *data) {
-  uint32_t rxunitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  uint16_t PWMDuty = (data[6] << 8) | data[7]; // switch ID 
+static void setPWMDuty(twai_message_t& msg) {
+  uint8_t switchID = msg.data[4]; /* switch ID */
+  uint16_t pwmDuty = (((uint16_t)msg.data[5] << 8) | ((uint16_t)msg.data[6]));  /* pwm duty */
+
+
 }
 
-static void setPWMFreq(uint8_t *data) {
-  uint32_t unitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  uint16_t PWMFreq = (data[6] << 8) | data[7]; // switch ID 
+static void setPWMFreq(twai_message_t& msg) {
+  uint8_t switchID = msg.data[4]; /* switch ID */
+  uint16_t pwmFreq = (uint16_t)(msg.data[5] * PWM_SCALING_FACTOR);  /* pwm frequency */
+
 }
-static void setSwitchMode(uint8_t *data) {
-  uint16_t switchID = (data[4] << 8) | data[5]; // switch ID 
-  uint32_t unitID = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]; // unit ID
-  uint8_t switchMode = data[6]; // switch mode
+static void setSwitchMode(twai_message_t& msg) {
+  uint8_t switchID = msg.data[4]; /* switch ID */
+  uint8_t switchMode = msg.data[5];  /* switch mode */
+  
+  if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
+
+  subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
+  uint8_t outPin = sub.config.digitalOutput.outputPin; /* get output pin */
+
+  Serial.printf("Switch %d set to mode %d\n", switchID, switchMode);
 
   switch (switchMode) {
     case OUT_MODE_TOGGLE: // solid state (on/off)
+      sub.config.digitalOutput.outputMode = switchMode;
+
+      trackers[switchID].isActive = false;
       break;
     case OUT_MODE_MOMENTARY: // one-shot momentary
+      sub.config.digitalOutput.outputMode = switchMode;
+
+      trackers[switchID].isConfigured = true;
+      trackers[switchID].isActive = true;
       break;
     case OUT_MODE_BLINKING: // blinking
+      sub.config.digitalOutput.outputMode = switchMode;
+      trackers[switchID].isConfigured = true;
+      trackers[switchID].nextActionTime = (millis() + sub.config.blinkOutput.blinkDelay);
+      trackers[switchID].isActive = true;
+
       break;
     case OUT_MODE_STROBE: // strobing
+      sub.config.digitalOutput.outputMode = switchMode;
+
+      trackers[switchID].isConfigured = true;
+      trackers[switchID].isActive = true;
       break;
     case OUT_MODE_PWM: // pwm
+      sub.config.digitalOutput.outputMode = switchMode;
+
+      trackers[switchID].isConfigured = false;
+      trackers[switchID].isActive = false;
+
       break;
     default:
       Serial.println("Invalid switch mode");
@@ -682,27 +744,24 @@ static void setSwitchMode(uint8_t *data) {
 
 }
 
-static void txSwitchState(uint8_t *txUnitID, uint16_t txSwitchID, uint8_t swState) {
+static void txSwitchState(uint8_t* txUnitID, uint16_t txSwitchID, uint8_t swState) {
   uint8_t dataBytes[8];
   static const uint8_t txDLC = 5;
   
-  dataBytes[0] = txUnitID[0]; // set unit ID
-  dataBytes[1] = txUnitID[1]; // set unit ID
-  dataBytes[2] = txUnitID[2]; // set unit ID
-  dataBytes[3] = txUnitID[3]; // set unit ID
-  dataBytes[4] = (txSwitchID); // set switch ID
-  
+  packUint32ToBytes(node.nodeID, dataBytes); /* pack node ID into buffer */
+  dataBytes[4] = (txSwitchID); /* set switch ID */
+  // dataBytes[5] = (swState); /* set switch state  */
 
   switch (swState) {
 
   case OUT_STATE_OFF: // switch off
-    send_message(SW_SET_OFF_ID, dataBytes, txDLC);
+    send_message(SW_SET_OFF_ID, dataBytes, SW_SET_OFF_DLC);
     break;
   case OUT_STATE_ON: // switch on
-    send_message(SW_SET_ON_ID, dataBytes, txDLC);
+    send_message(SW_SET_ON_ID, dataBytes, SW_SET_ON_DLC);
     break;
   case OUT_STATE_MOMENTARY: // momentary press
-    send_message(SW_MOM_PRESS_ID, dataBytes, txDLC);
+    send_message(SW_MOM_PRESS_ID, dataBytes, SW_MOM_PRESS_DLC);
     break;
   default: // unsupported state
     Serial.println("Invalid switch state for transmission");
@@ -711,12 +770,11 @@ static void txSwitchState(uint8_t *txUnitID, uint16_t txSwitchID, uint8_t swStat
 }
 
 
-static void setSwitchState(twai_message_t& msg)
+static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
 { /* SET_SWITCH_STATE_ID */
 
   // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55, 0x7F, 0xE4}; // data bytes
   uint8_t switchID = msg.data[4]; /* switch ID */
-  uint8_t swState = msg.data[5];  /* switch state */
   
   if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
 
@@ -725,24 +783,30 @@ static void setSwitchState(twai_message_t& msg)
 
   switch (swState) {
     case OUT_STATE_OFF: // switch off
-      digitalWrite(sub.config.digitalOutput.outputPin, LOW);
-      Serial.printf("Switch %d (pin %d)OFF\n", switchID, outPin);
+      if (trackers[switchID].isConfigured) {
+        trackers[switchID].isActive = false; /* in case of blinking or strobing */
+      } else {
+        digitalWrite(sub.config.digitalOutput.outputPin, LOW);
+      }     
+      Serial.printf("Switch %d (pin %d) OFF\n", switchID, outPin);
       break;
     case OUT_STATE_ON: // switch on
-      digitalWrite(sub.config.digitalOutput.outputPin, HIGH);
-      Serial.printf("Switch %d (pin %d)ON\n", switchID, outPin);
+      if (trackers[switchID].isConfigured) {
+        trackers[switchID].isActive = true; /* in case of blinking or strobing */
+        Serial.printf("Output Task Switch %d (pin %d) ON\n", switchID, outPin);
+      
+      } else {
+        digitalWrite(sub.config.digitalOutput.outputPin, HIGH);
+        Serial.printf("Switch %d (pin %d) ON\n", switchID, outPin);
+      }
       break;
     case OUT_STATE_MOMENTARY: // momentary press
-    {
-      uint8_t momDur = sub.config.digitalOutput.momPressDur;
+      /* let the output task deal with this */
+      Serial.printf("Switch %d (pin %d) MOMENTARY (%dms)\n", switchID, outPin, (MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur));
 
-      /** Emulate momentary press, turn on, wait, turn off */
-      digitalWrite(sub.config.digitalOutput.outputPin, HIGH);
-      vTaskDelay(pdMS_TO_TICKS((MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur)));
-      digitalWrite(sub.config.digitalOutput.outputPin, LOW);
-
-      Serial.printf("Switch %d (pin %d) MOMENTARY (%d ms)\n", switchID, outPin, (MOM_SW_SCALING_FACTOR * momDur));
-    }
+      trackers[switchID].nextActionTime = millis() + (MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur);
+      trackers[switchID].isActive = true; /* enable momentary timer */
+      trackers[switchID].isConfigured = true; /* enable this output for nonblocking control*/
       break;
     default:
       Serial.println("Invalid switch state");
@@ -979,6 +1043,27 @@ static void setEpochTime(uint32_t epochTime) {
   newTime.tv_nsec = 0;
   clock_settime(CLOCK_REALTIME, &newTime);
   
+}
+
+/**
+ * @brief Logic for the strobe pattern (Double Flash).
+ * @param sub Reference to the submodule configuration.
+ * @param tracker Reference to the runtime tracker.
+ */
+void handleStrobeLogic(subModule_t& sub, outputTracker_t& tracker) {
+    /* Hardcoded pattern: ON 50ms, OFF 50ms, ON 50ms, OFF 400ms */
+    static const uint16_t pattern[] = {50, 50, 50, 400}; 
+    static const uint8_t  patternSteps = 4; /**< Total steps in the array */
+
+    if ((millis() >= tracker.nextActionTime) && tracker.isActive) {
+        tracker.currentStep = (tracker.currentStep + 1) % patternSteps;
+        
+        /* Set output: Even steps (0, 2) are ON, Odd (1, 3) are OFF */
+        bool state = (tracker.currentStep % 2 == 0);
+        digitalWrite(sub.config.digitalOutput.outputPin, state);
+        
+        tracker.nextActionTime = millis() + pattern[tracker.currentStep];
+    }
 }
 
 /**
@@ -1268,36 +1353,57 @@ static void rxProcessMessage(twai_message_t &message) {
   Serial.println();
 
   switch (message.identifier) {
+    case SW_SET_MODE_ID:           // setup output switch modes
+      setSwitchMode(message);
+      break;
     case SW_SET_OFF_ID:            // set output switch off
-
+      setSwitchState(message, OUT_STATE_OFF);
       break;
     case SW_SET_ON_ID:             // set output switch on
-
+      setSwitchState(message, OUT_STATE_ON);
       break;
-    case SW_SET_MODE_ID:           // setup output switch modes
-      setSwitchState(message);
+    case SW_MOM_PRESS_ID:          // set output switch momentary press
+      setSwitchState(message, OUT_STATE_MOMENTARY);
       break;
     case SW_SET_BLINK_DELAY_ID:          // set output switch blink delay
-      setSwBlinkDelay(message.data);
+      setSwBlinkDelay(message);
       break;
     case SW_SET_STROBE_PAT_ID:          // set output switch strobe pattern
-      setSwStrobePat(message.data);
+      setSwStrobePat(message);
       break;
     case SET_DISPLAY_OFF_ID:          // set display off
-      setDisplayMode(message.data, 0); 
+      setDisplayMode(message, DISPLAY_MODE_OFF); 
       break;
     case SET_DISPLAY_ON_ID:          // set display on
-      setDisplayMode(message.data, 1); 
+      setDisplayMode(message, DISPLAY_MODE_ON); 
       break;    
+    case SET_DISPLAY_FLASH_ID:          // flash display backlight
+      setDisplayMode(message, DISPLAY_MODE_FLASH); 
+      break;
     case SET_ARGB_STRIP_COLOR_ID:          /* set ARGB color */
       handleColorCommand(message.data[4], message.data[5]); /* byte 4 is the sub module index, byte 5 is the color index */
       break;
+    case CFG_SUB_DATA_MSG_ID:           /* setup sub module data message */
+      {
+        uint8_t modIdx = message.data[4];                                                   /* byte 4 holds the sub module index */
+        node.subModule[modIdx].dataMsgId    = ((message.data[5] << 8) | message.data[6]);   /* bytes 5:6 hold the intro message ID */
+        node.subModule[modIdx].dataMsgDLC   = message.data[7];                              /* byte 7 holds the data message DLC */
+      }
+      break;
+    case CFG_SUB_INTRO_MSG_ID:          /* setup sub module intro message */
+      {
+        uint8_t modIdx = message.data[4];                                                     /* byte 4 holds the sub module index */
+        node.subModule[modIdx].introMsgId    = ((message.data[5] << 8) | message.data[6]);    /* bytes 5:6 hold the intro message ID */
+        node.subModule[modIdx].introMsgDLC   = message.data[7];                               /* byte 7 holds the intro message DLC */
+      }
+      break;
+
     case CFG_ARGB_STRIP_ID:                                                     /* setup ARGB channel */
       {
-      uint8_t modIdx = message.data[4];                                         /* byte 4 holds the sub module index */
-      node.subModule[modIdx].config.argbLed.outputPin  = message.data[5];        /* byte 5 holds the output pin */
-      node.subModule[modIdx].config.argbLed.ledCount   = message.data[6];         /* bytes 6 hold the number of LEDs (max 255)*/
-      node.subModule[modIdx].config.argbLed.colorOrder = message.data[7];       /* byte 7 holds the color order */
+        uint8_t modIdx = message.data[4];                                         /* byte 4 holds the sub module index */
+        node.subModule[modIdx].config.argbLed.outputPin  = message.data[5];       /* byte 5 holds the output pin */
+        node.subModule[modIdx].config.argbLed.ledCount   = message.data[6];       /* bytes 6 hold the number of LEDs (max 255)*/
+        node.subModule[modIdx].config.argbLed.colorOrder = message.data[7];       /* byte 7 holds the color order */
       }
       break;
     case CFG_DIGITAL_INPUT_ID: /**< Setup digital input channel */
@@ -1641,6 +1747,64 @@ void TaskTWAI(void *pvParameters) {
   }
 }
 
+
+/**
+ * @brief Non-blocking task to manage digital outputs.
+ */
+void TaskOutput(void *pvParameters) {
+    Serial.println("Output task started");
+    for (;;) {
+        for (int i = 0; i < MAX_SUB_MODULES; i++) {
+            subModule_t& sub = node.subModule[i];
+            outputTracker_t& trk = trackers[i];
+            if (trackers[i].isConfigured != true) {
+                continue; /* skip unconfigured submodules */
+            }
+
+            /* Skip if not a compatible output type */
+            if (sub.introMsgId != OUT_GPIO_DIGITAL_ID &&      /* not a gpio output module */
+                sub.introMsgId != DISP_ANALOG_BACKLIGHT_ID && /* not an analog backlight module */
+                sub.introMsgId != DISP_MONOCHROME_LED_ID &&   /* not a monochrome LED module */
+                sub.introMsgId != DISP_STROBE_MODULE_ID)      /* not a strobe module */
+                {
+                  Serial.printf("Submod %d Type %03X: Not a supported output module\n", i, sub.introMsgId);
+                  continue;                                     /* skip the rest of the loop */
+                }
+            
+
+            // if (trk.isActive) Serial.printf("Submod %d Mode %d\n", i, sub.config.digitalOutput.outputMode);
+
+            switch (sub.config.digitalOutput.outputMode) {
+                case OUT_MODE_MOMENTARY:
+                    if (trk.isActive && millis() >= trk.nextActionTime) {
+                        digitalWrite(sub.config.digitalOutput.outputPin, LOW);
+                        trk.isActive = false;
+                        // Serial.println("Momentary");
+                    }
+                    break;
+
+                case OUT_MODE_BLINKING:
+                  {
+                    uint16_t blinkRate = (uint16_t)(sub.config.blinkOutput.blinkDelay * BLINK_SCALING_FACTOR);
+                    if ((millis() >= trk.nextActionTime) && trk.isActive) {
+                        bool currentState = digitalRead(sub.config.digitalOutput.outputPin);
+                        digitalWrite(sub.config.digitalOutput.outputPin, !currentState);
+                        /* Use a default or configured blink rate */
+                        trk.nextActionTime = millis() + blinkRate; /* toggle delay */
+                        // Serial.println("Blinking");
+                    }
+                  }
+                    break;
+
+                case OUT_MODE_STROBE:
+                    handleStrobeLogic(sub, trk);
+                    break;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(2)); /**< 2ms resolution for timing */
+    }
+}
+
 void setup() {
 
 #ifdef ESP32CYD
@@ -1676,6 +1840,7 @@ void setup() {
   memset(&node, 0, sizeof(nodeInfo_t)); /* Clear the struct */
   handleReadNVS(); /* Read the NVS data from flash and init hardware */
 
+  memset(&trackers, 0, sizeof(outputTracker_t) * MAX_SUB_MODULES); /* clear the array of output trackers */
 
   #ifdef ESP32CYD
   initCYD(); /* Initialize CYD interface */
@@ -1687,7 +1852,7 @@ void setup() {
     "Task TWAI",           /*  name of task */
     TASK_TWAI_STACK_SIZE,  /* Stack size of task */
     NULL,                  /* parameter of the task */
-    2,                     /* priority of the task */
+    tskNormalPriority,  /* priority of the task */
     &xTWAIHandle           /* Task handle to keep track of created task */
   );              
 
@@ -1697,8 +1862,18 @@ void setup() {
     "Task OTA",
     TASK_OTA_STACK_SIZE,   
     NULL,
-    4,
+    tskHighPriority,
     NULL
+  );
+
+  /* Start the output switch task*/
+  xTaskCreate(
+    TaskOutput,
+    "Task Output Switch",
+    TASK_SWITCH_STACK_SIZE,   
+    NULL,
+    tskLowPriority, /* lowest priority plus one */
+    &xSwitchHandle
   );
 }
 
