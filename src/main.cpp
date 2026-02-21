@@ -24,6 +24,8 @@
 #include <esp_wifi.h>
 #include <time.h>
 #include "driver/twai.h" /* esp32 native TWAI CAN library */
+#include "driver/ledc.h" /* esp32 native LEDC PWM library */
+#include "esp_err.h"     /* esp32 error codes */
 
 /* === FreeRTOS includes === */
 #include <freertos/FreeRTOS.h>
@@ -72,6 +74,8 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 #define MOM_SW_SCALING_FACTOR  (10U)
 #define BLINK_SCALING_FACTOR   (1U)
 #define SUBMOD_PART_B_FLAG     (0x80U)
+#define LEDC_MAX_TIMERS        (4U)    /* there are four low speed timers, allow one LED per timer */
+#define LEDC_13BIT_50PCT       (4096U) /* 50% of 2^13 */
 
 /* esp32 specific hardware constants */
 #define CYD_BACKLIGHT_PIN     21
@@ -117,17 +121,39 @@ enum ConfigStatus {
 };
 
 /**
- * @struct OutputTracker
- * @brief Tracks the runtime state for non-blocking timing logic.
+ * @struct outputTracker_t
+ * @brief Represents the state of an output module.
+ *
+ * This struct is used to track the state of an output module. It contains the following fields:
+ *
+ * @param nextActionTime: The timestamp for the next state change.
+ * @param currentStep: The current step in a multi-stage pattern (strobe).
+ * @param isActive: A flag to indicate if a momentary/strobe is running.
+ * @param isConfigured: A flag to indicate if a switch is configured.
+ * @param hardwareInitialized: A flag to indicate if hardware is initialized.
  */
 struct outputTracker_t {
-    uint32_t nextActionTime; /**< Timestamp for the next state change */
-    uint8_t  currentStep;     /**< Current step in a multi-stage pattern (strobe) */
-    bool     isActive;        /**< Flag to indicate if a momentary/strobe is running */
-    bool     isConfigured;    /**< Flag to indicate if a switch is configured */
-} ;
+    uint32_t nextActionTime;        /**< Timestamp for the next state change */
+    uint8_t  currentStep;           /**< Current step in a multi-stage pattern (strobe) */
+    ledc_timer_t timer;             /**< LEDC timer */
+    bool     isActive;              /**< Flag to indicate if a momentary/strobe is running */
+    bool     isConfigured;          /**< Flag to indicate if a switch is configured */
+    bool     hardwareInitialized;   /**< Flag to indicate if hardware is initialized */
+}; /* end struct outputTracker_t */
 
 outputTracker_t trackers[MAX_SUB_MODULES];
+
+struct blinkerTracker_t {
+    uint32_t     freq;              /**< LEDC frequency in Hertz */
+    uint8_t      hwPin;             /**< Hardware pin */
+    uint8_t      subIdx;            /**< Node submodule index */
+    bool         isActive;          /**< Flag to indicate blinker is outputting a signal */
+};
+
+blinkerTracker_t blinkers[LEDC_MAX_TIMERS];
+
+
+uint8_t pwmPins[LEDC_MAX_TIMERS];        /**< Array to track PWM pins */
 
 static SemaphoreHandle_t flashMutex = xSemaphoreCreateMutex(); /**< mutex for flash safety */
 
@@ -193,6 +219,7 @@ void IRAM_ATTR Timer0_ISR()
   isrFlag = true;
 }
 
+
 /**
  * @brief Handles specialized FastLED initialization for ARGB sub-modules.
  * @param index The sub-module index (used to index ledData arrays).
@@ -229,6 +256,88 @@ void initArgbHardware(uint8_t index, subModule_t& sub) {
 }
 
 /**
+ * @brief Initializes digital inputs such as physical switches and buttons.
+ * @param i          The sub-module index (used to index submodule array).
+ * @param sub        Reference to the sub-module configuration.
+ * @details Configure the pull-up/pull-down resistor and initialize the input pin. 
+ * @note This function is called by the initHardware() function during setup().
+ */
+void initGPIOInput(uint8_t i, subModule_t& sub) {
+  if (sub.config.digitalInput.outputRes == INPUT_RES_PULLUP) { /* INPUT_RES_PULLUP */
+      pinMode(sub.config.digitalInput.inputPin, INPUT_PULLUP);
+      Serial.printf("Submod %d: Digital Input Init Pull-Up (Pin %d)\n", i, sub.config.digitalInput.inputPin);
+  } else if (sub.config.digitalInput.outputRes == INPUT_RES_PULLDOWN) { /* INPUT_RES_PULLDOWN */
+      pinMode(sub.config.digitalInput.inputPin, INPUT_PULLDOWN);
+      Serial.printf("Submod %d: Digital Input Init Pull-Down (Pin %d)\n", i, sub.config.digitalInput.inputPin);
+  } else { /* INPUT_RES_FLOATING */
+      pinMode(sub.config.digitalInput.inputPin, INPUT);
+      Serial.printf("Submod %d: Digital Input Init Floating (Pin %d)\n", i, sub.config.digitalInput.inputPin);
+  }
+}
+
+/**
+ * @brief Initializes a PWM output sub-module.
+ * @details This function is responsible for setting up the ESP32 LEDC driver for a PWM output sub-module.
+ * The function takes two parameters: the index of the sub-module and a reference to the sub-module configuration.
+ * The function sets up the LEDC driver with the channel set to the index, the frequency set to the configured frequency
+ * multiplied by the PWM scaling factor, and the resolution set to 8-bit.
+ * The function then attaches the PWM output pin to the LEDC driver and stores the pin number in the pwmPins array.
+ * Finally, the function prints a debug message indicating the sub-module index, the PWM output pin, and the configured frequency.
+ * @param i Index of the output switch / submodule.
+ * @param sub Reference to the sub-module configuration.
+ */
+void initPwmHardware(uint8_t i, subModule_t& sub) {
+  /* Handle the name change between IDF versions */
+    #if !defined(LEDC_USE_RC_FAST_CLK)
+        #define LEDC_USE_RC_FAST_CLK LEDC_USE_RTC8M_CLK
+    #endif  
+  
+  /* ESP32 LEDC setup: channel = i, frequency = config * 100, resolution = 8-bit */
+    uint32_t freq = (double)(sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR);
+    uint8_t channel = i;
+
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode       = LEDC_LOW_SPEED_MODE,
+        .duty_resolution  = LEDC_TIMER_8_BIT,
+        .timer_num        = (ledc_timer_t)(channel / 8), /**< 8 channels per group */
+        .freq_hz          = freq,
+        .clk_cfg          = LEDC_USE_RC_FAST_CLK, /**< Use 8MHz clock instead of 80MHz */
+    };
+    ledc_timer_config(&ledc_timer);
+
+    // ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR, PWM_RES_BITS); 
+    // ledcAttachPin(sub.config.pwmOutput.outputPin, i);
+
+    uint8_t pin = sub.config.pwmOutput.outputPin;
+
+    ledcAttachPin(pin, channel);
+    ledc_channel_config_t ledc_ch = {
+        .gpio_num       = pin,
+        .speed_mode     = LEDC_LOW_SPEED_MODE,
+        .channel        = (ledc_channel_t)channel,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .timer_sel      = (ledc_timer_t)(channel / 8),
+        .duty           = 0,
+        .hpoint         = 0
+    };
+    ledc_channel_config(&ledc_ch);
+
+
+    pwmPins[i] = sub.config.pwmOutput.outputPin;
+    Serial.printf("Submod %d: PWM Output Init (Pin %d, Freq %d)\n", i, sub.config.pwmOutput.outputPin, (sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR));
+}
+
+/**
+ * @brief Clears a PWM pin's configuration and detaches it from the LEDC driver.
+ * @details This function is typically called when a sub-module is deinitialized.
+ * @param i Index of the output switch / submodule.
+ */
+void clearPwmHardware(uint8_t i) {
+    ledcDetachPin(pwmPins[i]);
+    pwmPins[i] = 0;
+}
+
+/**
  * @brief Initializes all sub-modules based on their intro message IDs.
  * @details Iterates through the sub-module array and calls the appropriate init function based on the intro message ID.
  * @note This function is called once by the main setup() function.
@@ -247,34 +356,21 @@ void initHardware() {
                 break;
 
             case INPUT_DIGITAL_GPIO_ID:
-                if (sub.config.digitalInput.outputRes == INPUT_RES_PULLUP) { /* INPUT_RES_PULLUP */
-                    pinMode(sub.config.digitalInput.inputPin, INPUT_PULLUP);
-                } else if (sub.config.digitalInput.outputRes == INPUT_RES_PULLDOWN) { /* INPUT_RES_PULLDOWN */
-                    pinMode(sub.config.digitalInput.inputPin, INPUT_PULLDOWN);
-                } else { /* INPUT_RES_FLOATING */
-                    pinMode(sub.config.digitalInput.inputPin, INPUT);
-                }
-                Serial.printf("Submod %d: Digital Input Init (Pin %d)\n", i, sub.config.digitalInput.inputPin);
+                initGPIOInput(i, sub);
                 break;
 
             case OUT_GPIO_DIGITAL_ID:
             case DISP_ANALOG_BACKLIGHT_ID:
             case DISP_ANALOG_LED_STRIP_ID:
+            case DISP_MONOCHROME_LED_ID:
             case DISP_STROBE_MODULE_ID:
-                pinMode(sub.config.digitalOutput.outputPin, OUTPUT);
-                /* Apply initial state if configured */
-                if (sub.introMsgId == OUT_GPIO_DIGITAL_ID) {
-                    digitalWrite(sub.config.digitalOutput.outputPin, sub.config.digitalOutput.outputMode ? HIGH : LOW);
-                }
-                trackers[i].isConfigured = true; /* Mark as configured */
+                pinMode(sub.config.digitalOutput.outputPin, OUTPUT); /* Set pin as output */
+                trackers[i].isConfigured = true; /* Mark as configured for the output task (blink, strobe and momentary) */
                 Serial.printf("Submod %d: Output Init (Pin %d, Type 0x%03X)\n", i, sub.config.digitalOutput.outputPin, sub.introMsgId);
                 break;
 
             case OUT_GPIO_PWM_ID:
-                /* ESP32 LEDC setup: channel = i, frequency = config * 100, resolution = 8-bit */
-                ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR, PWM_RES_BITS); 
-                ledcAttachPin(sub.config.pwmOutput.outputPin, i);
-                Serial.printf("Submod %d: PWM Output Init (Pin %d, Freq %d)\n", i, sub.config.pwmOutput.outputPin, (sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR));
+                initPwmHardware(i, sub);
                 break;
 
             case INPUT_ANALOG_ADC_ID:
@@ -283,10 +379,12 @@ void initHardware() {
                 break;
 
             case DISP_TOUCHSCREEN_LCD_ID:
+                /* Touchscreen init here if needed */            
                 Serial.printf("Submod %d: Touchscreen LCD Identified\n", i);
                 break;
 
             default:
+                /* No hardware init available */
                 Serial.printf("Submod %d: No hardware init available for ID 0x%03X\n", i, sub.introMsgId);
                 break;
         }
@@ -448,16 +546,16 @@ void TaskOTA(void *pvParameters) {
     }
 
     /* 1. Kill the tasks using hardware first */
-    if (xTWAIHandle != NULL) vTaskSuspend(xTWAIHandle);
+    if (xTWAIHandle != NULL) vTaskSuspend(xTWAIHandle); /* suspend the TWAI task */
+    if (xSwitchHandle != NULL) vTaskSuspend(xSwitchHandle); /* suspend the output switch task */
 #ifdef ESP32CYD    
-    if (xDisplayHandle != NULL) vTaskSuspend(xDisplayHandle);
-    if (xTouchHandle != NULL) vTaskSuspend(xTouchHandle);
+    if (xDisplayHandle != NULL) vTaskSuspend(xDisplayHandle); /* suspend the display task */
+    if (xTouchHandle != NULL) vTaskSuspend(xTouchHandle); /* suspend the touch task */
 #endif
     /* Stop the TWAI driver */
     twai_stop();
-    // twai_driver_uninstall();
     
-    Serial.println("OTA Start: App tasks suspended, starting flash... ");
+    Serial.println("OTA Start: Background tasks suspended, starting flash... ");
   });
   ArduinoOTA.onEnd([]() {
     Serial.println("\nOTA End");
@@ -594,7 +692,7 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
     digitalWrite(LED_RED, LOW); /* Turn on RED LED */
 #endif
     failCount = 0; /* Reset counter on successful queueing */
-    Serial.printf("ID: 0x%03X queued\n", msgid);
+    // Serial.printf("ID: 0x%03X queued\n", msgid);
   } else {
     failCount++;
     Serial.printf("Tx Fail (%d/3)\n", failCount);
@@ -620,6 +718,98 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
 #endif
 
 }
+
+/** * @brief Configures LEDC hardware using the blinkerTracker_t structure.
+ * @param idx  The index for both the blinker tracker and the LEDC timer (0-3).
+ * @param pin  The hardware GPIO pin to use.
+ * @param freq The desired frequency in Hertz (defaults to 5 Hz).
+ */
+void handleHardwareBlink(uint8_t submodIdx, uint8_t pin, uint32_t freq = (5U)) {
+    uint8_t idx = (submodIdx - 1); /* submodule 0 will never be a blinker, so subtract 1 from index */
+    
+    /** * Safety check: Ensure index does not exceed hardware timer or array limits. 
+     */
+    if (idx >= LEDC_MAX_TIMERS) {
+        Serial.println("Invalid index for LEDC timer, expected 0 to 3.");
+        return; 
+    }
+
+    /** * Cast the index to the appropriate LEDC types for the driver.
+     * We map idx directly to Timer 0-3 and Channel 0-3.
+     */
+    ledc_timer_t selected_timer = static_cast<ledc_timer_t>(idx);
+    ledc_channel_t selected_channel = static_cast<ledc_channel_t>(idx);
+
+    /** * Update the blinkerTracker_t struct in the global array 
+     */
+    blinkers[idx].freq     = freq;
+    blinkers[idx].hwPin    = pin;
+    blinkers[idx].subIdx   = submodIdx;
+
+    /** * Configure the LEDC Timer 
+     */
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode       = LEDC_LOW_SPEED_MODE,
+        .duty_resolution  = LEDC_TIMER_13_BIT,     /* High resolution for low freq */
+        .timer_num        = selected_timer,        /* Programmatic timer selection */
+        .freq_hz          = freq,                  
+        .clk_cfg          = LEDC_AUTO_CLK          
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    /** * Configure the LEDC Channel 
+     */
+    ledc_channel_config_t ledc_channel = {
+        .gpio_num       = pin,                     
+        .speed_mode     = LEDC_LOW_SPEED_MODE,
+        .channel        = selected_channel,        /* Unique channel for this output */
+        .intr_type      = LEDC_INTR_DISABLE,
+        .timer_sel      = selected_timer,          /* Link channel to the specific timer */
+        .duty           = LEDC_13BIT_50PCT,      
+        .hpoint         = 0,                       
+        .flags          = { .output_invert = 0 }
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+    blinkers[idx].isActive = true;                 /* Set flag indicating blinker is active */
+
+    Serial.printf("Submod %d: Blinker Init (Pin %d) (%d Hz) on Timer %d\n", 
+                  submodIdx, pin, freq, (int)selected_timer);
+}
+
+/**
+ * @brief Stops an active LEDC blinker and unbinds the hardware pin.
+ * @details Detaches the GPIO from the LEDC peripheral, resets the pin to LOW, 
+ * and clears the tracker status.
+ * @param idx The index of the blinker in the global tracker array.
+ */
+void stopHardwareBlink(uint8_t submodIdx) {
+    uint8_t idx = (submodIdx - 1); /* submodule 0 will never be a blinker, so subtract 1 from index */
+    
+    /** Safety check: Ensure index does not exceed hardware timer or array limits. */
+    if (idx >= LEDC_MAX_TIMERS) {
+        Serial.println("Invalid index for LEDC timer, expected 0 to 3.");
+        return; 
+    }
+
+
+    /** Retrieve the pin from the tracker before clearing it in the array     */
+    uint8_t pin = blinkers[idx].hwPin;
+
+    if (blinkers[idx].isActive) {
+        /** Detach the GPIO pin from the LEDC peripheral */
+        ledc_stop(LEDC_LOW_SPEED_MODE, static_cast<ledc_channel_t>(idx), 0); /* 0 sets the idle level to low */
+        
+        /** Explicitly set the pin to LOW to ensure a clean off-state  */
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, LOW);
+
+        /** Update tracker state */
+        blinkers[idx].isActive = false;
+
+        Serial.printf("Submod %d: Blinker Stopped (Pin %d)\n", idx, pin);
+    }
+}
+
 
 static void setDisplayMode(twai_message_t& msg, uint8_t displayMode = DISPLAY_MODE_OFF) {
   uint8_t displayID = msg.data[4]; /* display ID */
@@ -648,50 +838,57 @@ static void setDisplayMode(twai_message_t& msg, uint8_t displayMode = DISPLAY_MO
 }
 
 static void setSwMomDur(twai_message_t& msg) {
-  uint8_t switchID = msg.data[4]; // switch ID
-  uint8_t momDur = msg.data[5]; // momentary duration
+  uint8_t switchID = msg.data[4];                  /* switch ID */
+  uint8_t momDur = msg.data[5];                    /* momentary duration */
+  if (switchID >= MAX_SUB_MODULES) return;         /* invalid switch ID */
+  subModule_t& sub = node.subModule[switchID];     /* get submodule reference */
+  sub.config.digitalOutput.momPressDur = momDur;   /* update momentary duration */
 
-  if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
-
-  subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
-  sub.config.digitalOutput.momPressDur = (momDur * MOM_SW_SCALING_FACTOR); /* update momentary duration */momDur; /* update momentary duration */
   Serial.printf("Momentary Duration: %d Switch: %d\n", sub.config.digitalOutput.momPressDur, switchID);
 }
 
 
 static void setSwBlinkDelay(twai_message_t& msg) {
-  uint8_t switchID = msg.data[4]; // switch ID
-  uint8_t blinkDelay = msg.data[5]; // blink delay
+  uint8_t switchID = msg.data[4];                      /* switch ID */
+  uint8_t freq     = msg.data[5];                      /* blink delay */
+  if (switchID >= MAX_SUB_MODULES) return;             /* invalid switch ID */
+  subModule_t& sub = node.subModule[switchID];         /* get submodule reference */
+  uint8_t pin      = sub.config.blinkOutput.outputPin; /* get output pin */
+  sub.config.blinkOutput.blinkDelay = freq;            /* update blink delay */
+  handleHardwareBlink(switchID, pin, freq);            /* update hardware blinker */
 
-  if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
-
-  subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
-  sub.config.blinkOutput.blinkDelay = (blinkDelay * BLINK_SCALING_FACTOR); /* update blink delay */
   Serial.printf("Blink Delay: %d Switch: %d\n", sub.config.blinkOutput.blinkDelay, switchID);
 }
 
 static void setSwStrobePat(twai_message_t& msg) {
-  uint8_t switchID = msg.data[4]; /* switch ID */
-  uint8_t strobePat = msg.data[5];  /* strobe pattern */
-  
-  if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
-
-  subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
+  uint8_t switchID = msg.data[4];               /* switch ID */
+  uint8_t strobePat = msg.data[5];              /* strobe pattern */
+  if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
+  subModule_t& sub = node.subModule[switchID];  /* get submodule reference */
   sub.config.blinkOutput.strobePat = strobePat; /* update strobe pattern */
 
+  Serial.printf("Strobe Pattern: %d Switch: %d\n", sub.config.blinkOutput.strobePat, switchID);
 }
 
 
 static void setPWMDuty(twai_message_t& msg) {
   uint8_t switchID = msg.data[4]; /* switch ID */
   uint16_t pwmDuty = (((uint16_t)msg.data[5] << 8) | ((uint16_t)msg.data[6]));  /* pwm duty */
-
+  if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
+  subModule_t& sub = node.subModule[switchID];  /* get submodule reference */
+  // handlePwmDuty(switchID, pwmDuty);             /* update pwm duty */
+  Serial.printf("PWM Duty: %d Switch: %d\n", pwmDuty, switchID);
 
 }
 
 static void setPWMFreq(twai_message_t& msg) {
   uint8_t switchID = msg.data[4]; /* switch ID */
-  uint16_t pwmFreq = (uint16_t)(msg.data[5] * PWM_SCALING_FACTOR);  /* pwm frequency */
+  uint16_t pwmFreq = (uint16_t)msg.data[5];  /* pwm frequency */
+  if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
+  subModule_t& sub = node.subModule[switchID];  /* get submodule reference */
+  sub.config.pwmOutput.pwmFreq = pwmFreq;       /* update pwm frequency in config */
+  // handlePwmFreq(switchID, pwmFreq);            /* update pwm frequency in hardware */
+  Serial.printf("PWM Frequency: %d Switch: %d\n", pwmFreq, switchID);
 
 }
 static void setSwitchMode(twai_message_t& msg) {
@@ -703,13 +900,15 @@ static void setSwitchMode(twai_message_t& msg) {
   subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
   uint8_t outPin = sub.config.digitalOutput.outputPin; /* get output pin */
 
+  clearPwmHardware(switchID); /* in case it was previously PWM */
+
   Serial.printf("Switch %d set to mode %d\n", switchID, switchMode);
 
   switch (switchMode) {
     case OUT_MODE_TOGGLE: // solid state (on/off)
       sub.config.digitalOutput.outputMode = switchMode;
-
       trackers[switchID].isActive = false;
+
       break;
     case OUT_MODE_MOMENTARY: // one-shot momentary
       sub.config.digitalOutput.outputMode = switchMode;
@@ -719,12 +918,10 @@ static void setSwitchMode(twai_message_t& msg) {
       break;
     case OUT_MODE_BLINKING: // blinking
       sub.config.digitalOutput.outputMode = switchMode;
-      trackers[switchID].isConfigured = true;
-      trackers[switchID].nextActionTime = (millis() + sub.config.blinkOutput.blinkDelay);
-      trackers[switchID].isActive = true;
+
 
       break;
-    case OUT_MODE_STROBE: // strobing
+    case OUT_MODE_STROBE: // strobe
       sub.config.digitalOutput.outputMode = switchMode;
 
       trackers[switchID].isConfigured = true;
@@ -736,6 +933,7 @@ static void setSwitchMode(twai_message_t& msg) {
       trackers[switchID].isConfigured = false;
       trackers[switchID].isActive = false;
 
+      initPwmHardware(switchID, sub); /* call hardware setup helper*/
       break;
     default:
       Serial.println("Invalid switch mode");
@@ -770,44 +968,89 @@ static void txSwitchState(uint8_t* txUnitID, uint16_t txSwitchID, uint8_t swStat
 }
 
 
+/**
+ * @brief Set the state of a switch
+ * @param msg The message containing the switch ID and state
+ * @param swState The state of the switch (OUT_STATE_OFF, OUT_STATE_ON, OUT_STATE_MOMENTARY)
+ * 
+ * This function takes a CAN message and sets the state of the corresponding switch.
+ * If the switch is configured for momentary, blinking or pwm, the function will
+ * set a flag for the outputTask to set the state of the switch accordingly.
+ * Otherwise the function will set the state of the switch
+ * directly using the digitalWrite() function.
+ * 
+ * @note This function will only work if the output is configured for digital output
+ */
 static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
 { /* SET_SWITCH_STATE_ID */
 
-  // uint8_t dataBytes[] = {0xA0, 0xA0, 0x55, 0x55, 0x7F, 0xE4}; // data bytes
   uint8_t switchID = msg.data[4]; /* switch ID */
-  
-  if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
+
+  if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID, exit function */
 
   subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
   uint8_t outPin = sub.config.digitalOutput.outputPin;
 
   switch (swState) {
     case OUT_STATE_OFF: // switch off
-      if (trackers[switchID].isConfigured) {
-        trackers[switchID].isActive = false; /* in case of blinking or strobing */
-      } else {
-        digitalWrite(sub.config.digitalOutput.outputPin, LOW);
-      }     
-      Serial.printf("Switch %d (pin %d) OFF\n", switchID, outPin);
+
+        switch (sub.config.digitalOutput.outputMode) {
+          case OUT_MODE_MOMENTARY:
+            trackers[switchID].isActive = false;
+            break;
+          case OUT_MODE_BLINKING:
+            stopHardwareBlink(switchID);
+            break;
+          case OUT_MODE_STROBE:
+            trackers[switchID].isActive = false;
+            break;
+          case OUT_MODE_PWM:
+            clearPwmHardware(switchID);
+            break;
+          default:
+            digitalWrite(sub.config.digitalOutput.outputPin, LOW); /* set output driver low */
+            Serial.printf("Switch %d (pin %d) OFF\n", switchID, outPin);
+            break;
+        }
       break;
+
     case OUT_STATE_ON: // switch on
-      if (trackers[switchID].isConfigured) {
-        trackers[switchID].isActive = true; /* in case of blinking or strobing */
-        Serial.printf("Output Task Switch %d (pin %d) ON\n", switchID, outPin);
+        switch (sub.config.digitalOutput.outputMode) {
+          case OUT_MODE_MOMENTARY: /* If we are in momentary mode, 'ON' should behave like a trigger */
+            trackers[switchID].nextActionTime = millis() + (MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur);
+            digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
+            trackers[switchID].isActive = true;
+            break;
       
-      } else {
-        digitalWrite(sub.config.digitalOutput.outputPin, HIGH);
-        Serial.printf("Switch %d (pin %d) ON\n", switchID, outPin);
-      }
+          case OUT_MODE_BLINKING: /* Use LEDC hardware blinking */
+          {
+            uint32_t freq = (uint32_t)(sub.config.blinkOutput.blinkDelay * BLINK_SCALING_FACTOR);
+            uint8_t  pin  = sub.config.digitalOutput.outputPin;
+            if (freq == 0) {
+              freq = 5; /* for debugging don't let the blinkrate equal 0*/
+              sub.config.blinkOutput.blinkDelay = freq;
+            }
+            handleHardwareBlink(switchID, pin, freq);
+            break;
+          }
+
+          default:
+            digitalWrite(sub.config.digitalOutput.outputPin, HIGH); /* set output driver high */
+            Serial.printf("Switch %d (pin %d) ON\n", switchID, outPin);
+            break;
+        }
       break;
+
     case OUT_STATE_MOMENTARY: // momentary press
       /* let the output task deal with this */
-      Serial.printf("Switch %d (pin %d) MOMENTARY (%dms)\n", switchID, outPin, (MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur));
+      Serial.printf("Output Task Switch %d (pin %d) MOMENTARY (%dms)\n", switchID, outPin, (MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur));
 
       trackers[switchID].nextActionTime = millis() + (MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur);
+      digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
       trackers[switchID].isActive = true; /* enable momentary timer */
       trackers[switchID].isConfigured = true; /* enable this output for nonblocking control*/
       break;
+
     default:
       Serial.println("Invalid switch state");
       break;
@@ -1066,6 +1309,8 @@ void handleStrobeLogic(subModule_t& sub, outputTracker_t& tracker) {
     }
 }
 
+
+
 /**
  * @brief Updates a specific LED strip based on received CAN color index.
  * @param ledIndex The submodule index (0-7).
@@ -1278,7 +1523,7 @@ void sendIntroduction(int msgPtr = 0) {
     msgData[4] = node.subModCnt;
     msgData[5] = (uint8_t)(txCrc >> 8);
     msgData[6] = (uint8_t)(txCrc);
-    Serial.printf("TX INTRO: NODE 0x%08X SUBMOD %02u (Type: 0x%03X, CRC: 0x%04X)\n", node.nodeID, msgData[4], txMsgID, txCrc);
+    // Serial.printf("TX INTRO: NODE 0x%08X SUBMOD %02u (Type: 0x%03X, CRC: 0x%04X)\n", node.nodeID, msgData[4], txMsgID, txCrc);
   } 
 /* >0: Sub-module Identity (Part A and Part B) */
   else {
@@ -1748,21 +1993,6 @@ void TaskTWAI(void *pvParameters) {
 }
 
 /**
- * @brief Offloads blinking to the LEDC hardware peripheral.
- * @param channel The LEDC channel (indexed by submodule index).
- * @param pin The GPIO pin to attach.
- * @param freq The blink frequency in Hz.
- */
-void startHardwareBlink(uint8_t channel, uint8_t pin, uint32_t freq) {
-    /* Set frequency to freq (e.g. 2Hz), resolution to 8-bit */
-    ledcSetup(channel, freq, PWM_RES_BITS); 
-    ledcAttachPin(pin, channel);
-    
-    /* 50% duty cycle creates an even ON/OFF blink */
-    ledcWrite(channel, 128); 
-}
-
-/**
  * @brief Non-blocking task to manage digital outputs.
  */
 void TaskOutput(void *pvParameters) {
@@ -1772,10 +2002,10 @@ void TaskOutput(void *pvParameters) {
             subModule_t& sub = node.subModule[i];
             outputTracker_t& trk = trackers[i];
             if (trackers[i].isConfigured != true) {
-                continue; /* skip unconfigured submodules */
+                continue; /* skip unconfigured submodule */
             }
 
-            /* Skip if not a compatible output type */
+            /* Check if submodule is a compatible output type */
             if (sub.introMsgId != OUT_GPIO_DIGITAL_ID &&      /* not a gpio output module */
                 sub.introMsgId != DISP_ANALOG_BACKLIGHT_ID && /* not an analog backlight module */
                 sub.introMsgId != DISP_MONOCHROME_LED_ID &&   /* not a monochrome LED module */
@@ -1786,39 +2016,26 @@ void TaskOutput(void *pvParameters) {
                 }
             
 
-            // if (trk.isActive) Serial.printf("Submod %d Mode %d\n", i, sub.config.digitalOutput.outputMode);
-
             switch (sub.config.digitalOutput.outputMode) {
                 case OUT_MODE_MOMENTARY:
-                    if (trk.isActive && millis() >= trk.nextActionTime) {
-                        digitalWrite(sub.config.digitalOutput.outputPin, LOW);
-                        trk.isActive = false;
-                        // Serial.println("Momentary");
+                    if (trk.isActive) {
+                        /* If the timer hasn't expired, ensure pin is HIGH */
+                        if (millis() < trk.nextActionTime) {
+                            digitalWrite(sub.config.digitalOutput.outputPin, HIGH);
+                        } else {
+                            /* Timer expired */
+                            digitalWrite(sub.config.digitalOutput.outputPin, LOW);
+                            trk.isActive = false;
+                        }
                     }
                     break;
                 
-                case OUT_MODE_BLINKING:
-                    /** * Hardware Blinking:
-                     * Once configured, the hardware handles the toggle.
-                     * We only need to trigger the setup once.
-                     */
-                    if (!trk.isActive) {
-                        uint32_t blinkRate = (uint32_t)(sub.config.blinkOutput.blinkDelay * BLINK_SCALING_FACTOR);
-
-                        /* blinkRate is in Hz */
-                        startHardwareBlink(i, sub.config.digitalOutput.outputPin, blinkRate);
-                        trk.isActive = true;
-                    }
-                    break;
-
-
-
                 case OUT_MODE_STROBE:
                     handleStrobeLogic(sub, trk);
                     break;
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(2)); /**< 2ms resolution for timing */
+        vTaskDelay(pdMS_TO_TICKS(10)); /**< 10ms resolution for timing */
     }
 }
 
@@ -1853,14 +2070,17 @@ void setup() {
 
   readMacAddress(); /**< Read the ESP32 station MAC address and program myNodeID */
 
+  /* Initialize memory */
+  Serial.println("Initializing memory...");
+  memset(&node, 0, sizeof(nodeInfo_t));                            /* Clear nodeInfo struct */
+  memset(&trackers, 0, sizeof(outputTracker_t) * MAX_SUB_MODULES); /* clear outputTracker struct */
+  memset(&pwmPins, 0, sizeof(uint8_t) * LEDC_MAX_TIMERS);          /* clear the array of pwm pins */
+
   /* Node Setup Logic */
-  memset(&node, 0, sizeof(nodeInfo_t)); /* Clear the struct */
-  handleReadNVS(); /* Read the NVS data from flash and init hardware */
-
-  memset(&trackers, 0, sizeof(outputTracker_t) * MAX_SUB_MODULES); /* clear the array of output trackers */
-
+  handleReadNVS();                                                 /* Read the NVS data from flash and init hardware */
+  
   #ifdef ESP32CYD
-  initCYD(); /* Initialize CYD interface */
+  initCYD();                                                       /* Initialize CYD interface */
   #endif
 
   /* Start the CAN task */
@@ -1869,7 +2089,7 @@ void setup() {
     "Task TWAI",           /*  name of task */
     TASK_TWAI_STACK_SIZE,  /* Stack size of task */
     NULL,                  /* parameter of the task */
-    tskNormalPriority,  /* priority of the task */
+    tskNormalPriority,     /* priority of the task */
     &xTWAIHandle           /* Task handle to keep track of created task */
   );              
 
@@ -1883,7 +2103,7 @@ void setup() {
     NULL
   );
 
-  /* Start the output switch task*/
+  /* Start the output handler task*/
   xTaskCreate(
     TaskOutput,
     "Task Output Switch",
