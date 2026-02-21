@@ -1747,6 +1747,20 @@ void TaskTWAI(void *pvParameters) {
   }
 }
 
+/**
+ * @brief Offloads blinking to the LEDC hardware peripheral.
+ * @param channel The LEDC channel (indexed by submodule index).
+ * @param pin The GPIO pin to attach.
+ * @param freq The blink frequency in Hz.
+ */
+void startHardwareBlink(uint8_t channel, uint8_t pin, uint32_t freq) {
+    /* Set frequency to freq (e.g. 2Hz), resolution to 8-bit */
+    ledcSetup(channel, freq, PWM_RES_BITS); 
+    ledcAttachPin(pin, channel);
+    
+    /* 50% duty cycle creates an even ON/OFF blink */
+    ledcWrite(channel, 128); 
+}
 
 /**
  * @brief Non-blocking task to manage digital outputs.
@@ -1782,19 +1796,22 @@ void TaskOutput(void *pvParameters) {
                         // Serial.println("Momentary");
                     }
                     break;
-
+                
                 case OUT_MODE_BLINKING:
-                  {
-                    uint16_t blinkRate = (uint16_t)(sub.config.blinkOutput.blinkDelay * BLINK_SCALING_FACTOR);
-                    if ((millis() >= trk.nextActionTime) && trk.isActive) {
-                        bool currentState = digitalRead(sub.config.digitalOutput.outputPin);
-                        digitalWrite(sub.config.digitalOutput.outputPin, !currentState);
-                        /* Use a default or configured blink rate */
-                        trk.nextActionTime = millis() + blinkRate; /* toggle delay */
-                        // Serial.println("Blinking");
+                    /** * Hardware Blinking:
+                     * Once configured, the hardware handles the toggle.
+                     * We only need to trigger the setup once.
+                     */
+                    if (!trk.isActive) {
+                        uint32_t blinkRate = (uint32_t)(sub.config.blinkOutput.blinkDelay * BLINK_SCALING_FACTOR);
+
+                        /* blinkRate is in Hz */
+                        startHardwareBlink(i, sub.config.digitalOutput.outputPin, blinkRate);
+                        trk.isActive = true;
                     }
-                  }
                     break;
+
+
 
                 case OUT_MODE_STROBE:
                     handleStrobeLogic(sub, trk);
