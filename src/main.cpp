@@ -5,7 +5,7 @@
  * Acts as the bridge between the CYD UI and the distributed hardware nodes.
  * Additional roles: ARGB LED control
  * Planned roles: Interface with i2c and SPI sensors, LCD and OLED displays, and button / keypad input
- * 
+ *
  * @author Gordon McLellan
  * @date 2026-02-16
  */
@@ -55,7 +55,7 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 /* memory allocation for main tasks */
 #define TASK_TWAI_STACK_SIZE   (4096U)
 #define TASK_OTA_STACK_SIZE    (4096U)
-#define TASK_SWITCH_STACK_SIZE (4096U)  
+#define TASK_SWITCH_STACK_SIZE (4096U)
 #define tskLowPriority         (tskIDLE_PRIORITY + 1)
 #define tskNormalPriority      (tskIDLE_PRIORITY + 2)
 #define tskHighPriority        (tskIDLE_PRIORITY + 4)
@@ -76,10 +76,11 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 #define SUBMOD_PART_B_FLAG     (0x80U)
 #define LEDC_MAX_TIMERS        (4U)    /* there are four low speed timers, allow one LED per timer */
 #define LEDC_13BIT_50PCT       (4096U) /* 50% of 2^13 */
+#define LEDC_13BIT_100PCT      (8192U) /* 100% of 2^13 */
 
 /* esp32 specific hardware constants */
 #define CYD_BACKLIGHT_PIN     21
-#define CYD_LED_RED_PIN        4                
+#define CYD_LED_RED_PIN        4
 #define CYD_LED_BLUE_PIN      17
 #define CYD_LED_GREEN_PIN     16
 #define CYD_LDR_PIN           34
@@ -190,7 +191,7 @@ static const char *TAG = "canesp32";
 
 /* interrupt stuff */
 hw_timer_t *Timer0_Cfg = NULL;
- 
+
 const char* ssid = SECRET_SSID;
 const char* password = SECRET_PSK;
 const char* hostname =AP_SSID;
@@ -212,7 +213,7 @@ CRGB ledData[4][MAX_LEDS_PER_STRIP]; /**< Buffers for 4 possible strips / submod
 unsigned long ota_progress_millis = 0;
 
 volatile bool wifi_connected = false;
-volatile uint8_t myNodeID[NODE_ID_SIZE]; /**< node ID comprised of four bytes from MAC address */ 
+volatile uint8_t myNodeID[NODE_ID_SIZE]; /**< node ID comprised of four bytes from MAC address */
 
 void IRAM_ATTR Timer0_ISR()
 {
@@ -251,7 +252,7 @@ void initArgbHardware(uint8_t index, subModule_t& sub) {
             Serial.printf("Error: Pin %d not hardware-capable for FastLED\n", pin);
             return;
     }
-    Serial.printf("Submod %d: ARGB Init (Pin %d, Count %d)\n", index, pin, count);                
+    Serial.printf("Submod %d: ARGB Init (Pin %d, Count %d)\n", index, pin, count);
 #endif
 }
 
@@ -259,7 +260,7 @@ void initArgbHardware(uint8_t index, subModule_t& sub) {
  * @brief Initializes digital inputs such as physical switches and buttons.
  * @param i          The sub-module index (used to index submodule array).
  * @param sub        Reference to the sub-module configuration.
- * @details Configure the pull-up/pull-down resistor and initialize the input pin. 
+ * @details Configure the pull-up/pull-down resistor and initialize the input pin.
  * @note This function is called by the initHardware() function during setup().
  */
 void initGPIOInput(uint8_t i, subModule_t& sub) {
@@ -290,8 +291,8 @@ void initPwmHardware(uint8_t i, subModule_t& sub) {
   /* Handle the name change between IDF versions */
     #if !defined(LEDC_USE_RC_FAST_CLK)
         #define LEDC_USE_RC_FAST_CLK LEDC_USE_RTC8M_CLK
-    #endif  
-  
+    #endif
+
   /* ESP32 LEDC setup: channel = i, frequency = config * 100, resolution = 8-bit */
     uint32_t freq = (double)(sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR);
     uint8_t channel = i;
@@ -305,7 +306,7 @@ void initPwmHardware(uint8_t i, subModule_t& sub) {
     };
     ledc_timer_config(&ledc_timer);
 
-    // ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR, PWM_RES_BITS); 
+    // ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR, PWM_RES_BITS);
     // ledcAttachPin(sub.config.pwmOutput.outputPin, i);
 
     uint8_t pin = sub.config.pwmOutput.outputPin;
@@ -347,7 +348,7 @@ void initHardware() {
 
     for (int i = 0; i < MAX_SUB_MODULES; i++) {
         subModule_t& sub = node.subModule[i];
-        
+
         if (sub.introMsgId == 0) continue;
 
         switch (sub.introMsgId) {
@@ -379,7 +380,7 @@ void initHardware() {
                 break;
 
             case DISP_TOUCHSCREEN_LCD_ID:
-                /* Touchscreen init here if needed */            
+                /* Touchscreen init here if needed */
                 Serial.printf("Submod %d: Touchscreen LCD Identified\n", i);
                 break;
 
@@ -503,7 +504,7 @@ ConfigStatus loadConfig(nodeInfo_t& node) {
         xSemaphoreGive(flashMutex);
         return CFG_ERR_NOT_FOUND;
     }
-    
+
     // Check if the key exists before reading
     if (!prefs.isKey("node_data")) {
         prefs.end();
@@ -514,7 +515,7 @@ ConfigStatus loadConfig(nodeInfo_t& node) {
     // Read data and stored CRC
     prefs.getBytes("node_data", &node, sizeof(nodeInfo_t));
     uint16_t storedCrc = prefs.getUShort("node_crc", 0);
-    
+
     prefs.end();
     xSemaphoreGive(flashMutex);
 
@@ -548,13 +549,13 @@ void TaskOTA(void *pvParameters) {
     /* 1. Kill the tasks using hardware first */
     if (xTWAIHandle != NULL) vTaskSuspend(xTWAIHandle); /* suspend the TWAI task */
     if (xSwitchHandle != NULL) vTaskSuspend(xSwitchHandle); /* suspend the output switch task */
-#ifdef ESP32CYD    
+#ifdef ESP32CYD
     if (xDisplayHandle != NULL) vTaskSuspend(xDisplayHandle); /* suspend the display task */
     if (xTouchHandle != NULL) vTaskSuspend(xTouchHandle); /* suspend the touch task */
 #endif
     /* Stop the TWAI driver */
     twai_stop();
-    
+
     Serial.println("OTA Start: Background tasks suspended, starting flash... ");
   });
   ArduinoOTA.onEnd([]() {
@@ -602,8 +603,8 @@ void readMacAddress() {
 /**
  * @brief Sets up the node info based on the node type
  * @details Configure information on the node and submodules based on the node type and data provided by the user
- * 
- * @param nodeType 
+ *
+ * @param nodeType
  */
 
 void wifiOnConnect(){
@@ -685,7 +686,7 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
 
   if (dlc > CAN_MAX_DLC) dlc = CAN_MAX_DLC; /* Safety check */
   memcpy(message.data, data, dlc);  /**< copy data to message data field */
-  
+
   /* Attempt transmission with a 10ms timeout */
   if (twai_transmit(&message, pdMS_TO_TICKS(10)) == ESP_OK) {
 #ifdef ESP32CYD
@@ -699,16 +700,16 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
 
     if (failCount >= 3) {
       Serial.println("Persistent failure: Initiating TWAI Recovery...");
-      
+
       /* Physical Bus Recovery Sequence */
       twai_stop();
-      twai_initiate_recovery(); 
-      
+      twai_initiate_recovery();
+
       vTaskDelay(pdMS_TO_TICKS(100)); /* Short delay for hardware state change */
-      
+
       twai_start();
       Serial.println("TWAI Restarted");
-      
+
       failCount = 0; /* Reset after recovery attempt */
     }
   }
@@ -724,14 +725,14 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
  * @param pin  The hardware GPIO pin to use.
  * @param freq The desired frequency in Hertz (defaults to 5 Hz).
  */
-void handleHardwareBlink(uint8_t submodIdx, uint8_t pin, uint32_t freq = (5U)) {
+void handleHardwareBlink(uint8_t submodIdx, uint8_t pin, uint32_t freq, uint32_t duty = (LEDC_13BIT_50PCT)) {
     uint8_t idx = (submodIdx - 1); /* submodule 0 will never be a blinker, so subtract 1 from index */
-    
-    /** * Safety check: Ensure index does not exceed hardware timer or array limits. 
+
+    /** * Safety check: Ensure index does not exceed hardware timer or array limits.
      */
     if (idx >= LEDC_MAX_TIMERS) {
         Serial.println("Invalid index for LEDC timer, expected 0 to 3.");
-        return; 
+        return;
     }
 
     /** * Cast the index to the appropriate LEDC types for the driver.
@@ -740,65 +741,64 @@ void handleHardwareBlink(uint8_t submodIdx, uint8_t pin, uint32_t freq = (5U)) {
     ledc_timer_t selected_timer = static_cast<ledc_timer_t>(idx);
     ledc_channel_t selected_channel = static_cast<ledc_channel_t>(idx);
 
-    /** * Update the blinkerTracker_t struct in the global array 
+    /** * Update the blinkerTracker_t struct in the global array
      */
     blinkers[idx].freq     = freq;
     blinkers[idx].hwPin    = pin;
     blinkers[idx].subIdx   = submodIdx;
 
-    /** * Configure the LEDC Timer 
+    /** * Configure the LEDC Timer
      */
     ledc_timer_config_t ledc_timer = {
         .speed_mode       = LEDC_LOW_SPEED_MODE,
         .duty_resolution  = LEDC_TIMER_13_BIT,     /* High resolution for low freq */
         .timer_num        = selected_timer,        /* Programmatic timer selection */
-        .freq_hz          = freq,                  
-        .clk_cfg          = LEDC_AUTO_CLK          
+        .freq_hz          = freq,
+        .clk_cfg          = LEDC_AUTO_CLK
     };
     ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
-    /** * Configure the LEDC Channel 
+    /** * Configure the LEDC Channel
      */
     ledc_channel_config_t ledc_channel = {
-        .gpio_num       = pin,                     
+        .gpio_num       = pin,
         .speed_mode     = LEDC_LOW_SPEED_MODE,
         .channel        = selected_channel,        /* Unique channel for this output */
         .intr_type      = LEDC_INTR_DISABLE,
         .timer_sel      = selected_timer,          /* Link channel to the specific timer */
-        .duty           = LEDC_13BIT_50PCT,      
-        .hpoint         = 0,                       
+        .duty           = duty,
+        .hpoint         = 0,
         .flags          = { .output_invert = 0 }
     };
     ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
     blinkers[idx].isActive = true;                 /* Set flag indicating blinker is active */
 
-    Serial.printf("Submod %d: Blinker Init (Pin %d) (%d Hz) on Timer %d\n", 
-                  submodIdx, pin, freq, (int)selected_timer);
+    Serial.printf("Submod %d: Blinker Init (Pin %d) (%d Hz) (Duty %d) on Timer %d\n",
+                  submodIdx, pin, freq, duty, (int)selected_timer);
 }
 
 /**
  * @brief Stops an active LEDC blinker and unbinds the hardware pin.
- * @details Detaches the GPIO from the LEDC peripheral, resets the pin to LOW, 
+ * @details Detaches the GPIO from the LEDC peripheral, resets the pin to LOW,
  * and clears the tracker status.
  * @param idx The index of the blinker in the global tracker array.
  */
 void stopHardwareBlink(uint8_t submodIdx) {
     uint8_t idx = (submodIdx - 1); /* submodule 0 will never be a blinker, so subtract 1 from index */
-    
+
     /** Safety check: Ensure index does not exceed hardware timer or array limits. */
     if (idx >= LEDC_MAX_TIMERS) {
         Serial.println("Invalid index for LEDC timer, expected 0 to 3.");
-        return; 
+        return;
     }
 
 
     /** Retrieve the pin from the tracker before clearing it in the array     */
     uint8_t pin = blinkers[idx].hwPin;
-
     if (blinkers[idx].isActive) {
         /** Detach the GPIO pin from the LEDC peripheral */
         ledc_stop(LEDC_LOW_SPEED_MODE, static_cast<ledc_channel_t>(idx), 0); /* 0 sets the idle level to low */
-        
+
         /** Explicitly set the pin to LOW to ensure a clean off-state  */
         pinMode(pin, OUTPUT);
         digitalWrite(pin, LOW);
@@ -810,7 +810,36 @@ void stopHardwareBlink(uint8_t submodIdx) {
     }
 }
 
+void readCydLdr() {
+#ifndef ESP32CYD
+    return;
+#else
+    const uint8_t  oversample_count = 16;       /* Samples for precision */
+    const uint8_t  ldr_submod_idx   = 5;        /* TODO: Make this configurable */
+    
+    uint32_t       raw_accumulator = 0;
 
+    /* Perform over-sampling on pin 34 */
+    for (uint8_t i = 0; i < oversample_count; i++) {
+        raw_accumulator += analogRead(CYD_LDR_PIN);
+    }
+    
+    /* Result is 12-bit (0-4095) */
+    uint16_t ldr_raw = (uint16_t)(raw_accumulator / oversample_count);
+
+    /* --- Goal 1: Send CAN Message (0x50F) --- */
+    uint8_t data[DATA_ADC_RAW_DLC];
+    /* Use your global myNodeID array */
+    memcpy(&data[0], (const void*)myNodeID, 4);
+    
+    data[4] = ldr_submod_idx;           /* Sensor ID / Submodule index */
+    data[5] = (uint8_t)(ldr_raw >> 8);  /* High byte of 12-bit ADC */
+    data[6] = (uint8_t)(ldr_raw & 0xFF);/* Low byte of 12-bit ADC */
+
+    /* Reusing your existing TWAI routine */
+    send_message(DATA_ADC_RAW_ID, data, DATA_ADC_RAW_DLC);
+#endif
+}
 static void setDisplayMode(twai_message_t& msg, uint8_t displayMode = DISPLAY_MODE_OFF) {
   uint8_t displayID = msg.data[4]; /* display ID */
 
@@ -871,30 +900,34 @@ static void setSwStrobePat(twai_message_t& msg) {
 }
 
 
-static void setPWMDuty(twai_message_t& msg) {
+static void setPWMDuty(twai_message_t& msg) { /* 0x117 */
   uint8_t switchID = msg.data[4]; /* switch ID */
-  uint16_t pwmDuty = (((uint16_t)msg.data[5] << 8) | ((uint16_t)msg.data[6]));  /* pwm duty */
+  double pwmDuty = (double)(msg.data[5] * 1.0) ;  /* pwm duty from master */
+  pwmDuty = (double)(pwmDuty / 100.0); /* convert to decimal */
+  pwmDuty = (double)(pwmDuty * LEDC_13BIT_100PCT); /* convert to LEDC duty cycle */
   if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
-  subModule_t& sub = node.subModule[switchID];  /* get submodule reference */
-  // handlePwmDuty(switchID, pwmDuty);             /* update pwm duty */
+  subModule_t& sub     = node.subModule[switchID];  /* get submodule reference */
+  uint8_t pin          = sub.config.pwmOutput.outputPin; /* get output pin */
+  uint32_t workingFreq = (uint32_t)(sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR);    /* get pwm frequency */
+  handleHardwareBlink(switchID, pin, workingFreq, pwmDuty);     /* update hardware */
   Serial.printf("PWM Duty: %d Switch: %d\n", pwmDuty, switchID);
-
 }
 
-static void setPWMFreq(twai_message_t& msg) {
-  uint8_t switchID = msg.data[4]; /* switch ID */
-  uint16_t pwmFreq = (uint16_t)msg.data[5];  /* pwm frequency */
+static void setPWMFreq(twai_message_t& msg) { /* 0x118 */
+  uint8_t switchID = msg.data[4];  /* switch ID */
+  uint8_t pwmFreq  = msg.data[5];  /* pwm frequency */
   if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
   subModule_t& sub = node.subModule[switchID];  /* get submodule reference */
   sub.config.pwmOutput.pwmFreq = pwmFreq;       /* update pwm frequency in config */
-  // handlePwmFreq(switchID, pwmFreq);            /* update pwm frequency in hardware */
-  Serial.printf("PWM Frequency: %d Switch: %d\n", pwmFreq, switchID);
-
+  uint8_t pin      = sub.config.pwmOutput.outputPin; /* get output pin */
+  uint32_t workingFreq = (uint32_t)(pwmFreq * PWM_SCALING_FACTOR);
+  handleHardwareBlink(switchID, pin, workingFreq);     /* update hardware */
+  Serial.printf("PWM Frequency: %d Switch: %d\n", workingFreq, switchID);
 }
-static void setSwitchMode(twai_message_t& msg) {
+static void setSwitchMode(twai_message_t& msg) { /* 0x112 */
   uint8_t switchID = msg.data[4]; /* switch ID */
   uint8_t switchMode = msg.data[5];  /* switch mode */
-  
+
   if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
 
   subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
@@ -933,7 +966,7 @@ static void setSwitchMode(twai_message_t& msg) {
       trackers[switchID].isConfigured = false;
       trackers[switchID].isActive = false;
 
-      initPwmHardware(switchID, sub); /* call hardware setup helper*/
+      // initPwmHardware(switchID, sub); /* call hardware setup helper*/
       break;
     default:
       Serial.println("Invalid switch mode");
@@ -945,7 +978,7 @@ static void setSwitchMode(twai_message_t& msg) {
 static void txSwitchState(uint8_t* txUnitID, uint16_t txSwitchID, uint8_t swState) {
   uint8_t dataBytes[8];
   static const uint8_t txDLC = 5;
-  
+
   packUint32ToBytes(node.nodeID, dataBytes); /* pack node ID into buffer */
   dataBytes[4] = (txSwitchID); /* set switch ID */
   // dataBytes[5] = (swState); /* set switch state  */
@@ -972,13 +1005,13 @@ static void txSwitchState(uint8_t* txUnitID, uint16_t txSwitchID, uint8_t swStat
  * @brief Set the state of a switch
  * @param msg The message containing the switch ID and state
  * @param swState The state of the switch (OUT_STATE_OFF, OUT_STATE_ON, OUT_STATE_MOMENTARY)
- * 
+ *
  * This function takes a CAN message and sets the state of the corresponding switch.
  * If the switch is configured for momentary, blinking or pwm, the function will
  * set a flag for the outputTask to set the state of the switch accordingly.
  * Otherwise the function will set the state of the switch
  * directly using the digitalWrite() function.
- * 
+ *
  * @note This function will only work if the output is configured for digital output
  */
 static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
@@ -1021,7 +1054,7 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
             digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
             trackers[switchID].isActive = true;
             break;
-      
+
           case OUT_MODE_BLINKING: /* Use LEDC hardware blinking */
           {
             uint32_t freq = (uint32_t)(sub.config.blinkOutput.blinkDelay * BLINK_SCALING_FACTOR);
@@ -1184,7 +1217,7 @@ void nodeInfoARGB() { /* remote node type IFACE_ARGB_MULTI_ID 0x79C */
   /* Configure via specialized helpers */
   setupArgbStrip(0, M5STAMP_ARGB_PIN, M5STAMP_ARGB_COUNT);
   setupDigitalInput(1, M5STAMP_BUTTON_PIN, INPUT_RES_PULLUP);
-  
+
   /* node.subModCnt will be calculated dynamically during intro */
 }
 
@@ -1195,7 +1228,7 @@ void nodeInfoARGB() { /* remote node type IFACE_ARGB_MULTI_ID 0x79C */
 void printHexDump(const void* ptr, size_t size) {
     const uint8_t* p = (const uint8_t*)ptr;
     char buf[16]; /* Buffer for hex formatting */
-    
+
     Serial.println("\n--- nodeInfo_t Hex Dump ---");
     for (size_t i = 0; i < size; i++) {
         /* Print address offset every 16 bytes */
@@ -1203,7 +1236,7 @@ void printHexDump(const void* ptr, size_t size) {
             if (i > 0) Serial.println();
             Serial.printf("%04X: ", (uint16_t)i);
         }
-        
+
         Serial.printf("%02X ", p[i]);
     }
     Serial.println("\n---------------------------");
@@ -1241,7 +1274,7 @@ static uint32_t getEpochTime() {
 
   clock_gettime(CLOCK_REALTIME, &newTime); /* Read time from ESP32 clock*/
 
-  return (uint32_t)newTime.tv_sec; 
+  return (uint32_t)newTime.tv_sec;
 }
 
 /**
@@ -1249,14 +1282,14 @@ static uint32_t getEpochTime() {
  * @param bigNumber The uint32_t to be sent
  * @param canMsgId The message ID to use for transmission (default: DATA_EPOCH_ID)
  * @param dlc The data length code to use for transmission (default: DATA_EPOCH_DLC)
- * 
+ *
  * This function takes a uint32_t and sends it on the CAN bus
  * with the given message ID and data length code.
  */
 static void sendCanUint32(uint32_t bigNumber, uint32_t canMsgId = DATA_EPOCH_ID, uint8_t dlc = DATA_EPOCH_DLC) {
   /* Take a uint32_t and put it on the bus */
   uint8_t dataBytes[dlc];
-  
+
   dataBytes[0] = myNodeID[0]; // set node ID
   dataBytes[1] = myNodeID[1]; // set node ID
   dataBytes[2] = myNodeID[2]; // set node ID
@@ -1285,7 +1318,7 @@ static void setEpochTime(uint32_t epochTime) {
   newTime.tv_sec = (time_t)epochTime;
   newTime.tv_nsec = 0;
   clock_settime(CLOCK_REALTIME, &newTime);
-  
+
 }
 
 /**
@@ -1295,16 +1328,16 @@ static void setEpochTime(uint32_t epochTime) {
  */
 void handleStrobeLogic(subModule_t& sub, outputTracker_t& tracker) {
     /* Hardcoded pattern: ON 50ms, OFF 50ms, ON 50ms, OFF 400ms */
-    static const uint16_t pattern[] = {50, 50, 50, 400}; 
+    static const uint16_t pattern[] = {50, 50, 50, 400};
     static const uint8_t  patternSteps = 4; /**< Total steps in the array */
 
     if ((millis() >= tracker.nextActionTime) && tracker.isActive) {
         tracker.currentStep = (tracker.currentStep + 1) % patternSteps;
-        
+
         /* Set output: Even steps (0, 2) are ON, Odd (1, 3) are OFF */
         bool state = (tracker.currentStep % 2 == 0);
         digitalWrite(sub.config.digitalOutput.outputPin, state);
-        
+
         tracker.nextActionTime = millis() + pattern[tracker.currentStep];
     }
 }
@@ -1324,7 +1357,7 @@ void handleColorCommand(uint8_t ledIndex, uint8_t colorIndex) {
      /* 3. Range check the color index against your palette */
     if (colorIndex < COLOR_PALETTE_SIZE) {
         CRGB targetColor = SystemPalette[colorIndex];
-        
+
         /* Fetch the dynamic count from the configuration struct */
         uint16_t count = node.subModule[ledIndex].config.argbLed.ledCount;
 
@@ -1332,9 +1365,9 @@ void handleColorCommand(uint8_t ledIndex, uint8_t colorIndex) {
          * ledData[ledIndex] was assigned to FastLED during initHardware().
          */
         fill_solid(ledData[ledIndex], count, targetColor);
-        
+
         FastLED.show();
-        
+
         Serial.printf("Submod %u (ARGB): Updated to palette index %u\n", ledIndex, colorIndex);
     }
 #endif
@@ -1387,7 +1420,7 @@ void manageColorPickerList(uint16_t cmd, twai_message_t& msg) {
 
 /**
  * @brief Handles the erase NVS command from the master node
- * 
+ *
  * This function attempts to erase the NVS configuration and
  * reset the node to its default configuration. If the erase
  * operation fails due to a mutex timeout, the function will
@@ -1400,19 +1433,19 @@ void handleEraseNVS() {
   Serial.println("\nErasing config...");
 
   do {
-      cfgStatus = eraseConfig(); 
+      cfgStatus = eraseConfig();
 
       if (cfgStatus == CFG_OK) {
           Serial.println("Config erased successfully, rebooting...");
           vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before reboot */
           ESP.restart(); /**< Reboot the ESP32 */
-          break; 
-      } 
-      
+          break;
+      }
+
       if (cfgStatus == CFG_ERR_NOT_FOUND) {
           Serial.println("Config not found.");
-          break; 
-      } 
+          break;
+      }
 
       if (cfgStatus == CFG_ERR_MUTEX) {
           Serial.printf("Flash busy - Retry %d/3...\n", retries + 1);
@@ -1443,20 +1476,20 @@ void handleReadNVS() {
   Serial.println("\nLoading config...");
 
   do {
-      loadCfgStatus = loadConfig(node); 
+      loadCfgStatus = loadConfig(node);
 
       if (loadCfgStatus == CFG_OK) {
           Serial.println("Config loaded successfully.");
           FLAG_VALID_CONFIG = true;
           initHardware(); /**< Initialize the hardware */
-          break; 
-      } 
-      
+          break;
+      }
+
       if (loadCfgStatus == CFG_ERR_CRC || loadCfgStatus == CFG_ERR_NOT_FOUND) {
           Serial.println("Invalid config - Starting in PROVISIONING MODE");
           loadDefaults(NODEMSGID); /**< load defaults from build flag node type */
-          break; 
-      } 
+          break;
+      }
 
       if (loadCfgStatus == CFG_ERR_MUTEX) {
           Serial.printf("Flash busy - Retry %d/3...\n", retries + 1);
@@ -1490,13 +1523,13 @@ uint8_t countActiveSubModules() {
 
 /**
  * @brief Send an introduction message about the node
- * 
+ *
  * This function is called in response to a request from the master node
  * to introduce the node. The function will send an introduction message
  * with the node type and sub-module count. The function will
  * also send an introduction message for each sub-module with the
  * sub-module type and configuration.
- * 
+ *
  * The function uses a cooldown to prevent spamming the bus every 100ms tick
  */
 void sendIntroduction(int msgPtr = 0) {
@@ -1515,26 +1548,26 @@ void sendIntroduction(int msgPtr = 0) {
 
 /* 0: Node Identity */
   if (msgPtr == 0) {
-    /* Check FLAG_VALID_CONFIG flag, if it's set use the in-memory CRC, if not use 0xFFFF */    
+    /* Check FLAG_VALID_CONFIG flag, if it's set use the in-memory CRC, if not use 0xFFFF */
     uint16_t txCrc = FLAG_VALID_CONFIG ? getConfigurationCRC(node) : CRC_INVALID_CONFIG;
     // uint16_t txCrc = getConfigurationCRC(node);
-    
+
     txMsgID    = node.nodeTypeMsg;
     msgData[4] = node.subModCnt;
     msgData[5] = (uint8_t)(txCrc >> 8);
     msgData[6] = (uint8_t)(txCrc);
     // Serial.printf("TX INTRO: NODE 0x%08X SUBMOD %02u (Type: 0x%03X, CRC: 0x%04X)\n", node.nodeID, msgData[4], txMsgID, txCrc);
-  } 
+  }
 /* >0: Sub-module Identity (Part A and Part B) */
   else {
     uint8_t modIdx = (uint8_t)((msgPtr - 1) / 2); /**< Map ptr to sub-module index */
     bool isPartB   = ((msgPtr - 1) % 2) != 0;      /**< Alternate A/B sequence */
-    
+
     if (modIdx >= node.subModCnt) return;
     subModule_t& sub = node.subModule[modIdx];
 
     txMsgID = sub.introMsgId;
-    
+
     if (!isPartB) {
         /* Part A: Configuration Data */
         msgData[4] = modIdx; /**< bits 0-6: index, bit 7: 0 (Part A) */
@@ -1554,7 +1587,7 @@ void sendIntroduction(int msgPtr = 0) {
         return;  /* error condition, msg ID is invalid, exit the routine */
     }
 
-    Serial.printf("TX INTRO: MOD 0x%03X at Idx %i (Cfg: %02X %02X %02X)\n", 
+    Serial.printf("TX INTRO: MOD 0x%03X at Idx %i (Cfg: %02X %02X %02X)\n",
                   txMsgID, msgData[4], msgData[5], msgData[6], msgData[7]);
   }
   /* put the message on the bus */
@@ -1576,7 +1609,7 @@ static void rxProcessMessage(twai_message_t &message) {
       msgFlag = true; // message is for us
       // Serial.printf("Node ID matched for message id 0x%x\n", message.identifier);
     } else {
-      msgFlag = false; // message is not for us     
+      msgFlag = false; // message is not for us
       // sendIntroack();
       // Serial.printf("Overheard message 0x%03x for node %02x:%02x:%02x:%02x\n", message.identifier, rxUnitID[0], rxUnitID[1], rxUnitID[2], rxUnitID[3]);
     }
@@ -1598,6 +1631,12 @@ static void rxProcessMessage(twai_message_t &message) {
   Serial.println();
 
   switch (message.identifier) {
+    case SW_SET_PWM_DUTY_ID:      // set output switch pwm duty
+      setPWMDuty(message);
+      break;
+    case SW_SET_PWM_FREQ_ID:      // set output switch pwm frequency
+      setPWMFreq(message);
+      break;
     case SW_SET_MODE_ID:           // setup output switch modes
       setSwitchMode(message);
       break;
@@ -1617,13 +1656,13 @@ static void rxProcessMessage(twai_message_t &message) {
       setSwStrobePat(message);
       break;
     case SET_DISPLAY_OFF_ID:          // set display off
-      setDisplayMode(message, DISPLAY_MODE_OFF); 
+      setDisplayMode(message, DISPLAY_MODE_OFF);
       break;
     case SET_DISPLAY_ON_ID:          // set display on
-      setDisplayMode(message, DISPLAY_MODE_ON); 
-      break;    
+      setDisplayMode(message, DISPLAY_MODE_ON);
+      break;
     case SET_DISPLAY_FLASH_ID:          // flash display backlight
-      setDisplayMode(message, DISPLAY_MODE_FLASH); 
+      setDisplayMode(message, DISPLAY_MODE_FLASH);
       break;
     case SET_ARGB_STRIP_COLOR_ID:          /* set ARGB color */
       handleColorCommand(message.data[4], message.data[5]); /* byte 4 is the sub module index, byte 5 is the color index */
@@ -1712,7 +1751,7 @@ static void rxProcessMessage(twai_message_t &message) {
         node.subModule[modIdx].config.analogOutput.outputMode = message.data[6];
         /** message.data[7] is reserved/padding */
       }
-      break;      
+      break;
     case CFG_ERASE_NVS_ID: /**< 0x41B: Master requesting NVS erase */
       {
         Serial.println("Master requesting NVS erase...");
@@ -1731,7 +1770,7 @@ static void rxProcessMessage(twai_message_t &message) {
 
         uint16_t masterCrc = (message.data[4] << 8) | message.data[5];
         uint16_t localCrc  = getConfigurationCRC(node);
-        
+
         uint8_t responseData[6];
         /** Prepare response: [NodeID_B0..B3] [CRC_Hi] [CRC_Lo] */
         packUint32ToBytes(node.nodeID, &responseData[0]);
@@ -1756,12 +1795,12 @@ static void rxProcessMessage(twai_message_t &message) {
             Serial.printf("NVS Commit Failed: CRC Mismatch (M:%04X L:%04X)\n", masterCrc, localCrc);
         }
       }
-      break;    
+      break;
     case CFG_READ_NVS_ID: /**< 0x41E: Master requesting NVS read */
       {
         Serial.println("NVS Read Request");
         uint16_t masterCrc = (message.data[4] << 8) | message.data[5];
-        
+
         handleReadNVS();
 
         uint16_t localCrc  = getConfigurationCRC(node);
@@ -1791,12 +1830,12 @@ static void rxProcessMessage(twai_message_t &message) {
       sendIntroduction(introMsgPtr);
       break;
     case DATA_EPOCH_ID:
-      { 
+      {
       // Use explicit casting to prevent shift overflow
       uint32_t epochTime;
-      epochTime = ((uint32_t)message.data[4] << 24) | 
-                  ((uint32_t)message.data[5] << 16) | 
-                  ((uint32_t)message.data[6] << 8)  | 
+      epochTime = ((uint32_t)message.data[4] << 24) |
+                  ((uint32_t)message.data[5] << 16) |
+                  ((uint32_t)message.data[6] << 8)  |
                    (uint32_t)message.data[7];
       setEpochTime((uint32_t)epochTime);
       Serial.println("Received epoch from master; updating clock");
@@ -1807,9 +1846,9 @@ static void rxProcessMessage(twai_message_t &message) {
     case COLORPICKER_DEL_NODE_ID: /* 0x432: colorpicker del node */
         manageColorPickerList(COLORPICKER_DEL_NODE_ID, message);
     case COLORPICKER_PURGE_LIST_ID: /* 0x431: colorpicker purge list */
-        manageColorPickerList(COLORPICKER_PURGE_LIST_ID, message); 
+        manageColorPickerList(COLORPICKER_PURGE_LIST_ID, message);
     case COLORPICKER_SEND_LIST_ID: /* 0x430: colorpicker send list */
-        manageColorPickerList(COLORPICKER_SEND_LIST_ID, message);  
+        manageColorPickerList(COLORPICKER_SEND_LIST_ID, message);
     case COLORPICKER_WRITE_NVS_ID: /* 0x42F: colorpicker write nvs */
         manageColorPickerList(COLORPICKER_WRITE_NVS_ID, message);
     case COLORPICKER_READ_NVS_ID: /* 0x42E: colorpicker read nvs */
@@ -1834,18 +1873,18 @@ void handleCanRX(twai_message_t& msg) {
       if (msg.data_length_code >= CAN_NODE_ID_LEN) { /* Need at least 4 bytes to proceed */
           uint32_t remoteNodeId;
           /* Use bytes 0-3 to match your sendIntroduction format */
-          remoteNodeId = ((uint32_t)msg.data[0] << 24) | 
-                          ((uint32_t)msg.data[1] << 16) | 
-                          ((uint32_t)msg.data[2] << 8)  | 
+          remoteNodeId = ((uint32_t)msg.data[0] << 24) |
+                          ((uint32_t)msg.data[1] << 16) |
+                          ((uint32_t)msg.data[2] << 8)  |
                           (uint32_t)msg.data[3];
 
           if (remoteNodeId != 0) { /* Sanity check, only register if node ID is non-zero */
               registerARGBNode(remoteNodeId);
-          } 
+          }
       }
       return;
     }
-#endif   
+#endif
 
     /* Pass everything else onto rxProcessMessage */
     rxProcessMessage(msg);
@@ -1860,13 +1899,14 @@ void managePeriodicMessages() {
     static uint32_t lastIntro = 0;
     uint32_t currentMillis = millis();
 
-    /** Introduction as Heartbeat - Every 10 Seconds 
+    /** Introduction as Heartbeat - Every 10 Seconds
         We send this as the heartbeat to save bandwidth,
         unless FLAG_SEND_INTRODUCTION is manually set by a Master request. */
     if (currentMillis - lastIntro >= 10000) {
         lastIntro = currentMillis;
         Serial.printf("Sending heartbeat (ptr = %i)\n", introMsgPtr);
         sendIntroduction(0); /* send the node introduction message as heartbeat */
+        readCydLdr(); /* Read CYD LDR and send that data to the bus */
 
         /* If we are stuck mid-sequence, reset after 10s of silence */
         if (introMsgPtr != 0) {
@@ -1881,8 +1921,8 @@ void TaskTWAI(void *pvParameters) {
   vTaskDelay(100 / portTICK_PERIOD_MS);
 
   /* Initialize configuration structures using macro initializers */
-  twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)TX_PIN, (gpio_num_t)RX_PIN, TWAI_MODE_NORMAL); 
-  twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();  
+  twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)TX_PIN, (gpio_num_t)RX_PIN, TWAI_MODE_NORMAL);
+  twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
   twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL(); /* accept all messages, filter in software */
 
   /* Install TWAI driver */
@@ -1906,7 +1946,7 @@ void TaskTWAI(void *pvParameters) {
   if (twai_reconfigure_alerts(alerts_to_enable, NULL) == ESP_OK) {
     Serial.println("TWAI alerts reconfigured");
   } else {
-    Serial.println("Failed to reconfigure alerts"); 
+    Serial.println("Failed to reconfigure alerts");
     vTaskDelete(NULL); /* <--- Safety fix */
   }
 
@@ -1918,7 +1958,7 @@ void TaskTWAI(void *pvParameters) {
   int loopCount = 0;
 
   /** Begin main can bus RX/TX loop */
-  for (;;) { 
+  for (;;) {
     if (!can_driver_installed || can_suspended) {
       /* Driver not installed or bus suspended */
       vTaskDelay(pdMS_TO_TICKS(100)); /* Idle the task */
@@ -1974,7 +2014,7 @@ void TaskTWAI(void *pvParameters) {
       /* One or more messages received. Handle all. */
       twai_message_t message;
       while (twai_receive(&message, 0) == ESP_OK) {
-        handleCanRX(message); 
+        handleCanRX(message);
 #ifdef ESP32CYD
         digitalWrite(LED_BLUE, !digitalRead(LED_BLUE)); /* Toggle blue LED */
 #endif
@@ -2014,7 +2054,7 @@ void TaskOutput(void *pvParameters) {
                   Serial.printf("Submod %d Type %03X: Not a supported output module\n", i, sub.introMsgId);
                   continue;                                     /* skip the rest of the loop */
                 }
-            
+
 
             switch (sub.config.digitalOutput.outputMode) {
                 case OUT_MODE_MOMENTARY:
@@ -2029,7 +2069,7 @@ void TaskOutput(void *pvParameters) {
                         }
                     }
                     break;
-                
+
                 case OUT_MODE_STROBE:
                     handleStrobeLogic(sub, trk);
                     break;
@@ -2056,14 +2096,14 @@ void setup() {
   delay(2500); /* Provide time for the board's usb interface to change from flash to uart mode */
 
   /* Debug check for memory alignment */
-  Serial.printf("\nStruct Sizes - nodeInfo_t: %d, subModule_t: %d\n", 
+  Serial.printf("\nStruct Sizes - nodeInfo_t: %d, subModule_t: %d\n",
               sizeof(nodeInfo_t), sizeof(subModule_t));
 
   WiFi.onEvent(WiFiEvent);
   WiFi.mode(WIFI_MODE_APSTA);
   WiFi.softAP(AP_SSID);
   WiFi.begin(ssid, password);
-  
+
   /* set up some clock parameters */
   setenv("TZ", DEFAULT_TIMEZONE, ENV_VAL_OVERWRITE);
   tzset();
@@ -2078,9 +2118,10 @@ void setup() {
 
   /* Node Setup Logic */
   handleReadNVS();                                                 /* Read the NVS data from flash and init hardware */
-  
+
   #ifdef ESP32CYD
   initCYD();                                                       /* Initialize CYD interface */
+  pinMode(CYD_LDR, INPUT); /* Setup the LDR as an input TODO: this should be a submodule */
   #endif
 
   /* Start the CAN task */
@@ -2091,13 +2132,13 @@ void setup() {
     NULL,                  /* parameter of the task */
     tskNormalPriority,     /* priority of the task */
     &xTWAIHandle           /* Task handle to keep track of created task */
-  );              
+  );
 
   /* Start OTA task  */
   xTaskCreate(
     TaskOTA,
     "Task OTA",
-    TASK_OTA_STACK_SIZE,   
+    TASK_OTA_STACK_SIZE,
     NULL,
     tskHighPriority,
     NULL
@@ -2107,7 +2148,7 @@ void setup() {
   xTaskCreate(
     TaskOutput,
     "Task Output Switch",
-    TASK_SWITCH_STACK_SIZE,   
+    TASK_SWITCH_STACK_SIZE,
     NULL,
     tskLowPriority, /* lowest priority plus one */
     &xSwitchHandle
@@ -2125,6 +2166,6 @@ void printWifi() {
 
 
 void loop() {
- 
+
   // NOP;
 }
