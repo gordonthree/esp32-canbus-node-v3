@@ -1671,6 +1671,11 @@ static void rxProcessMessage(twai_message_t &message) {
     case CFG_SUB_DATA_MSG_ID:           /* setup sub module data message */
       {
         uint8_t modIdx = message.data[4];                                                   /* byte 4 holds the sub module index */
+        if (modIdx >= MAX_SUB_MODULES) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          return;
+        }
+
         node.subModule[modIdx].dataMsgId    = ((message.data[5] << 8) | message.data[6]);   /* bytes 5:6 hold the intro message ID */
         node.subModule[modIdx].dataMsgDLC   = message.data[7];                              /* byte 7 holds the data message DLC */
       }
@@ -1678,6 +1683,11 @@ static void rxProcessMessage(twai_message_t &message) {
     case CFG_SUB_INTRO_MSG_ID:          /* setup sub module intro message */
       {
         uint8_t modIdx = message.data[4];                                                     /* byte 4 holds the sub module index */
+        if (modIdx >= MAX_SUB_MODULES) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          return;
+        }
+
         node.subModule[modIdx].introMsgId    = ((message.data[5] << 8) | message.data[6]);    /* bytes 5:6 hold the intro message ID */
         node.subModule[modIdx].introMsgDLC   = message.data[7];                               /* byte 7 holds the intro message DLC */
       }
@@ -1686,70 +1696,118 @@ static void rxProcessMessage(twai_message_t &message) {
     case CFG_ARGB_STRIP_ID:                                                     /* setup ARGB channel */
       {
         uint8_t modIdx = message.data[4];                                         /* byte 4 holds the sub module index */
-        node.subModule[modIdx].config.argbLed.outputPin  = message.data[5];       /* byte 5 holds the output pin */
-        node.subModule[modIdx].config.argbLed.ledCount   = message.data[6];       /* bytes 6 hold the number of LEDs (max 255)*/
-        node.subModule[modIdx].config.argbLed.colorOrder = message.data[7];       /* byte 7 holds the color order */
+        if (modIdx >= MAX_SUB_MODULES) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          return;
+        }
+        subModule_t& sub = node.subModule[modIdx];
+        sub.config.argbLed.outputPin  = message.data[5];       /* byte 5 holds the output pin */
+        sub.config.argbLed.ledCount   = message.data[6];       /* bytes 6 hold the number of LEDs (max 255)*/
+        sub.config.argbLed.colorOrder = message.data[7];       /* byte 7 holds the color order */
+        Serial.printf("ARGB: Config Strip %d Pin %d LED Count %d Color Order %d\n", modIdx, sub.config.argbLed.outputPin, sub.config.argbLed.ledCount, sub.config.argbLed.colorOrder);
       }
       break;
     case CFG_DIGITAL_INPUT_ID: /**< Setup digital input channel */
       {
         uint8_t modIdx = message.data[4];
-        node.subModule[modIdx].config.digitalInput.inputPin   = message.data[5];
-        node.subModule[modIdx].config.digitalInput.outputRes  = message.data[6];
-        node.subModule[modIdx].config.digitalInput.isInverted = message.data[7];
+        if (modIdx >= MAX_SUB_MODULES) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          return;
+        }
+        subModule_t& sub = node.subModule[modIdx];
+
+        sub.config.digitalInput.inputPin   = message.data[5];
+        sub.config.digitalInput.outputRes  = message.data[6];
+        sub.config.digitalInput.isInverted = message.data[7];
       }
       break;
 
     case CFG_ANALOG_INPUT_ID: /**< Setup analog ADC input channel */
       {
         uint8_t modIdx = message.data[4];
-        node.subModule[modIdx].config.analogInput.inputPin = message.data[5];
+        if (modIdx >= MAX_SUB_MODULES) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          return;
+        }
+        subModule_t& sub = node.subModule[modIdx];
+
+        sub.config.analogInput.inputPin = message.data[5];
         /** bytes 6 and 7 hold the 16-bit oversampling count */
-        node.subModule[modIdx].config.analogInput.overSampleCnt = (message.data[6] << 8) | message.data[7];
+        sub.config.analogInput.overSampleCnt = (message.data[6] << 8) | message.data[7];
       }
       break;
 
     case CFG_DIGITAL_OUTPUT_ID: /**< Setup digital output channel (relays/mosfets) */
       {
         uint8_t modIdx = message.data[4];
-        node.subModule[modIdx].config.digitalOutput.outputPin   = message.data[5];
-        node.subModule[modIdx].config.digitalOutput.momPressDur = message.data[6];
-        node.subModule[modIdx].config.digitalOutput.outputMode  = message.data[7];
+        if (modIdx >= MAX_SUB_MODULES) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          return;
+        }
+        subModule_t& sub = node.subModule[modIdx];
+
+        sub.config.digitalOutput.outputPin   = message.data[5];
+        sub.config.digitalOutput.momPressDur = message.data[6];
+        sub.config.digitalOutput.outputMode  = message.data[7];
       }
       break;
 
     case CFG_PWM_OUTPUT_ID: /**< Setup PWM output channel */
       {
         uint8_t modIdx = message.data[4];
-        node.subModule[modIdx].config.pwmOutput.outputPin  = message.data[5];
-        node.subModule[modIdx].config.pwmOutput.pwmFreq    = message.data[6];
-        node.subModule[modIdx].config.pwmOutput.isInverted = message.data[7];
+        if (modIdx >= MAX_SUB_MODULES) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          return;
+        }
+        subModule_t& sub = node.subModule[modIdx];
+
+        sub.config.pwmOutput.outputPin  = message.data[5];
+        sub.config.pwmOutput.pwmFreq    = message.data[6];
+        sub.config.pwmOutput.isInverted = message.data[7];
       }
       break;
 
     case CFG_BLINK_OUTPUT_ID: /**< Setup blinking/strobing output channel */
       {
         uint8_t modIdx = message.data[4];
-        node.subModule[modIdx].config.blinkOutput.outputPin  = message.data[5];
-        node.subModule[modIdx].config.blinkOutput.blinkDelay = message.data[6];
-        node.subModule[modIdx].config.blinkOutput.strobePat  = message.data[7];
+        if (modIdx >= MAX_SUB_MODULES) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          return;
+        }
+        subModule_t& sub = node.subModule[modIdx];
+
+        sub.config.blinkOutput.outputPin  = message.data[5];
+        sub.config.blinkOutput.blinkDelay = message.data[6];
+        sub.config.blinkOutput.strobePat  = message.data[7];
       }
       break;
 
     case CFG_ANALOG_STRIP_ID: /**< Setup analog RGB/RGBW strip */
       {
         uint8_t modIdx = message.data[4];
-        node.subModule[modIdx].config.analogStrip.stripIndex = message.data[5];
-        node.subModule[modIdx].config.analogStrip.colorIndex = message.data[6];
-        node.subModule[modIdx].config.analogStrip.pinIndex   = message.data[7];
+        if (modIdx >= MAX_SUB_MODULES) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          return;
+        }
+        subModule_t& sub = node.subModule[modIdx];
+
+        sub.config.analogStrip.stripIndex = message.data[5];
+        sub.config.analogStrip.colorIndex = message.data[6];
+        sub.config.analogStrip.pinIndex   = message.data[7];
       }
       break;
 
     case CFG_ANALOG_OUTPUT_ID: /**< Setup analog DAC output channel */
       {
         uint8_t modIdx = message.data[4];
-        node.subModule[modIdx].config.analogOutput.outputPin  = message.data[5];
-        node.subModule[modIdx].config.analogOutput.outputMode = message.data[6];
+        if (modIdx >= MAX_SUB_MODULES) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          return;
+        }
+        subModule_t& sub = node.subModule[modIdx];
+
+        sub.config.analogOutput.outputPin  = message.data[5];
+        sub.config.analogOutput.outputMode = message.data[6];
         /** message.data[7] is reserved/padding */
       }
       break;
