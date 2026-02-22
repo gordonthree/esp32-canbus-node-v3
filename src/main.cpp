@@ -820,6 +820,7 @@ void readCydLdr() {
     uint32_t       raw_accumulator = 0;
 
     /* Perform over-sampling on pin 34 */
+    Serial.printf("CYD LDR: %d\n", analogRead(CYD_LDR_PIN));
     for (uint8_t i = 0; i < oversample_count; i++) {
         raw_accumulator += analogRead(CYD_LDR_PIN);
     }
@@ -2121,6 +2122,7 @@ void setup() {
 
   #ifdef ESP32CYD
   initCYD();                                                       /* Initialize CYD interface */
+  analogSetAttenuation(ADC_11db);
   pinMode(CYD_LDR, INPUT); /* Setup the LDR as an input TODO: this should be a submodule */
   #endif
 
