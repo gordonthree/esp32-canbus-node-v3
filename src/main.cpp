@@ -25,16 +25,14 @@
 #include <time.h>
 #include "driver/twai.h" /* esp32 native TWAI CAN library */
 #include "driver/ledc.h" /* esp32 native LEDC PWM library */
-#include "esp_err.h"     /* esp32 error codes */
+#include "esp_err.h"     /* esp32 error handler */
 
 /* === FreeRTOS includes === */
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#ifdef ARGB_LED
-/* Load FastLED */
-#include <FastLED.h>
-#endif
+/* Load NeoPixelBus */
+#include <NeoPixelBus.h>
 
 /* === Local includes === */
 #include "secrets.h"
@@ -69,25 +67,28 @@ extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cp
 #define DEFAULT_TIMEZONE       "EST5EDT,M3.2.0,M11.1.0"
 #define ENV_VAL_OVERWRITE      (1U)
 
-#define CRC_INVALID_CONFIG     0xFFFF
+#define CRC_INVALID_CONFIG     (0xFFFF)
 #define PWM_SCALING_FACTOR     (100U)
 #define MOM_SW_SCALING_FACTOR  (10U)
 #define BLINK_SCALING_FACTOR   (1U)
 #define SUBMOD_PART_B_FLAG     (0x80U)
-#define LEDC_MAX_TIMERS        (4U)    /* there are four low speed timers, allow one LED per timer */
-#define LEDC_13BIT_50PCT       (4096U) /* 50% of 2^13 */
-#define LEDC_13BIT_100PCT      (8192U) /* 100% of 2^13 */
+#define LEDC_MAX_TIMERS        (4U)     /* there are four low speed timers, allow one LED per timer */
+#define LEDC_13BIT_50PCT       (4096U)  /* 50% of 2^13 */
+#define LEDC_13BIT_100PCT      (8192U)  /* 100% of 2^13 */
+#define MAX_PIXEL_COUNT        (255U)   /* Maximum LEDs supported per submodule */
+#define MAX_ARGB_STRIPS        (1U)     /* Maximum ARGB strips supported per node */
+#define CAN_ERROR_AGE_MS       (30000U) /* forget errors after 30 seconds */
 
 /* esp32 specific hardware constants */
-#define CYD_BACKLIGHT_PIN     21
-#define CYD_LED_RED_PIN        4
-#define CYD_LED_BLUE_PIN      17
-#define CYD_LED_GREEN_PIN     16
-#define CYD_LDR_PIN           34
-#define CYD_SPEAKER_PIN       26
-#define M5STAMP_ARGB_PIN      27
-#define M5STAMP_ARGB_COUNT     1
-#define M5STAMP_BUTTON_PIN    39
+#define CYD_BACKLIGHT_PIN      (21)
+#define CYD_LED_RED_PIN        ( 4)
+#define CYD_LED_BLUE_PIN       (17)
+#define CYD_LED_GREEN_PIN      (16)
+#define CYD_LDR_PIN            (34)
+#define CYD_SPEAKER_PIN        (26)
+#define M5STAMP_ARGB_PIN       (27)
+#define M5STAMP_ARGB_COUNT     ( 1)
+#define M5STAMP_BUTTON_PIN     (39)
 
 /* Default CAN transceiver pins */
 #ifndef RX_PIN
@@ -179,12 +180,14 @@ const char* ota_password = SECRET_PSK; // change this
 nodeInfo_t node; /**< Store information about this node */
 volatile uint16_t node_crc = 0xffff; /**< CRC-16 for the node configuration */
 volatile int introMsgPtr;  /**< Pointer for the introduction and interview process */
-volatile bool FLAG_VALID_CONFIG = false;
-
-volatile bool can_suspended = false;
+volatile bool FLAG_VALID_CONFIG    = false;
+volatile bool FLAG_ARGB_CONFIG     = false;
+volatile bool can_suspended        = false;
 volatile bool can_driver_installed = false;
 
 unsigned long previousMillis = 0;  /* will store last time a message was sent */
+unsigned long lastCanError   = 0;  /* will store last time a CAN error occurred */
+
 String wifiIP;
 
 static const char *TAG = "canesp32";
@@ -206,8 +209,8 @@ int8_t ipCnt = 0;
 unsigned long time_now = 0;
 
 #ifdef ARGB_LED
-#define MAX_LEDS_PER_STRIP 255 /**< Maximum LEDs supported per submodule */
-CRGB ledData[4][MAX_LEDS_PER_STRIP]; /**< Buffers for 4 possible strips / submodules */
+/* Global strip pointer to allow for dynamic initialization */
+NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0800KbpsMethod>* strip = NULL;
 #endif
 
 unsigned long ota_progress_millis = 0;
@@ -227,32 +230,31 @@ void IRAM_ATTR Timer0_ISR()
  * @param sub   Reference to the sub-module configuration.
  */
 void initArgbHardware(uint8_t index, subModule_t& sub) {
+  if (index >= MAX_SUB_MODULES) return; /* Sanity check */
 #ifdef ARGB_LED
-    /* Rail 1: Ensure we don't exceed the pre-allocated ledData buffer rows */
-    if (index >= MAX_ARGB_SUBMODULES) {
-        Serial.printf("Error: Submod %d exceeds ARGB hardware limit of %d\n", index, MAX_ARGB_SUBMODULES);
-        return;
+    uint8_t  dataPin    = sub.config.argbLed.outputPin;
+    uint16_t pixelCount = (uint16_t)(sub.config.argbLed.ledCount);
+
+    /* Constrain pixel count to prevent memory exhaustion */
+    if (pixelCount > MAX_PIXEL_COUNT) pixelCount = MAX_PIXEL_COUNT;
+
+    /* Logic check: Ensure we don't leak memory if init is called twice */
+    if (strip != NULL) delete strip;
+    
+    /* Instantiate the bus. 
+       Note: For ESP32, the 'method' often dictates the pin via a constructor or template */
+    // strip = new NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod>(pixelCount, dataPin);
+    strip = new NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0800KbpsMethod>(pixelCount, dataPin);
+    
+    if (strip != NULL) 
+    {
+        strip->Begin();
+        strip->Show(); /* Clear strip on boot */
+        Serial.printf("Submod %d: ARGB Init (Pin %d, Count %d)\n", index, dataPin, pixelCount);
+    } else {
+        Serial.printf("Submod %d: ARGB Init Failed (Pin %d, Count %d)\n", index, dataPin, pixelCount);
     }
 
-    uint8_t pin = sub.config.argbLed.outputPin;
-    uint8_t count = sub.config.argbLed.ledCount;
-
-    /* Rail 2: Max bounds check against pre-allocated buffer columns */
-    if (count > MAX_LEDS_PER_STRIP) {
-        count = MAX_LEDS_PER_STRIP;
-    }
-
-    switch (pin) { /* LED type, LED pin, */
-        case 18: FastLED.addLeds<WS2812B, 18, GRB>(ledData[index], count); break;
-        case 19: FastLED.addLeds<WS2812B, 19, GRB>(ledData[index], count); break;
-        case 25: FastLED.addLeds<WS2812B, 25, GRB>(ledData[index], count); break;
-        case 26: FastLED.addLeds<WS2812B, 26, GRB>(ledData[index], count); break;
-        case 27: FastLED.addLeds<WS2812B, 27, GRB>(ledData[index], count); break;
-        default:
-            Serial.printf("Error: Pin %d not hardware-capable for FastLED\n", pin);
-            return;
-    }
-    Serial.printf("Submod %d: ARGB Init (Pin %d, Count %d)\n", index, pin, count);
 #endif
 }
 
@@ -1345,33 +1347,27 @@ void handleStrobeLogic(subModule_t& sub, outputTracker_t& tracker) {
 
 
 
-/**
- * @brief Updates a specific LED strip based on received CAN color index.
- * @param ledIndex The submodule index (0-7).
- * @param colorIndex The 1-byte color index from the CAN message.
+/** * @brief Updates a specific LED with a color from the SystemPalette.
+ * @param ledIndex The zero-based index of the LED to update.
+ * @param colorIndex The index within SystemPalette to apply.
  */
-void handleColorCommand(uint8_t ledIndex, uint8_t colorIndex) {
-#ifdef ARGB_LED
-    /* 1. Range check the submodule index */
-    if (ledIndex >= MAX_SUB_MODULES) return;
+void handleColorCommand(uint16_t ledIndex, uint8_t colorIndex) 
+{
+    /* Ensure hardware is initialized and index is within palette bounds */
+    if ((strip != NULL) && (colorIndex < COLOR_PALETTE_SIZE)) /**< COLOR_PALETTE_SIZE defined in colorpalette.h */
+    {
+        RgbColor selectedColor = SystemPalette[colorIndex];
+        uint16_t pixelCount = strip->PixelCount(); /**< Corrected method name: PixelCount() */
 
-     /* 3. Range check the color index against your palette */
-    if (colorIndex < COLOR_PALETTE_SIZE) {
-        CRGB targetColor = SystemPalette[colorIndex];
-
-        /* Fetch the dynamic count from the configuration struct */
-        uint16_t count = node.subModule[ledIndex].config.argbLed.ledCount;
-
-        /** * 4. Update only the specific buffer for this submodule.
-         * ledData[ledIndex] was assigned to FastLED during initHardware().
-         */
-        fill_solid(ledData[ledIndex], count, targetColor);
-
-        FastLED.show();
-
-        Serial.printf("Submod %u (ARGB): Updated to palette index %u\n", ledIndex, colorIndex);
+        /* Validate ledIndex against the actual hardware count */
+        if (ledIndex < pixelCount) 
+        {
+            strip->SetPixelColor(ledIndex, selectedColor);
+            strip->Show(); /* Push changes to the hardware */
+        }
+    } else {
+        Serial.println("Invalid color index or strip not initialized.");
     }
-#endif
 }
 
 void manageColorPickerList(uint16_t cmd, twai_message_t& msg) {
@@ -1675,9 +1671,12 @@ static void rxProcessMessage(twai_message_t &message) {
           Serial.printf("Invalid sub module index %d\n", modIdx);
           return;
         }
+        subModule_t& sub = node.subModule[modIdx];
 
-        node.subModule[modIdx].dataMsgId    = ((message.data[5] << 8) | message.data[6]);   /* bytes 5:6 hold the intro message ID */
-        node.subModule[modIdx].dataMsgDLC   = message.data[7];                              /* byte 7 holds the data message DLC */
+        sub.dataMsgId    = ((message.data[5] << 8) | (message.data[6] & 0xFF));   /* bytes 5:6 hold the intro message ID */
+        sub.dataMsgDLC   = message.data[7];                              /* byte 7 holds the data message DLC */
+        Serial.printf("Update Sub %d DATA MSG: 0x%03X DLC: %d\n", modIdx, sub.dataMsgId, sub.dataMsgDLC);
+
       }
       break;
     case CFG_SUB_INTRO_MSG_ID:          /* setup sub module intro message */
@@ -1687,10 +1686,13 @@ static void rxProcessMessage(twai_message_t &message) {
           Serial.printf("Invalid sub module index %d\n", modIdx);
           return;
         }
+        subModule_t& sub = node.subModule[modIdx];
 
-        node.subModule[modIdx].introMsgId    = ((message.data[5] << 8) | message.data[6]);    /* bytes 5:6 hold the intro message ID */
-        node.subModule[modIdx].introMsgDLC   = message.data[7];                               /* byte 7 holds the intro message DLC */
+        sub.introMsgId    = ((message.data[5] << 8) | (message.data[6] & 0xFF));    /* bytes 5:6 hold the intro message ID */
+        sub.introMsgDLC   = message.data[7];                               /* byte 7 holds the intro message DLC */
+        Serial.printf("Update Sub %d INTRO MSG: 0x%03X DLC: %d\n", modIdx, sub.introMsgId, sub.introMsgDLC);
       }
+
       break;
 
     case CFG_ARGB_STRIP_ID:                                                     /* setup ARGB channel */
