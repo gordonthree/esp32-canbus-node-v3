@@ -31,8 +31,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#ifdef ARGB_LED
 /* Load NeoPixelBus */
 #include <NeoPixelBus.h>
+#endif
 
 /* === Local includes === */
 #include "secrets.h"
@@ -41,9 +43,7 @@
 #include "espcyd.h"
 #endif
 
-#ifdef ESP32CYD
-extern void registerARGBNode(uint32_t id); // bring function over from espcyd.cpp
-#endif
+
 
 /* my colors */
 #if defined(ARGB_LED) || defined(ESP32CYD) || defined(ARGBW_LED)
@@ -162,6 +162,13 @@ static SemaphoreHandle_t flashMutex = xSemaphoreCreateMutex(); /**< mutex for fl
 /* Task handles */
 TaskHandle_t xTWAIHandle   = NULL; /* declared and defined */
 TaskHandle_t xSwitchHandle = NULL; /**< Handle for the output switch logic task */
+
+/* definitions from external libraries */
+#ifdef ESP32CYD
+// extern int discoveredNodeCount; /**< Track active count in the array */
+// extern const int MAX_ARGB_NODES;
+// extern ARGBNode discoveredNodes[];
+#endif
 
 /* memory allocation for the flags */
 uint8_t FLAG_SEND_INTRODUCTION = 0;
@@ -354,7 +361,9 @@ void initHardware() {
         if (sub.introMsgId == 0) continue;
 
         switch (sub.introMsgId) {
-            case DISP_ARGB_LED_STRIP_ID:
+          case DISP_ARGB_BACKLIGHT_ID:
+          case DISP_ARGB_LED_STRIP_ID:
+          case DISP_ARGB_BUTTON_BACKLIGHT_ID:
                 initArgbHardware(i, sub);
                 break;
 
@@ -846,21 +855,30 @@ void readCydLdr() {
 static void setDisplayMode(twai_message_t& msg, uint8_t displayMode = DISPLAY_MODE_OFF) {
   uint8_t displayID = msg.data[4]; /* display ID */
 
+  if (displayID >= MAX_SUB_MODULES) return; /* invalid display ID */
+  subModule_t& sub = node.subModule[displayID]; /* get submodule reference */
+  uint8_t displayPin = sub.config.digitalOutput.outputPin; /* get output pin */
+
   switch (displayMode) {
     case DISPLAY_MODE_OFF: // display off
+      stopHardwareBlink(displayID);
+      digitalWrite(displayPin, LOW);
       Serial.printf("Display %d OFF\n", displayID);
       break;
     case DISPLAY_MODE_ON: // display on
+      stopHardwareBlink(displayID);
+      digitalWrite(displayPin, HIGH);
       Serial.printf("Display %d ON\n", displayID);
       break;
     case DISPLAY_MODE_CLEAR: // clear display
+      stopHardwareBlink(displayID);
       Serial.printf("Display %d CLEAR\n", displayID);
       break;
     case DISPLAY_MODE_FLASH: // flash display
     {
       uint8_t flashRate = msg.data[5];
+      handleHardwareBlink(displayID, displayPin, flashRate);
       Serial.printf("Display %d FLASH AT %d rate\n", displayID, flashRate);
-
     }
       break;
     default:
@@ -927,6 +945,24 @@ static void setPWMFreq(twai_message_t& msg) { /* 0x118 */
   handleHardwareBlink(switchID, pin, workingFreq);     /* update hardware */
   Serial.printf("PWM Frequency: %d Switch: %d\n", workingFreq, switchID);
 }
+/**
+ * @brief Set the mode of a switch
+ * @param msg The message containing the switch ID and mode
+ *
+ * This function takes a CAN message and sets the mode of the corresponding switch.
+ * The switch can be set to one of the following modes:
+ * - OUT_MODE_TOGGLE: Solid state (on/off)
+ * - OUT_MODE_MOMENTARY: One-shot momentary
+ * - OUT_MODE_BLINKING: Blinking
+ * - OUT_MODE_STROBE: Strobe
+ * - OUT_MODE_PWM: PWM
+ *
+ * If the switch is configured for momentary, blinking or pwm, the function will
+ * set a flag for the outputTask to set the state of the switch accordingly.
+ * Otherwise the function will set the state of the switch directly using the digitalWrite() function.
+ *
+ * @note This function will only work if the output is configured for digital output
+ */
 static void setSwitchMode(twai_message_t& msg) { /* 0x112 */
   uint8_t switchID = msg.data[4]; /* switch ID */
   uint8_t switchMode = msg.data[5];  /* switch mode */
@@ -1347,73 +1383,170 @@ void handleStrobeLogic(subModule_t& sub, outputTracker_t& tracker) {
 
 
 
-/** * @brief Updates a specific LED with a color from the SystemPalette.
- * @param ledIndex The zero-based index of the LED to update.
+/** * @brief Updates ARGB strip to a specific color from the SystemPalette.
+ * @param ledIndex The zero-based index of the Strip to update.
  * @param colorIndex The index within SystemPalette to apply.
  */
-void handleColorCommand(uint16_t ledIndex, uint8_t colorIndex) 
+void handleColorCommand(twai_message_t& msg) 
 {
+#ifndef ARGB_LED
+    return; /* skip if ARGB LED support is not enabled */
+#else
+    uint8_t argbIndex = msg.data[4];
+    uint8_t colorIndex = msg.data[5];
+
+    if (argbIndex >= MAX_SUB_MODULES) return; /* invalid strip index */
+
+    subModule_t& sub = node.subModule[argbIndex]; /* grab reference to submodule configuration */
+
+    /* Setup strip */
+    // initArgbHardware(argbIndex, sub);
+
     /* Ensure hardware is initialized and index is within palette bounds */
-    if ((strip != NULL) && (colorIndex < COLOR_PALETTE_SIZE)) /**< COLOR_PALETTE_SIZE defined in colorpalette.h */
+    if ((strip != NULL) && (colorIndex < COLOR_PALETTE_SIZE)) 
     {
-        RgbColor selectedColor = SystemPalette[colorIndex];
-        uint16_t pixelCount = strip->PixelCount(); /**< Corrected method name: PixelCount() */
+        PaletteColor pColor = SystemPalette[colorIndex];
+        /* Convert to the NeoPixelBus internal color type */
+        // NeoRgbColor targetColor(pColor.R, pColor.G, pColor.B);
 
-        /* Validate ledIndex against the actual hardware count */
-        if (ledIndex < pixelCount) 
-        {
-            strip->SetPixelColor(ledIndex, selectedColor);
-            strip->Show(); /* Push changes to the hardware */
-        }
+        /* Set all pixels in the buffer to this color */
+        strip->ClearTo(RgbColor(pColor.R, pColor.G, pColor.B));
+        strip->Show();
+
+        Serial.printf("ARGB: LED strip: %d Color index: %d, R: %d, G: %d, B: %d\n", argbIndex, colorIndex, pColor.R, pColor.G, pColor.B);
     } else {
-        Serial.println("Invalid color index or strip not initialized.");
+        Serial.println("ARGB: Invalid color index or strip not initialized.");
     }
+#endif
 }
 
-void manageColorPickerList(uint16_t cmd, twai_message_t& msg) {
+void manageColorPickerList(twai_message_t& msg) {
+#ifndef ESP32CYD  
+  return; /* exit function unless we are running on CYD board */
+#else
+    /* Constants for NVS and Byte logic to avoid magic numbers */
+    const char* NVS_NAMESPACE = "cyd_nodes";
+    const char* NVS_KEY       = "node_list";
 
-  if (msg.data_length_code < CAN_NODE_ID_LEN) return; /* Need at least 4 bytes to proceed */
+    uint32_t cmd = msg.identifier;
 
-  switch (cmd)
-  {
+    /* Extract Node ID from data payload if the message contains one */
+    uint32_t targetNodeId = 0;
+    if (msg.data_length_code >= CAN_NODE_ID_LEN) 
+    {
+        targetNodeId = ((uint32_t)msg.data[0] << 24) | 
+                       ((uint32_t)msg.data[1] << 16) | 
+                       ((uint32_t)msg.data[2] << 8)  | 
+                        (uint32_t)msg.data[3];
+    }
 
-    case COLORPICKER_READ_NVS_ID:
+    switch (cmd) 
     {
-      Serial.println("COLORPICKER_READ_NVS_ID");
-      break;
+        case COLORPICKER_READ_NVS_ID: 
+        {
+            Preferences prefs;
+            prefs.begin(NVS_NAMESPACE, true); /* Read-only mode */
+            
+            size_t bytesAvailable = prefs.getBytesLength(NVS_KEY);
+            
+            /* Calculate capacity of our existing array in bytes */
+            size_t maxArrayBytes = sizeof(ARGBNode) * MAX_ARGB_NODES;
+
+            if (bytesAvailable > 0 && bytesAvailable <= maxArrayBytes) 
+            {
+                prefs.getBytes(NVS_KEY, (void*)discoveredNodes, bytesAvailable);
+                discoveredNodeCount = bytesAvailable / sizeof(ARGBNode);
+                Serial.printf("ARGB: Loaded %d nodes from NVS\n", discoveredNodeCount);
+            }
+            prefs.end();
+            break;
+        }
+
+        case COLORPICKER_WRITE_NVS_ID: 
+        {
+            Preferences prefs;
+            prefs.begin(NVS_NAMESPACE, false); /* Read-write mode */
+            
+            /* Save only the active portion of the array */
+            size_t bytesToWrite = sizeof(ARGBNode) * discoveredNodeCount;
+            prefs.putBytes(NVS_KEY, (const void*)discoveredNodes, bytesToWrite);
+            
+            prefs.end();
+            Serial.println("ARGB: Node list persisted to NVS");
+            break;
+        }
+
+        case COLORPICKER_PURGE_LIST_ID: 
+        {
+            memset((void*)discoveredNodes, 0, sizeof(discoveredNodes));
+            discoveredNodeCount = 0;
+            Serial.println("ARGB: List purged from memory");
+            break;
+        }
+
+        case COLORPICKER_ADD_NODE_ID: 
+        {
+            if (targetNodeId == 0) return;
+
+            /* Check for existing entry to prevent duplicates */
+            bool alreadyExists = false;
+            for (int i = 0; i < discoveredNodeCount; i++) 
+            {
+                if (discoveredNodes[i].id == targetNodeId) 
+                {
+                    alreadyExists = true;
+                    break;
+                }
+            }
+
+            if (!alreadyExists && (discoveredNodeCount < MAX_ARGB_NODES)) 
+            {
+                discoveredNodes[discoveredNodeCount].id = targetNodeId;
+                discoveredNodes[discoveredNodeCount].lastColorIdx = 0; /* Default to Black/Off */
+                discoveredNodes[discoveredNodeCount].active = true;
+                discoveredNodeCount++;
+                Serial.printf("ARGB: Node 0x%08X added to picker\n", targetNodeId);
+            }
+            break;
+        }
+
+        case COLORPICKER_DEL_NODE_ID: 
+        {
+            for (int i = 0; i < discoveredNodeCount; i++) 
+            {
+                if (discoveredNodes[i].id == targetNodeId) 
+                {
+                    /* Shift remaining nodes to maintain a contiguous list */
+                    for (int j = i; j < (discoveredNodeCount - 1); j++) 
+                    {
+                        discoveredNodes[j] = discoveredNodes[j + 1];
+                    }
+                    discoveredNodeCount--;
+                    Serial.printf("ARGB: Node 0x%08X removed\n", targetNodeId);
+                    break;
+                }
+            }
+            break;
+        }
+
+        case COLORPICKER_SEND_LIST_ID: 
+        {
+            /* Not yet implemented */
+            /* Respond to master with current list status */
+            // twai_message_t response;
+            // response.identifier = COLORPICKER_SEND_LIST_ID;
+            // response.data_length_code = 1;
+            // response.data[0] = (uint8_t)discoveredNodeCount;
+            // twai_transmit(&response, pdMS_TO_TICKS(10));
+            break;
+        }
+
+        default:
+            Serial.printf("ARGB: Unknown picker management command: 0x%03X\n", cmd);
+            break;
     }
-    case COLORPICKER_WRITE_NVS_ID:
-    {
-      Serial.println("COLORPICKER_WRITE_NVS_ID");
-      break;
-    }
-    case COLORPICKER_SEND_LIST_ID:
-    {
-      Serial.println("COLORPICKER_SEND_LIST_ID");
-      break;
-    }
-    case COLORPICKER_PURGE_LIST_ID:
-    {
-      Serial.println("COLORPICKER_PURGE_LIST_ID");
-      break;
-    }
-    case COLORPICKER_DEL_NODE_ID:
-    {
-      Serial.println("COLORPICKER_DEL_NODE_ID");
-      break;
-    }
-    case COLORPICKER_ADD_NODE_ID:
-    {
-      Serial.println("COLORPICKER_ADD_NODE_ID");
-      break;
-    }
-    default:
-    {
-      Serial.println("Unknown command");
-      break;
-    }
-  }
-}
+#endif
+} /* end manageColorPickerList() */
 
 /**
  * @brief Handles the erase NVS command from the master node
@@ -1593,10 +1726,13 @@ void sendIntroduction(int msgPtr = 0) {
 } /* end sendIntroduction */
 
 
-static void rxProcessMessage(twai_message_t &message) {
+static void handleCanRX(twai_message_t &message) {
   // twai_message_t altmessage;
   bool msgFlag = false;
 
+  if ((message.identifier == SET_ARGB_STRIP_COLOR_ID) || (message.identifier == SET_ARGB_BUTTON_COLOR_ID)) {
+    handleColorCommand(message);
+  }
 
   if (message.data_length_code > 0) { // message contains data, check if it is for us
     uint8_t rxUnitID[4] = {message.data[0], message.data[1], message.data[2], message.data[3]};
@@ -1662,7 +1798,7 @@ static void rxProcessMessage(twai_message_t &message) {
       setDisplayMode(message, DISPLAY_MODE_FLASH);
       break;
     case SET_ARGB_STRIP_COLOR_ID:          /* set ARGB color */
-      handleColorCommand(message.data[4], message.data[5]); /* byte 4 is the sub module index, byte 5 is the color index */
+      handleColorCommand(message); /* byte 4 is the sub module index, byte 5 is the color index */
       break;
     case CFG_SUB_DATA_MSG_ID:           /* setup sub module data message */
       {
@@ -1902,18 +2038,14 @@ static void rxProcessMessage(twai_message_t &message) {
       Serial.println("Received epoch from master; updating clock");
       }
       break;
-    case COLORPICKER_ADD_NODE_ID: /* 0x433: colorpicker add node */
-        manageColorPickerList(COLORPICKER_ADD_NODE_ID, message);
-    case COLORPICKER_DEL_NODE_ID: /* 0x432: colorpicker del node */
-        manageColorPickerList(COLORPICKER_DEL_NODE_ID, message);
-    case COLORPICKER_PURGE_LIST_ID: /* 0x431: colorpicker purge list */
-        manageColorPickerList(COLORPICKER_PURGE_LIST_ID, message);
-    case COLORPICKER_SEND_LIST_ID: /* 0x430: colorpicker send list */
-        manageColorPickerList(COLORPICKER_SEND_LIST_ID, message);
-    case COLORPICKER_WRITE_NVS_ID: /* 0x42F: colorpicker write nvs */
-        manageColorPickerList(COLORPICKER_WRITE_NVS_ID, message);
-    case COLORPICKER_READ_NVS_ID: /* 0x42E: colorpicker read nvs */
-        manageColorPickerList(COLORPICKER_READ_NVS_ID, message);
+
+      case COLORPICKER_ADD_NODE_ID: /* 0x433: colorpicker add node */
+      case COLORPICKER_DEL_NODE_ID: /* 0x432: colorpicker del node */
+      case COLORPICKER_PURGE_LIST_ID: /* 0x431: colorpicker purge list */
+      case COLORPICKER_SEND_LIST_ID: /* 0x430: colorpicker send list */
+      case COLORPICKER_WRITE_NVS_ID: /* 0x42F: colorpicker write nvs */
+      case COLORPICKER_READ_NVS_ID: /* 0x42E: colorpicker read nvs */
+        manageColorPickerList(message);
       break;
 
     default:
@@ -1921,35 +2053,8 @@ static void rxProcessMessage(twai_message_t &message) {
       // sendIntroack();
       break;
   }
-} // end of handle_rx_message
+} // end of void handleCanRX()
 
-/**
- * @brief Validates and sorts messages that passed the broad hardware filter
- * @param msg The TWAI message frame received from the bus
- */
-void handleCanRX(twai_message_t& msg) {
-  /* Software filter: only log introductions for remote ARGB nodes (for the CYD) */
-#ifdef ESP32CYD
-  if (msg.identifier == DISP_ARGB_LED_STRIP_ID || msg.identifier == DISP_ARGB_BACKLIGHT_ID || msg.identifier == DISP_ARGB_BUTTON_BACKLIGHT_ID) {
-      if (msg.data_length_code >= CAN_NODE_ID_LEN) { /* Need at least 4 bytes to proceed */
-          uint32_t remoteNodeId;
-          /* Use bytes 0-3 to match your sendIntroduction format */
-          remoteNodeId = ((uint32_t)msg.data[0] << 24) |
-                          ((uint32_t)msg.data[1] << 16) |
-                          ((uint32_t)msg.data[2] << 8)  |
-                          (uint32_t)msg.data[3];
-
-          if (remoteNodeId != 0) { /* Sanity check, only register if node ID is non-zero */
-              registerARGBNode(remoteNodeId);
-          }
-      }
-      return;
-    }
-#endif
-
-    /* Pass everything else onto rxProcessMessage */
-    rxProcessMessage(msg);
-}
 
 
 /**
@@ -2075,7 +2180,7 @@ void TaskTWAI(void *pvParameters) {
       /* One or more messages received. Handle all. */
       twai_message_t message;
       while (twai_receive(&message, 0) == ESP_OK) {
-        handleCanRX(message);
+        handleCanRX(message); /* Process the message */
 #ifdef ESP32CYD
         digitalWrite(LED_BLUE, !digitalRead(LED_BLUE)); /* Toggle blue LED */
 #endif
