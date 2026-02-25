@@ -776,8 +776,8 @@ void handleHardwareBlink(uint8_t submodIdx, uint8_t pin, uint32_t freq, uint32_t
     ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
     blinkers[idx].isActive = true;                 /* Set flag indicating blinker is active */
 
-    Serial.printf("Submod %d: Blinker Init (Pin %d) (%d Hz) (Duty %d) on Timer %d\n",
-                  submodIdx, pin, freq, duty, (int)selected_timer);
+    // Serial.printf("Submod %d: Blinker Init (Pin %d) (%d Hz) (Duty %d) on Timer %d\n",
+    //               submodIdx, pin, freq, duty, (int)selected_timer);
 }
 
 /**
