@@ -68,16 +68,8 @@
 #define ENV_VAL_OVERWRITE      (1U)
 
 #define CRC_INVALID_CONFIG     (0xFFFF)
-#define PWM_SCALING_FACTOR     (100U)
-#define MOM_SW_SCALING_FACTOR  (10U)
-#define BLINK_SCALING_FACTOR   (1U)
 #define SUBMOD_PART_B_FLAG     (0x80U)
-#define LEDC_MAX_TIMERS        (4U)     /* there are four low speed timers, allow one LED per timer */
-#define LEDC_13BIT_50PCT       (4096U)  /* 50% of 2^13 */
-#define LEDC_13BIT_100PCT      (8192U)  /* 100% of 2^13 */
-#define MAX_PIXEL_COUNT        (255U)   /* Maximum LEDs supported per submodule */
-#define MAX_ARGB_STRIPS        (1U)     /* Maximum ARGB strips supported per node */
-#define CAN_ERROR_AGE_MS       (30000U) /* forget errors after 30 seconds */
+
 
 /* esp32 specific hardware constants */
 #define CYD_BACKLIGHT_PIN      (21)
