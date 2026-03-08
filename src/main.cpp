@@ -147,7 +147,7 @@ blinkerTracker_t blinkers[LEDC_MAX_TIMERS];
 
 uint8_t pwmPins[LEDC_MAX_TIMERS];        /**< Array to track PWM pins */
 
-static SemaphoreHandle_t flashMutex = xSemaphoreCreateMutex(); /**< mutex for flash safety */
+SemaphoreHandle_t flashMutex = xSemaphoreCreateMutex(); /**< mutex for flash safety */
 
 /* Task handles */
 TaskHandle_t xTWAIHandle   = NULL; /* declared and defined */
@@ -1750,7 +1750,7 @@ static void handleCanRX(twai_message_t &message) {
   }
 
   // Run consumer routing logic for every valid message
-  checkRoutes(message);
+  checkRoutes(&message);
 
 
   /* debug: dump message data */
@@ -1762,19 +1762,19 @@ static void handleCanRX(twai_message_t &message) {
 
   switch (message.identifier) {
     case CFG_ROUTE_BEGIN_ID:
-      handleRouteBegin(message);
+      handleRouteBegin(&message);
       break;
     case CFG_ROUTE_DATA_ID:
-      handleRouteData(message);
+      handleRouteData(&message);
       break;
     case CFG_ROUTE_END_ID:
-      handleRouteEnd(message);
+      handleRouteEnd(&message);
       break;
     case CFG_ROUTE_DELETE_ID:
-      handleRouteDelete(message);
+      handleRouteDelete(&message);
       break;
     case CFG_ROUTE_PURGE_ID:
-      handleRoutePurge(message);
+      handleRoutePurge(&message);
       break;
     case CFG_ROUTE_WRITE_NVS_ID:
       handleRouteWriteNVS();
@@ -1784,19 +1784,19 @@ static void handleCanRX(twai_message_t &message) {
       break;
 
     case CFG_PRODUCER_CFG_ID:
-      handleProducerCfg(message);
+      handleProducerCfg(&message);
       break;
     case CFG_PRODUCER_WRITE_NVS_ID:
       handleProducerWriteNVS();
       break;
     case REQ_PRODUCER_CFG_ID:
-      handleReqProducerCfg(message);
+      handleReqProducerCfg(&message);
       break;
     case CFG_PRODUCER_PURGE_ID:
-      handleProducerPurge(message);
+      handleProducerPurge(&message);
       break;
     case CFG_PRODUCER_DEFAULTS_ID:
-      handleProducerDefaults(message);
+      handleProducerDefaults(&message);
       break;
     case CFG_PRODUCER_APPLY_ID:
       handleProducerApply();
