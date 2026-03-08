@@ -7,7 +7,6 @@
  * Planned roles: Interface with i2c and SPI sensors, LCD and OLED displays, and button / keypad input
  *
  * @author Gordon McLellan
- * @date 2026-02-16
  */
 
  /* === Framework includes === */
@@ -37,7 +36,8 @@
 #endif
 
 /* === Local includes === */
-#include "secrets.h"
+#include "secrets.h"    /**< WiFi credentials and such */
+#include "can_router.h" /**< CAN routing routines and constants */
 
 #ifdef ESP32CYD
 #include "espcyd.h"
@@ -159,6 +159,9 @@ TaskHandle_t xSwitchHandle = NULL; /**< Handle for the output switch logic task 
 // extern const int MAX_ARGB_NODES;
 // extern ARGBNode discoveredNodes[];
 #endif
+
+/** Producer tick counter */
+static uint32_t lastProducerTick[MAX_SUB_MODULES] = {0};
 
 /* memory allocation for the flags */
 uint8_t FLAG_SEND_INTRODUCTION = 0;
@@ -1746,6 +1749,10 @@ static void handleCanRX(twai_message_t &message) {
     return;
   }
 
+  // Run consumer routing logic for every valid message
+  checkRoutes(message);
+
+
   /* debug: dump message data */
   Serial.printf("RX MSG: 0x%03X DATA: ", message.identifier);
   for (int i = 0; i < message.data_length_code; i++) {
@@ -1754,6 +1761,47 @@ static void handleCanRX(twai_message_t &message) {
   Serial.println();
 
   switch (message.identifier) {
+    case CFG_ROUTE_BEGIN_ID:
+      handleRouteBegin(message);
+      break;
+    case CFG_ROUTE_DATA_ID:
+      handleRouteData(message);
+      break;
+    case CFG_ROUTE_END_ID:
+      handleRouteEnd(message);
+      break;
+    case CFG_ROUTE_DELETE_ID:
+      handleRouteDelete(message);
+      break;
+    case CFG_ROUTE_PURGE_ID:
+      handleRoutePurge(message);
+      break;
+    case CFG_ROUTE_WRITE_NVS_ID:
+      handleRouteWriteNVS();
+      break;
+    case CFG_ROUTE_READ_NVS_ID:
+      handleRouteReadNVS();
+      break;
+
+    case CFG_PRODUCER_CFG_ID:
+      handleProducerCfg(message);
+      break;
+    case CFG_PRODUCER_WRITE_NVS_ID:
+      handleProducerWriteNVS();
+      break;
+    case REQ_PRODUCER_CFG_ID:
+      handleReqProducerCfg(message);
+      break;
+    case CFG_PRODUCER_PURGE_ID:
+      handleProducerPurge(message);
+      break;
+    case CFG_PRODUCER_DEFAULTS_ID:
+      handleProducerDefaults(message);
+      break;
+    case CFG_PRODUCER_APPLY_ID:
+      handleProducerApply();
+      break;
+
     case SW_SET_PWM_DUTY_ID:      // set output switch pwm duty
       setPWMDuty(message);
       break;
@@ -2068,6 +2116,23 @@ void managePeriodicMessages() {
         if (introMsgPtr != 0) {
             Serial.println("Intro sequence timed out, resetting pointer.");
             introMsgPtr = 0;
+        }
+    }
+
+    // Producer broadcasts
+    for (uint8_t i = 0; i < node.subModCnt; i++) {
+        uint8_t rate = g_producerCfg[i].rate_hz;
+        if (rate == 0) continue;
+        if (!(g_producerCfg[i].flags & PRODUCER_FLAG_ENABLED)) continue;
+
+        uint32_t interval = 1000U / rate; // ms
+        if (currentMillis - lastProducerTick[i] >= interval) {
+            lastProducerTick[i] = currentMillis;
+
+            // TODO: implement sendProducerData(i) using subModule_t dataMsgId/dataMsgDLC
+            // For now, just log:
+            Serial.printf("ProducerTx: sub %u msg 0x%03X\n",
+                          i, node.subModule[i].dataMsgId);
         }
     }
 }
