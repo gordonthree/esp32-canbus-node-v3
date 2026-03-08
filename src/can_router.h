@@ -1,9 +1,15 @@
 #ifndef __CAN_ROUTER_H__
 #define __CAN_ROUTER_H__
 
-#include "canbus_project.h"
+#include <Arduino.h>
+#include <Preferences.h>
 
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "canbus_project.h"
+
 #include "driver/twai.h"
 
 #define MAX_ROUTES                 (8U)
