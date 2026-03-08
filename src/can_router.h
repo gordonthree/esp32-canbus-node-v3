@@ -3,13 +3,14 @@
 
 #include "canbus_project.h"
 
-
 #include <stdint.h>
 #include "driver/twai.h"
 
-#define MAX_ROUTES        (8U)
+#define MAX_ROUTES                 (8U)
 #define PRODUCER_FLAG_ENABLED      (0x01U)
 #define PRODUCER_FLAG_CHANGE_ONLY  (0x02U)
+#define PRODUCER_FLAG_RESERVED1    (0x04U)
+#define PRODUCER_FLAG_RESERVED2    (0x08U)
 
 typedef struct __attribute__((packed)) {
     uint8_t  parameters[8];      // configuration parameters (8 bytes)
