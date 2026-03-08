@@ -43,8 +43,6 @@
 #include "espcyd.h"
 #endif
 
-
-
 /* my colors */
 #if defined(ARGB_LED) || defined(ESP32CYD) || defined(ARGBW_LED)
 #include "colorpalette.h"
@@ -171,9 +169,9 @@ uint8_t FLAG_SEND_NODECHECK    = 0;
 uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 
 /* OTA task control */
-volatile bool ota_enabled = false;
-volatile bool ota_started = false;
-const char* ota_password = SECRET_PSK; // change this
+volatile bool ota_enabled  = false;
+volatile bool ota_started  = false;
+const char*   ota_password = OTA_PASSWORD; // change this
 
 /* dynamic discovery stuff */
 nodeInfo_t node; /**< Store information about this node */
@@ -2031,8 +2029,8 @@ static void handleCanRX(twai_message_t &message) {
       }
       break;
 
-      case COLORPICKER_ADD_NODE_ID: /* 0x433: colorpicker add node */
-      case COLORPICKER_DEL_NODE_ID: /* 0x432: colorpicker del node */
+      case COLORPICKER_ADD_ROUTE_ID: /* 0x433: colorpicker add node */
+      case COLORPICKER_DEL_ROUTE_ID: /* 0x432: colorpicker del node */
       case COLORPICKER_PURGE_LIST_ID: /* 0x431: colorpicker purge list */
       case COLORPICKER_SEND_LIST_ID: /* 0x430: colorpicker send list */
       case COLORPICKER_WRITE_NVS_ID: /* 0x42F: colorpicker write nvs */
