@@ -943,15 +943,40 @@ static void setPWMFreq(twai_message_t& msg) { /* 0x118 */
   handleHardwareBlink(switchID, pin, workingFreq);     /* update hardware */
   Serial.printf("PWM Frequency: %d Switch: %d\n", workingFreq, switchID);
 }
+
+static void txSwitchState(uint8_t* txUnitID, uint16_t txSwitchID, uint8_t swState) {
+  uint8_t dataBytes[8];
+  static const uint8_t txDLC = 5;
+
+  packUint32ToBytes(node.nodeID, dataBytes); /* pack node ID into buffer */
+  dataBytes[4] = (txSwitchID); /* set switch ID */
+  // dataBytes[5] = (swState); /* set switch state  */
+
+  switch (swState) {
+
+  case OUT_STATE_OFF: // switch off
+    send_message(SW_SET_OFF_ID, dataBytes, SW_SET_OFF_DLC);
+    break;
+  case OUT_STATE_ON: // switch on
+    send_message(SW_SET_ON_ID, dataBytes, SW_SET_ON_DLC);
+    break;
+  case OUT_STATE_MOMENTARY: // momentary press
+    send_message(SW_MOM_PRESS_ID, dataBytes, SW_MOM_PRESS_DLC);
+    break;
+  default: // unsupported state
+    Serial.println("Invalid switch state for transmission");
+    break;
+  }
+}
+
 /**
- * @brief Set the mode of a switch
+ * @brief Set the mode of a switch, does not set the state
  * @param msg The message containing the switch ID and mode
  *
  * This function takes a CAN message and sets the mode of the corresponding switch.
  * The switch can be set to one of the following modes:
  * - OUT_MODE_TOGGLE: Solid state (on/off)
  * - OUT_MODE_MOMENTARY: One-shot momentary
- * - OUT_MODE_BLINKING: Blinking
  * - OUT_MODE_STROBE: Strobe
  * - OUT_MODE_PWM: PWM
  *
@@ -986,18 +1011,13 @@ static void setSwitchMode(twai_message_t& msg) { /* 0x112 */
       trackers[switchID].isConfigured = true;
       trackers[switchID].isActive = true;
       break;
-    case OUT_MODE_BLINKING: // blinking
-      sub.config.digitalOutput.outputMode = switchMode;
-
-
-      break;
     case OUT_MODE_STROBE: // strobe
       sub.config.digitalOutput.outputMode = switchMode;
 
       trackers[switchID].isConfigured = true;
       trackers[switchID].isActive = true;
       break;
-    case OUT_MODE_PWM: // pwm
+    case OUT_MODE_PWM: // pwm and blinking
       sub.config.digitalOutput.outputMode = switchMode;
 
       trackers[switchID].isConfigured = false;
@@ -1012,34 +1032,8 @@ static void setSwitchMode(twai_message_t& msg) { /* 0x112 */
 
 }
 
-static void txSwitchState(uint8_t* txUnitID, uint16_t txSwitchID, uint8_t swState) {
-  uint8_t dataBytes[8];
-  static const uint8_t txDLC = 5;
-
-  packUint32ToBytes(node.nodeID, dataBytes); /* pack node ID into buffer */
-  dataBytes[4] = (txSwitchID); /* set switch ID */
-  // dataBytes[5] = (swState); /* set switch state  */
-
-  switch (swState) {
-
-  case OUT_STATE_OFF: // switch off
-    send_message(SW_SET_OFF_ID, dataBytes, SW_SET_OFF_DLC);
-    break;
-  case OUT_STATE_ON: // switch on
-    send_message(SW_SET_ON_ID, dataBytes, SW_SET_ON_DLC);
-    break;
-  case OUT_STATE_MOMENTARY: // momentary press
-    send_message(SW_MOM_PRESS_ID, dataBytes, SW_MOM_PRESS_DLC);
-    break;
-  default: // unsupported state
-    Serial.println("Invalid switch state for transmission");
-    break;
-  }
-}
-
-
 /**
- * @brief Set the state of a switch
+ * @brief Set the state of a switch based on the configured mode
  * @param msg The message containing the switch ID and state
  * @param swState The state of the switch (OUT_STATE_OFF, OUT_STATE_ON, OUT_STATE_MOMENTARY)
  *
@@ -1068,13 +1062,11 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
           case OUT_MODE_MOMENTARY:
             trackers[switchID].isActive = false;
             break;
-          case OUT_MODE_BLINKING:
-            stopHardwareBlink(switchID);
-            break;
           case OUT_MODE_STROBE:
             trackers[switchID].isActive = false;
             break;
-          case OUT_MODE_PWM:
+          case OUT_MODE_PWM: // pwm and blinking
+            stopHardwareBlink(switchID);
             clearPwmHardware(switchID);
             break;
           default:
@@ -1092,12 +1084,13 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
             trackers[switchID].isActive = true;
             break;
 
-          case OUT_MODE_BLINKING: /* Use LEDC hardware blinking */
+          case OUT_MODE_PWM: /* Use LEDC hardware blinking and pwm*/
           {
+            //TODO: blinkOutput is going away, need to refactor to a more generic pwmOutput instead
             uint32_t freq = (uint32_t)(sub.config.blinkOutput.blinkDelay * BLINK_SCALING_FACTOR);
             uint8_t  pin  = sub.config.digitalOutput.outputPin;
-            if (freq == 0) {
-              freq = 5; /* for debugging don't let the blinkrate equal 0*/
+            if (freq == 0) { /* for debugging don't let the blink rate equal 0*/
+              freq = 5; 
               sub.config.blinkOutput.blinkDelay = freq;
             }
             handleHardwareBlink(switchID, pin, freq);
