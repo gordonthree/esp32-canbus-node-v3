@@ -36,8 +36,16 @@
 #endif
 
 /* === Local includes === */
-#include "secrets.h"    /**< WiFi credentials and such */
-#include "can_router.h" /**< CAN routing routines and constants */
+#include "canbus_project.h"    /**< my various CAN functions and structs */
+#include "secrets.h"           /**< WiFi credentials and such */
+#include "can_router.h"        /**< CAN routing routines and constants */
+#include "personality_table.h" /**< Node and sub-module personality table */
+
+/* my can bus stuff */
+#include "byte_conversion.h"
+
+/* hardware constants */
+#include "esp32_defs.h"
 
 #ifdef ESP32CYD
 #include "espcyd.h"
@@ -56,9 +64,7 @@
 #define tskNormalPriority      (tskIDLE_PRIORITY + 2)
 #define tskHighPriority        (tskIDLE_PRIORITY + 4)
 
-/* my can bus stuff */
-#include "canbus_project.h"
-#include "byte_conversion.h"
+
 
 #define CAN_ID_MASK            (0x3F)      /**< Mask for lower 6 bits of CAN ID */
 #define PWM_RES_BITS           (8U)        /**< 8-bit resolution for PWM */
@@ -69,16 +75,7 @@
 #define SUBMOD_PART_B_FLAG     (0x80U)
 
 
-/* esp32 specific hardware constants */
-#define CYD_BACKLIGHT_PIN      (21)
-#define CYD_LED_RED_PIN        ( 4)
-#define CYD_LED_BLUE_PIN       (17)
-#define CYD_LED_GREEN_PIN      (16)
-#define CYD_LDR_PIN            (34)
-#define CYD_SPEAKER_PIN        (26)
-#define M5STAMP_ARGB_PIN       (27)
-#define M5STAMP_ARGB_COUNT     ( 1)
-#define M5STAMP_BUTTON_PIN     (39)
+
 
 /* Default CAN transceiver pins */
 #ifndef RX_PIN
@@ -143,8 +140,6 @@ struct blinkerTracker_t {
 };
 
 blinkerTracker_t blinkers[LEDC_MAX_TIMERS];
-
-
 uint8_t pwmPins[LEDC_MAX_TIMERS];        /**< Array to track PWM pins */
 
 SemaphoreHandle_t flashMutex = xSemaphoreCreateMutex(); /**< mutex for flash safety */
@@ -160,8 +155,11 @@ TaskHandle_t xSwitchHandle = NULL; /**< Handle for the output switch logic task 
 // extern ARGBNode discoveredNodes[];
 #endif
 
+/** Runtime data storage */
+submoduleRuntime_t g_subRuntime[MAX_SUB_MODULES];
+
 /** Producer tick counter */
-static uint32_t lastProducerTick[MAX_SUB_MODULES] = {0};
+uint32_t lastProducerTick[MAX_SUB_MODULES] = {0};
 
 /* memory allocation for the flags */
 uint8_t FLAG_SEND_INTRODUCTION = 0;
@@ -209,8 +207,9 @@ int8_t ipCnt = 0;
 unsigned long time_now = 0;
 
 #ifdef ARGB_LED
-/* Global strip pointer to allow for dynamic initialization */
-NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0800KbpsMethod>* strip = NULL;
+/* Global strip pointers to allow for dynamic initialization */
+// NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0800KbpsMethod>* strip = NULL;
+NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0800KbpsMethod>* g_argbStrips[MAX_SUB_MODULES] = { nullptr };
 #endif
 
 unsigned long ota_progress_millis = 0;
@@ -229,34 +228,38 @@ void IRAM_ATTR Timer0_ISR()
  * @param index The sub-module index (used to index ledData arrays).
  * @param sub   Reference to the sub-module configuration.
  */
-void initArgbHardware(uint8_t index, subModule_t& sub) {
-  if (index >= MAX_SUB_MODULES) return; /* Sanity check */
+void initArgbHardware(uint8_t index, subModule_t& sub)
+{
 #ifdef ARGB_LED
-    uint8_t  dataPin    = sub.config.argbLed.outputPin;
-    uint16_t pixelCount = (uint16_t)(sub.config.argbLed.ledCount);
+    if (index >= MAX_SUB_MODULES) return;
 
-    /* Constrain pixel count to prevent memory exhaustion */
-    if (pixelCount > MAX_PIXEL_COUNT) pixelCount = MAX_PIXEL_COUNT;
+    uint8_t  dataPin    = sub.config.argb.colorOrder; // or dedicated pin field
+    uint16_t pixelCount = sub.config.argb.ledCount;
 
-    /* Logic check: Ensure we don't leak memory if init is called twice */
-    if (strip != NULL) delete strip;
-    
-    /* Instantiate the bus. 
-       Note: For ESP32, the 'method' often dictates the pin via a constructor or template */
-    // strip = new NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod>(pixelCount, dataPin);
-    strip = new NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0800KbpsMethod>(pixelCount, dataPin);
-    
-    if (strip != NULL) 
+    if (pixelCount > MAX_PIXEL_COUNT)
+        pixelCount = MAX_PIXEL_COUNT;
+
+    /* Free old strip if reinitializing */
+    if (g_argbStrips[index] != nullptr)
+        delete g_argbStrips[index];
+
+    /* Allocate new strip */
+    g_argbStrips[index] =
+        new NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0800KbpsMethod>(pixelCount, dataPin);
+
+    if (g_argbStrips[index] != nullptr)
     {
-        strip->Begin();
-        strip->Show(); /* Clear strip on boot */
-        Serial.printf("Submod %d: ARGB Init (Pin %d, Count %d)\n", index, dataPin, pixelCount);
-    } else {
-        Serial.printf("Submod %d: ARGB Init Failed (Pin %d, Count %d)\n", index, dataPin, pixelCount);
+        g_argbStrips[index]->Begin();
+        g_argbStrips[index]->Show();
+        Serial.printf("ARGB Init: submod %d pin %d count %d\n", index, dataPin, pixelCount);
     }
-
+    else
+    {
+        Serial.printf("ARGB Init FAILED: submod %d pin %d count %d\n", index, dataPin, pixelCount);
+    }
 #endif
 }
+
 
 /**
  * @brief Initializes digital inputs such as physical switches and buttons.
@@ -819,6 +822,33 @@ void stopHardwareBlink(uint8_t submodIdx) {
     }
 }
 
+/**
+ * @brief Handle momentary output behavior.
+ *
+ * Behavior:
+ *   - When triggered, output goes HIGH
+ *   - After duration expires, output returns LOW
+ */
+void handleMomentaryLogic(subModule_t &sub, outputTracker_t &trk)
+{
+    uint8_t pin = sub.config.digitalOutput.outputPin;
+
+    if (!trk.isActive)
+        return;
+
+    /* If timer still running → keep output HIGH */
+    if (millis() < trk.nextActionTime)
+    {
+        digitalWrite(pin, HIGH);
+        return;
+    }
+
+    /* Timer expired → turn output OFF */
+    digitalWrite(pin, LOW);
+    trk.isActive = false;
+}
+
+
 void readCydLdr() {
 #ifndef ESP32CYD
     return;
@@ -1352,62 +1382,96 @@ static void setEpochTime(uint32_t epochTime) {
 }
 
 /**
- * @brief Logic for the strobe pattern (Double Flash).
- * @param sub Reference to the submodule configuration.
- * @param tracker Reference to the runtime tracker.
+ * @brief Execute one step of the strobe pattern for an output-capable submodule.
+ *
+ * This function:
+ *   - Uses a pattern table (durations in ms)
+ *   - Advances through the pattern when the timer expires
+ *   - Sets the output HIGH/LOW based on the pattern step
+ *   - Updates tracker.nextActionTime for the next step
+ *
+ * The pattern is defined by the submodule configuration (strobePattern_t).
+ * Each pattern is an array of ON/OFF durations.
  */
-void handleStrobeLogic(subModule_t& sub, outputTracker_t& tracker) {
-    /* Hardcoded pattern: ON 50ms, OFF 50ms, ON 50ms, OFF 400ms */
-    static const uint16_t pattern[] = {50, 50, 50, 400};
-    static const uint8_t  patternSteps = 4; /**< Total steps in the array */
+void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk)
+{
+    /* If the strobe is not active, do nothing */
+    if (!trk.isActive)
+        return;
 
-    if ((millis() >= tracker.nextActionTime) && tracker.isActive) {
-        tracker.currentStep = (tracker.currentStep + 1) % patternSteps;
+    /* If it's not time to advance the pattern, do nothing */
+    if (millis() < trk.nextActionTime)
+        return;
 
-        /* Set output: Even steps (0, 2) are ON, Odd (1, 3) are OFF */
-        bool state = (tracker.currentStep % 2 == 0);
-        digitalWrite(sub.config.digitalOutput.outputPin, state);
+    /* Select the pattern based on configuration */
+    const uint16_t *pattern = nullptr;
+    uint8_t patternSteps = 0;
 
-        tracker.nextActionTime = millis() + pattern[tracker.currentStep];
+    switch (sub.config.digitalOutput.strobePat)
+    {
+        case STROBE_PATTERN_1: {
+            /* Example: ON 50ms, OFF 50ms, ON 50ms, OFF 400ms */
+            static const uint16_t p1[] = {50, 50, 50, 400};
+            pattern = p1;
+            patternSteps = 4;
+            break;
+        }
+
+        case STROBE_PATTERN_2: {
+            /* Example: 3x flash, pause, 5x flash, pause */
+            static const uint16_t p2[] = {50,50,50,200, 50,50,50,50,50,400};
+            pattern = p2;
+            patternSteps = 10;
+            break;
+        }
+
+        /* Additional patterns can be added here */
+        default:
+            /* Unknown pattern → disable strobe */
+            trk.isActive = false;
+            digitalWrite(sub.config.digitalOutput.outputPin, LOW);
+            return;
     }
+
+    /* Advance to the next step in the pattern */
+    trk.currentStep = (trk.currentStep + 1) % patternSteps;
+
+    /* Even steps = ON, Odd steps = OFF */
+    bool state = (trk.currentStep % 2 == 0);
+
+    digitalWrite(sub.config.digitalOutput.outputPin, state);
+
+    /* Schedule the next step */
+    trk.nextActionTime = millis() + pattern[trk.currentStep];
 }
 
 
 
-/** * @brief Updates ARGB strip to a specific color from the SystemPalette.
- * @param ledIndex The zero-based index of the Strip to update.
- * @param colorIndex The index within SystemPalette to apply.
+/**
+ * @brief Handles color commands from the gateway node.
+ *
+ * @param msg The TWAI message containing the color command.
+ * 
  */
-void handleColorCommand(twai_message_t& msg) 
+void handleColorCommand(twai_message_t& msg)
 {
-#ifndef ARGB_LED
-    return; /* skip if ARGB LED support is not enabled */
-#else
-    uint8_t argbIndex = msg.data[4];
+#ifdef ARGB_LED
+    uint8_t subIdx     = msg.data[4];
     uint8_t colorIndex = msg.data[5];
 
-    if (argbIndex >= MAX_SUB_MODULES) return; /* invalid strip index */
+    if (subIdx >= MAX_SUB_MODULES) return;
 
-    subModule_t& sub = node.subModule[argbIndex]; /* grab reference to submodule configuration */
+    auto* strip = g_argbStrips[subIdx];
+    if (!strip) return;
 
-    /* Setup strip */
-    // initArgbHardware(argbIndex, sub);
+    if (colorIndex >= COLOR_PALETTE_SIZE) return;
 
-    /* Ensure hardware is initialized and index is within palette bounds */
-    if ((strip != NULL) && (colorIndex < COLOR_PALETTE_SIZE)) 
-    {
-        PaletteColor pColor = SystemPalette[colorIndex];
-        /* Convert to the NeoPixelBus internal color type */
-        // NeoRgbColor targetColor(pColor.R, pColor.G, pColor.B);
+    PaletteColor p = SystemPalette[colorIndex];
 
-        /* Set all pixels in the buffer to this color */
-        strip->ClearTo(RgbColor(pColor.R, pColor.G, pColor.B));
-        strip->Show();
+    strip->ClearTo(RgbColor(p.R, p.G, p.B));
+    strip->Show();
 
-        Serial.printf("ARGB: LED strip: %d Color index: %d, R: %d, G: %d, B: %d\n", argbIndex, colorIndex, pColor.R, pColor.G, pColor.B);
-    } else {
-        Serial.println("ARGB: Invalid color index or strip not initialized.");
-    }
+    Serial.printf("ARGB[%d] = (%d,%d,%d)\n", subIdx, p.R, p.G, p.B);
 #endif
 }
 
@@ -2252,51 +2316,78 @@ void TaskTWAI(void *pvParameters) {
 }
 
 /**
- * @brief Non-blocking task to manage digital outputs.
+ * @brief Periodic task that manages all output-capable submodules.
+ *
+ * This task:
+ *   - Iterates over all submodules
+ *   - Skips anything that is not an output personality
+ *   - Applies the behavior defined by outputMode_t
+ *   - Uses trackers[] for timing-based modes (momentary, strobe)
+ *
+ * Runs every 10 ms → 100 Hz timing resolution.
  */
-void TaskOutput(void *pvParameters) {
+void TaskOutput(void *pvParameters)
+{
     Serial.println("Output task started");
-    for (;;) {
-        for (int i = 0; i < MAX_SUB_MODULES; i++) {
-            subModule_t& sub = node.subModule[i];
-            outputTracker_t& trk = trackers[i];
-            if (trackers[i].isConfigured != true) {
-                continue; /* skip unconfigured submodule */
-            }
 
-            /* Check if submodule is a compatible output type */
-            if (sub.introMsgId != OUT_GPIO_DIGITAL_ID &&      /* not a gpio output module */
-                sub.introMsgId != DISP_ANALOG_BACKLIGHT_ID && /* not an analog backlight module */
-                sub.introMsgId != DISP_MONOCHROME_LED_ID &&   /* not a monochrome LED module */
-                sub.introMsgId != DISP_STROBE_MODULE_ID)      /* not a strobe module */
-                {
-                  Serial.printf("Submod %d Type %03X: Not a supported output module\n", i, sub.introMsgId);
-                  continue;                                     /* skip the rest of the loop */
-                }
+    for (;;)
+    {
+        for (int i = 0; i < MAX_SUB_MODULES; i++)
+        {
+            subModule_t &sub = node.subModule[i];
+            outputTracker_t &trk = trackers[i];
 
+            /* Skip submodules that are not configured for output behavior */
+            if (!trk.isConfigured)
+                continue;
 
-            switch (sub.config.digitalOutput.outputMode) {
+            /* Skip personalities that do not support output behavior */
+            if (!(sub.capabilities & CAP_OUTPUT))
+                continue;
+
+            /* Dispatch based on the configured output mode */
+            switch (sub.config.digitalOutput.outputMode)
+            {
                 case OUT_MODE_MOMENTARY:
-                    if (trk.isActive) {
-                        /* If the timer hasn't expired, ensure pin is HIGH */
-                        if (millis() < trk.nextActionTime) {
-                            digitalWrite(sub.config.digitalOutput.outputPin, HIGH);
-                        } else {
-                            /* Timer expired */
-                            digitalWrite(sub.config.digitalOutput.outputPin, LOW);
-                            trk.isActive = false;
-                        }
-                    }
+                    handleMomentaryLogic(sub, trk);
                     break;
 
                 case OUT_MODE_STROBE:
                     handleStrobeLogic(sub, trk);
                     break;
+
+                case OUT_MODE_PWM:
+                    handlePwmLogic(sub, trk);
+                    break;
+
+                case OUT_MODE_ALWAYS_ON:
+                    digitalWrite(sub.config.digitalOutput.outputPin, HIGH);
+                    break;
+
+                case OUT_MODE_ALWAYS_OFF:
+                    digitalWrite(sub.config.digitalOutput.outputPin, LOW);
+                    break;
+
+                case OUT_MODE_FOLLOW:
+                    /* FOLLOW mode reacts only to incoming CAN events,
+                       so the output task does nothing here. */
+                    break;
+
+                case OUT_MODE_TOGGLE:
+                    /* TOGGLE is also event-driven; nothing to do here. */
+                    break;
+
+                default:
+                    /* Unknown mode — do nothing */
+                    break;
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10)); /**< 10ms resolution for timing */
+
+        /* 10 ms timing resolution */
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
+
 
 void setup() {
 
