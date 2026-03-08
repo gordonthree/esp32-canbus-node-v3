@@ -1,6 +1,5 @@
 #include "can_router.h"
-#include <string.h>
-#include <stdio.h>
+
 
 /* ============================================================================
  *  GLOBAL STORAGE
@@ -92,7 +91,7 @@ void handleRoutePurge(const twai_message_t &msg)
  *  ROUTING: NVS LOAD/SAVE (ESP32 ONLY)
  * ========================================================================== */
 
-#ifdef ESP_PLATFORM
+#if defined(ESP32) 
 #include <Preferences.h>
 extern SemaphoreHandle_t flashMutex;
 
@@ -197,7 +196,7 @@ void handleReqProducerCfg(const twai_message_t &msg)
  *  PRODUCER CONFIG: NVS LOAD/SAVE (ESP32 ONLY)
  * ========================================================================== */
 
-#ifdef ESP_PLATFORM
+#if defined(ESP32)
 
 void loadProducerCfgFromNVS(void)
 {
