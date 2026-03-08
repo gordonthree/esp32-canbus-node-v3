@@ -4,3 +4,6 @@
 [submodule "lib/espcyd"]
 	path = lib/espcyd
 	url = https://github.com/gordonthree/esp32-canbus-espcyd.git
+[submodule "lib/can_router"]
+	path = lib/can_router
+	url = https://github.com/gordonthree/can_router.git
