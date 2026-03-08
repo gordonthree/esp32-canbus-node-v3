@@ -680,12 +680,17 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
   twai_message_t message;
   static int failCount = 0; /* tx fail counter */
 
+  #define CAN_STD_FRAME 0      /**< 0 = standard frame, 1 = extended frame */
+  #define CAN_DATA_FRAME 0     /**< 0 = data frame, 1 = remote frame */
+  #define CAN_NORMAL_TX 0      /**< 0 = normal transmission, 1 = SELF_RECEPTION 0 */
+  #define CAN_NON_COMP_DLC 0   /**< non-compliant DLC (0-8 bytes) */
+  
   /* Format message */
   message.identifier = msgid;       /**< set message ID */
-  message.extd = 0;                 /**< 0 = standard frame, 1 = extended frame */
-  message.rtr = 0;                  /**< 0 = data frame, 1 = remote frame */
-  message.self = 0;                 /**< 0 = normal transmission, 1 = self reception request */
-  message.dlc_non_comp = 0;         /**< non-compliant DLC (0-8 bytes) */
+  message.extd = CAN_STD_FRAME;                 /**< 0 = standard frame, 1 = extended frame */
+  message.rtr = CAN_DATA_FRAME;                  /**< 0 = data frame, 1 = remote frame */
+  message.self = CAN_NORMAL_TX;                 /**< 0 = normal transmission, 1 = self reception request */
+  message.dlc_non_comp = CAN_NON_COMP_DLC;         /**< non-compliant DLC (0-8 bytes) */
   message.data_length_code = dlc;   /**< data length code (0-8 bytes) */
 
   if (dlc > CAN_MAX_DLC) dlc = CAN_MAX_DLC; /* Safety check */
