@@ -1128,7 +1128,8 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
     case OUT_STATE_ON: // switch on
       switch (sub.config.gpioOutput.mode) {
         case OUT_MODE_MOMENTARY: /* If we are in momentary mode, 'ON' should behave like a trigger */
-          trackers[switchID].nextActionTime = millis() + (MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur);
+          trackers[switchID].nextActionTime = millis() + 
+            (MOM_SW_SCALING_FACTOR * sub.config.gpioOutput.param1);
           digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
           trackers[switchID].isActive = true;
           break;
@@ -1155,9 +1156,9 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
 
     case OUT_STATE_MOMENTARY: // momentary press
       /* let the output task deal with this */
-      Serial.printf("Output Task Switch %d (pin %d) MOMENTARY (%dms)\n", switchID, outPin, (MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur));
+      Serial.printf("Output Task Switch %d (pin %d) MOMENTARY (%dms)\n", switchID, outPin, (MOM_SW_SCALING_FACTOR * sub.config.gpioOutput.param1));
 
-      trackers[switchID].nextActionTime = millis() + (MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur);
+      trackers[switchID].nextActionTime = millis() + (MOM_SW_SCALING_FACTOR * sub.config.gpioOutput.param1);
       digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
       trackers[switchID].isActive = true; /* enable momentary timer */
       trackers[switchID].isConfigured = true; /* enable this output for nonblocking control*/
@@ -1235,9 +1236,9 @@ void setupArgbStrip(uint8_t idx, uint8_t pin, uint16_t count) {
   sub.introMsgDLC = DISP_ARGB_LED_STRIP_DLC;
   // sub.dataMsgId   = SET_ARGB_STRIP_COLOR_ID;
   // sub.dataMsgDLC  = SET_ARGB_STRIP_COLOR_DLC;
-  sub.saveState   = true;
-  sub.config.argbLed.outputPin = pin;
-  sub.config.argbLed.ledCount  = count;
+  sub.flags |= SUBMOD_FLAG_SAVE_STATE;
+  // sub.config.argbLed.outputPin = pin;
+  // sub.config.argbLed.ledCount  = count;
 }
 
 /**
@@ -1252,11 +1253,13 @@ void setupDigitalInput(uint8_t idx, uint8_t pin, uint8_t res) {
   subModule_t& sub = node.subModule[idx];
   sub.introMsgId  = INPUT_DIGITAL_GPIO_ID;
   sub.introMsgDLC = INPUT_DIGITAL_GPIO_DLC;
-  sub.dataMsgId   = DATA_BUTTON_DOWN_ID;
-  sub.dataMsgDLC  = DATA_BUTTON_DOWN_DLC;
-  sub.saveState   = false;
-  sub.config.digitalInput.inputPin = pin;
-  sub.config.digitalInput.outputRes = res;
+  sub.flags |= SUBMOD_FLAG_SAVE_STATE;
+
+  // sub.dataMsgId   = DATA_BUTTON_DOWN_ID;
+  // sub.dataMsgDLC  = DATA_BUTTON_DOWN_DLC;
+  // sub.saveState   = false;
+  // sub.config.digitalInput.inputPin = pin;
+  // sub.config.digitalInput.outputRes = res;
 }
 
 /** Load CYD node info into the nodeInfo struct */
@@ -1412,59 +1415,59 @@ static void setEpochTime(uint32_t epochTime) {
  * The pattern is defined by the submodule configuration (strobePattern_t).
  * Each pattern is an array of ON/OFF durations.
  */
-void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk)
-{
-    /* If the strobe is not active, do nothing */
-    if (!trk.isActive)
-        return;
+void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk) {
+  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  const uint8_t outPin = p->gpioPin;
 
-    /* If it's not time to advance the pattern, do nothing */
-    if (millis() < trk.nextActionTime)
-        return;
+  /* If the strobe is not active, do nothing */
+  if (!trk.isActive)
+    return;
 
-    /* Select the pattern based on configuration */
-    const uint16_t *pattern = nullptr;
-    uint8_t patternSteps = 0;
+  /* If it's not time to advance the pattern, do nothing */
+  if (millis() < trk.nextActionTime)
+      return;
 
-    switch (sub.config.digitalOutput.strobePat)
-    {
-        case STROBE_PATTERN_1: {
-            /* Example: ON 50ms, OFF 50ms, ON 50ms, OFF 400ms */
-            static const uint16_t p1[] = {50, 50, 50, 400};
-            pattern = p1;
-            patternSteps = 4;
-            break;
-        }
+  /* Select the pattern based on configuration */
+  const uint16_t *pattern = nullptr;
+  uint8_t patternSteps = 0;
 
-        case STROBE_PATTERN_2: {
-            /* Example: 3x flash, pause, 5x flash, pause */
-            static const uint16_t p2[] = {50,50,50,200, 50,50,50,50,50,400};
-            pattern = p2;
-            patternSteps = 10;
-            break;
-        }
+  switch (sub.config.gpioOutput.param2)
+  {
+      case STROBE_PATTERN_1: {
+          /* Example: ON 50ms, OFF 50ms, ON 50ms, OFF 400ms */
+          static const uint16_t p1[] = {50, 50, 50, 400};
+          pattern = p1;
+          patternSteps = 4;
+          break;
+      }
 
-        /* Additional patterns can be added here */
-        default:
-            /* Unknown pattern → disable strobe */
-            trk.isActive = false;
-            digitalWrite(sub.config.digitalOutput.outputPin, LOW);
-            return;
-    }
+      case STROBE_PATTERN_2: {
+          /* Example: 3x flash, pause, 5x flash, pause */
+          static const uint16_t p2[] = {50,50,50,200, 50,50,50,50,50,400};
+          pattern = p2;
+          patternSteps = 10;
+          break;
+      }
 
-    /* Advance to the next step in the pattern */
-    trk.currentStep = (trk.currentStep + 1) % patternSteps;
+      /* Additional patterns can be added here */
+      default:
+          /* Unknown pattern → disable strobe */
+          trk.isActive = false;
+          digitalWrite(outPin, LOW);
+          return;
+  }
 
-    /* Even steps = ON, Odd steps = OFF */
-    bool state = (trk.currentStep % 2 == 0);
+  /* Advance to the next step in the pattern */
+  trk.currentStep = (trk.currentStep + 1) % patternSteps;
 
-    digitalWrite(sub.config.digitalOutput.outputPin, state);
+  /* Even steps = ON, Odd steps = OFF */
+  bool state = (trk.currentStep % 2 == 0);
 
-    /* Schedule the next step */
-    trk.nextActionTime = millis() + pattern[trk.currentStep];
+  digitalWrite(outPin, state);
+
+  /* Schedule the next step */
+  trk.nextActionTime = millis() + pattern[trk.currentStep];
 }
-
-
 
 /**
  * @brief Handles color commands from the gateway node.
@@ -1558,7 +1561,7 @@ void manageColorPickerList(twai_message_t& msg) {
             break;
         }
 
-        case COLORPICKER_ADD_NODE_ID: 
+        case COLORPICKER_ADD_ROUTE_ID: 
         {
             if (targetNodeId == 0) return;
 
@@ -1584,7 +1587,7 @@ void manageColorPickerList(twai_message_t& msg) {
             break;
         }
 
-        case COLORPICKER_DEL_NODE_ID: 
+        case COLORPICKER_DEL_ROUTE_ID: 
         {
             for (int i = 0; i < discoveredNodeCount; i++) 
             {
@@ -1742,6 +1745,7 @@ void sendIntroduction(int msgPtr = 0) {
   uint32_t txMsgDLC = 8U; /* Default to 8 bytes */
   uint8_t  msgData[CAN_MAX_DLC];
 
+
   /* Update the count dynamically before processing the introduction */
   node.subModCnt = countActiveSubModules();
 
@@ -1766,9 +1770,13 @@ void sendIntroduction(int msgPtr = 0) {
   else {
     uint8_t modIdx = (uint8_t)((msgPtr - 1) / 2); /**< Map ptr to sub-module index */
     bool isPartB   = ((msgPtr - 1) % 2) != 0;      /**< Alternate A/B sequence */
-
+    
     if (modIdx >= node.subModCnt) return;
     subModule_t& sub = node.subModule[modIdx];
+    const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+
+    const uint16_t dataMsgId  = p->dataMsgId;
+    const uint8_t  dataMsgDlc = p->dataMsgDlc; 
 
     txMsgID = sub.introMsgId;
 
@@ -1781,10 +1789,10 @@ void sendIntroduction(int msgPtr = 0) {
     } else {
         /* Part B: Telemetry/Operational Data */
         msgData[4] = modIdx | SUBMOD_PART_B_FLAG; /**< Set bit 7 to indicate Part B */
-        msgData[5] = (uint8_t)(sub.dataMsgId >> 8);
-        msgData[6] = (uint8_t)(sub.dataMsgId);
+        msgData[5] = (uint8_t)(dataMsgId >> 8);
+        msgData[6] = (uint8_t)(dataMsgId);
         /* Pack DLC (4 bits) and SaveState (1 bit) into byte 7 */
-        msgData[7] = (sub.dataMsgDLC & 0x0F) | (sub.saveState ? SUBMOD_PART_B_FLAG : 0x00);
+        msgData[7] = (dataMsgDlc & 0x0F) | (sub.flags ? SUBMOD_PART_B_FLAG : 0x00);
     }
 
     if (txMsgID == 0) {
@@ -1920,19 +1928,7 @@ static void handleCanRX(twai_message_t &message) {
       handleColorCommand(message); /* byte 4 is the sub module index, byte 5 is the color index */
       break;
     case CFG_SUB_DATA_MSG_ID:           /* setup sub module data message */
-      {
-        uint8_t modIdx = message.data[4];                                                   /* byte 4 holds the sub module index */
-        if (modIdx >= MAX_SUB_MODULES) {
-          Serial.printf("Invalid sub module index %d\n", modIdx);
-          return;
-        }
-        subModule_t& sub = node.subModule[modIdx];
-
-        sub.dataMsgId    = ((message.data[5] << 8) | (message.data[6] & 0xFF));   /* bytes 5:6 hold the intro message ID */
-        sub.dataMsgDLC   = message.data[7];                              /* byte 7 holds the data message DLC */
-        Serial.printf("Update Sub %d DATA MSG: 0x%03X DLC: %d\n", modIdx, sub.dataMsgId, sub.dataMsgDLC);
-
-      }
+      /* no longer user configured */
       break;
     case CFG_SUB_INTRO_MSG_ID:          /* setup sub module intro message */
       {
@@ -1958,10 +1954,9 @@ static void handleCanRX(twai_message_t &message) {
           return;
         }
         subModule_t& sub = node.subModule[modIdx];
-        sub.config.argbLed.outputPin  = message.data[5];       /* byte 5 holds the output pin */
-        sub.config.argbLed.ledCount   = message.data[6];       /* bytes 6 hold the number of LEDs (max 255)*/
-        sub.config.argbLed.colorOrder = message.data[7];       /* byte 7 holds the color order */
-        Serial.printf("ARGB: Config Strip %d Pin %d LED Count %d Color Order %d\n", modIdx, sub.config.argbLed.outputPin, sub.config.argbLed.ledCount, sub.config.argbLed.colorOrder);
+        sub.config.argb.reserved   = message.data[5];       /* reserved, not used */
+        sub.config.argb.ledCount   = message.data[6];       /* byte 6 holds the number of LEDs (max 255)*/
+        sub.config.argb.colorOrder = message.data[7];       /* byte 7 holds the color order */
       }
       break;
     case CFG_DIGITAL_INPUT_ID: /**< Setup digital input channel */
@@ -1973,9 +1968,10 @@ static void handleCanRX(twai_message_t &message) {
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.digitalInput.inputPin   = message.data[5];
-        sub.config.digitalInput.outputRes  = message.data[6];
-        sub.config.digitalInput.isInverted = message.data[7];
+        sub.config.gpioInput.pull     = message.data[5];  /* Input resistor configuration */
+        sub.config.gpioInput.invert   = message.data[6];  /* logical inversion flag */
+        sub.config.gpioInput.reserved = message.data[7]; /* resesrved, not used */
+
       }
       break;
 
@@ -1988,12 +1984,13 @@ static void handleCanRX(twai_message_t &message) {
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.analogInput.inputPin = message.data[5];
-        /** bytes 6 and 7 hold the 16-bit oversampling count */
-        sub.config.analogInput.overSampleCnt = (message.data[6] << 8) | message.data[7];
+        sub.config.analogInput.overSampleCnt = (uint16_t)((message.data[5] << 8) | (message.data[6] & 0xFF));
+        sub.config.analogInput.reserved      = message.data[7]; /* store reserved byte if sent */
       }
       break;
 
+    case CFG_BLINK_OUTPUT_ID: /**< Setup blinking/strobing output channel */
+    case CFG_PWM_OUTPUT_ID: /**< Setup PWM output channel */
     case CFG_DIGITAL_OUTPUT_ID: /**< Setup digital output channel (relays/mosfets) */
       {
         uint8_t modIdx = message.data[4];
@@ -2003,39 +2000,9 @@ static void handleCanRX(twai_message_t &message) {
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.digitalOutput.outputPin   = message.data[5];
-        sub.config.digitalOutput.momPressDur = message.data[6];
-        sub.config.digitalOutput.outputMode  = message.data[7];
-      }
-      break;
-
-    case CFG_PWM_OUTPUT_ID: /**< Setup PWM output channel */
-      {
-        uint8_t modIdx = message.data[4];
-        if (modIdx >= MAX_SUB_MODULES) {
-          Serial.printf("Invalid sub module index %d\n", modIdx);
-          return;
-        }
-        subModule_t& sub = node.subModule[modIdx];
-
-        sub.config.pwmOutput.outputPin  = message.data[5];
-        sub.config.pwmOutput.pwmFreq    = message.data[6];
-        sub.config.pwmOutput.isInverted = message.data[7];
-      }
-      break;
-
-    case CFG_BLINK_OUTPUT_ID: /**< Setup blinking/strobing output channel */
-      {
-        uint8_t modIdx = message.data[4];
-        if (modIdx >= MAX_SUB_MODULES) {
-          Serial.printf("Invalid sub module index %d\n", modIdx);
-          return;
-        }
-        subModule_t& sub = node.subModule[modIdx];
-
-        sub.config.blinkOutput.outputPin  = message.data[5];
-        sub.config.blinkOutput.blinkDelay = message.data[6];
-        sub.config.blinkOutput.strobePat  = message.data[7];
+        sub.config.gpioOutput.mode   = message.data[5]; /* output mode, see defines */
+        sub.config.gpioOutput.param1 = message.data[6]; /* paramater byte 0 (varies) */
+        sub.config.gpioOutput.param2 = message.data[7]; /* parameter byte 1 */
       }
       break;
 
@@ -2048,9 +2015,9 @@ static void handleCanRX(twai_message_t &message) {
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.analogStrip.stripIndex = message.data[5];
-        sub.config.analogStrip.colorIndex = message.data[6];
-        sub.config.analogStrip.pinIndex   = message.data[7];
+        sub.config.analogStrip.configIndex = message.data[5];
+        sub.config.analogStrip.reserved1   = message.data[6];
+        sub.config.analogStrip.reserved2   = message.data[7];
       }
       break;
 
@@ -2063,8 +2030,10 @@ static void handleCanRX(twai_message_t &message) {
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.analogOutput.outputPin  = message.data[5];
-        sub.config.analogOutput.outputMode = message.data[6];
+        sub.config.analogOutput.outputMode  = message.data[5];
+        sub.config.analogOutput.param1      = message.data[6];
+        sub.config.analogOutput.param2      = message.data[7];
+
         /** message.data[7] is reserved/padding */
       }
       break;
@@ -2205,15 +2174,19 @@ void managePeriodicMessages() {
         uint8_t rate = g_producerCfg[i].rate_hz;
         if (rate == 0) continue;
         if (!(g_producerCfg[i].flags & PRODUCER_FLAG_ENABLED)) continue;
+        // TODO: Should we make sure the subModule exists before trying to assign a pointer?
+        subModule_t& sub = node.subModule[i];
+        const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
 
         uint32_t interval = 1000U / rate; // ms
         if (currentMillis - lastProducerTick[i] >= interval) {
             lastProducerTick[i] = currentMillis;
+            const uint16_t dataMsgId  = p->dataMsgId;
+            const uint8_t  dataMsgDlc = p->dataMsgDlc;
 
             // TODO: implement sendProducerData(i) using subModule_t dataMsgId/dataMsgDLC
             // For now, just log:
-            Serial.printf("ProducerTx: sub %u msg 0x%03X\n",
-                          i, node.subModule[i].dataMsgId);
+            Serial.printf("ProducerTx: sub %u msg 0x%03X dlc %u\n", i, dataMsgId, dataMsgDlc);
         }
     }
 }
