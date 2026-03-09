@@ -17,4 +17,25 @@
 #define M5STAMP_ARGB_COUNT     ( 1)
 #define M5STAMP_BUTTON_PIN     (39)
 
+#define ARGB_511C_PIN          (19)
+#define ARGB_511C_CNT          (12)
+
+typedef enum {
+    ESP32_PWM_CHANNEL_0 = 0,
+    ESP32_PWM_CHANNEL_1,
+    ESP32_PWM_CHANNEL_2,
+    ESP32_PWM_CHANNEL_3,
+    ESP32_PWM_CHANNEL_4,
+    ESP32_PWM_CHANNEL_5,
+    ESP32_PWM_CHANNEL_6,
+    ESP32_PWM_CHANNEL_7
+} esp32_pwm_channel_t;
+
+typedef enum {
+    ESP32_PWM_TIMER_0 = 0,
+    ESP32_PWM_TIMER_1,
+    ESP32_PWM_TIMER_2,
+    ESP32_PWM_TIMER_3,
+} esp32_pwm_timer_t;
+
 #endif /* ESP32 */
