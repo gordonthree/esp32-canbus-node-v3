@@ -122,12 +122,13 @@ enum ConfigStatus {
  * @param hardwareInitialized: A flag to indicate if hardware is initialized.
  */
 struct outputTracker_t {
-    uint32_t nextActionTime;        /**< Timestamp for the next state change */
-    uint8_t  currentStep;           /**< Current step in a multi-stage pattern (strobe) */
-    ledc_timer_t timer;             /**< LEDC timer */
-    bool     isActive;              /**< Flag to indicate if a momentary/strobe is running */
-    bool     isConfigured;          /**< Flag to indicate if a switch is configured */
-    bool     hardwareInitialized;   /**< Flag to indicate if hardware is initialized */
+    uint32_t     nextActionTime;        /**< Timestamp for the next state change */
+    uint8_t      currentStep;           /**< Current step in a multi-stage pattern (strobe) */
+    ledc_timer_t timer;                 /**< LEDC timer */
+    bool         isActive;              /**< Flag to indicate if a momentary/strobe is running */
+    bool         isConfigured;          /**< Flag to indicate if a switch is configured */
+    bool         hardwareInitialized;   /**< Flag to indicate if hardware is initialized */
+    bool         hasBeenSet;            /**< Flag to indicate if a switch has been set */
 }; /* end struct outputTracker_t */
 
 outputTracker_t trackers[MAX_SUB_MODULES];
@@ -269,15 +270,17 @@ void initArgbHardware(uint8_t index, subModule_t& sub)
  * @note This function is called by the initHardware() function during setup().
  */
 void initGPIOInput(uint8_t i, subModule_t& sub) {
-  if (sub.config.digitalInput.outputRes == INPUT_RES_PULLUP) { /* INPUT_RES_PULLUP */
-      pinMode(sub.config.digitalInput.inputPin, INPUT_PULLUP);
-      Serial.printf("Submod %d: Digital Input Init Pull-Up (Pin %d)\n", i, sub.config.digitalInput.inputPin);
-  } else if (sub.config.digitalInput.outputRes == INPUT_RES_PULLDOWN) { /* INPUT_RES_PULLDOWN */
-      pinMode(sub.config.digitalInput.inputPin, INPUT_PULLDOWN);
-      Serial.printf("Submod %d: Digital Input Init Pull-Down (Pin %d)\n", i, sub.config.digitalInput.inputPin);
+  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+
+  if (sub.config.gpioInput.pull == INPUT_RES_PULLUP) { /* INPUT_RES_PULLUP */
+      pinMode(p->gpioPin, INPUT_PULLUP);
+      Serial.printf("Submod %d: Digital Input Init Pull-Up (Pin %d)\n", i, p->gpioPin);
+  } else if (sub.config.gpioInput.pull == INPUT_RES_PULLDOWN) { /* INPUT_RES_PULLDOWN */
+      pinMode(p->gpioPin, INPUT_PULLDOWN);
+      Serial.printf("Submod %d: Digital Input Init Pull-Down (Pin %d)\n", i, p->gpioPin);
   } else { /* INPUT_RES_FLOATING */
-      pinMode(sub.config.digitalInput.inputPin, INPUT);
-      Serial.printf("Submod %d: Digital Input Init Floating (Pin %d)\n", i, sub.config.digitalInput.inputPin);
+      pinMode(p->gpioPin, INPUT);
+      Serial.printf("Submod %d: Digital Input Init Floating (Pin %d)\n", i, p->gpioPin);
   }
 }
 
@@ -293,13 +296,15 @@ void initGPIOInput(uint8_t i, subModule_t& sub) {
  * @param sub Reference to the sub-module configuration.
  */
 void initPwmHardware(uint8_t i, subModule_t& sub) {
+  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+
   /* Handle the name change between IDF versions */
     #if !defined(LEDC_USE_RC_FAST_CLK)
         #define LEDC_USE_RC_FAST_CLK LEDC_USE_RTC8M_CLK
     #endif
 
   /* ESP32 LEDC setup: channel = i, frequency = config * 100, resolution = 8-bit */
-    uint32_t freq = (double)(sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR);
+    uint32_t freq = (double)(sub.config.gpioOutput.param1 * PWM_SCALING_FACTOR);
     uint8_t channel = i;
 
     ledc_timer_config_t ledc_timer = {
@@ -314,11 +319,9 @@ void initPwmHardware(uint8_t i, subModule_t& sub) {
     // ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR, PWM_RES_BITS);
     // ledcAttachPin(sub.config.pwmOutput.outputPin, i);
 
-    uint8_t pin = sub.config.pwmOutput.outputPin;
-
-    ledcAttachPin(pin, channel);
+    ledcAttachPin(p->gpioPin, channel);
     ledc_channel_config_t ledc_ch = {
-        .gpio_num       = pin,
+        .gpio_num       = p->gpioPin,
         .speed_mode     = LEDC_LOW_SPEED_MODE,
         .channel        = (ledc_channel_t)channel,
         .intr_type      = LEDC_INTR_DISABLE,
@@ -329,8 +332,8 @@ void initPwmHardware(uint8_t i, subModule_t& sub) {
     ledc_channel_config(&ledc_ch);
 
 
-    pwmPins[i] = sub.config.pwmOutput.outputPin;
-    Serial.printf("Submod %d: PWM Output Init (Pin %d, Freq %d)\n", i, sub.config.pwmOutput.outputPin, (sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR));
+    pwmPins[i] = p->gpioPin; /* Store the pin number in the pwmPins array */
+    Serial.printf("Submod %d: PWM Output Init (Pin %d, Freq %d)\n", i, p->gpioPin, (sub.config.gpioOutput.param1 * PWM_SCALING_FACTOR));
 }
 
 /**
@@ -343,61 +346,74 @@ void clearPwmHardware(uint8_t i) {
     pwmPins[i] = 0;
 }
 
+void initGpioOutput(uint8_t i, subModule_t& sub) {
+  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+
+  pinMode(p->gpioPin, OUTPUT);
+  Serial.printf("Submod %d: Digital Output Init (Pin %d)\n", i, p->gpioPin);
+} 
+
+void initAnalogInput(uint8_t i, subModule_t& sub) {
+  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+
+  pinMode(p->gpioPin, ANALOG);
+  Serial.printf("Submod %d: Analog Input Init (Pin %d)\n", i, p->gpioPin);
+}
+
 /**
  * @brief Initializes all sub-modules based on their intro message IDs.
  * @details Iterates through the sub-module array and calls the appropriate init function based on the intro message ID.
  * @note This function is called once by the main setup() function.
  */
 void initHardware() {
-    Serial.println("[HW] Initializing sub-modules...");
+  Serial.println("[HW] Initializing sub-modules...");
 
-    for (int i = 0; i < MAX_SUB_MODULES; i++) {
-        subModule_t& sub = node.subModule[i];
+  for (int i = 0; i < MAX_SUB_MODULES; i++) {
+    subModule_t& sub = node.subModule[i];
+    const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
 
-        if (sub.introMsgId == 0) continue;
+    if (sub.introMsgId == 0) continue;
 
-        switch (sub.introMsgId) {
-          case DISP_ARGB_BACKLIGHT_ID:
-          case DISP_ARGB_LED_STRIP_ID:
-          case DISP_ARGB_BUTTON_BACKLIGHT_ID:
-                initArgbHardware(i, sub);
-                break;
+    switch (sub.introMsgId) {
+      case DISP_ARGB_BACKLIGHT_ID:
+      case DISP_ARGB_LED_STRIP_ID:
+      case DISP_ARGB_BUTTON_BACKLIGHT_ID:
+        initArgbHardware(i, sub);
+        break;
 
-            case INPUT_DIGITAL_GPIO_ID:
-                initGPIOInput(i, sub);
-                break;
+      case INPUT_DIGITAL_GPIO_ID:
+        initGPIOInput(i, sub);
+        break;
 
-            case OUT_GPIO_DIGITAL_ID:
-            case DISP_ANALOG_BACKLIGHT_ID:
-            case DISP_ANALOG_LED_STRIP_ID:
-            case DISP_MONOCHROME_LED_ID:
-            case DISP_STROBE_MODULE_ID:
-                pinMode(sub.config.digitalOutput.outputPin, OUTPUT); /* Set pin as output */
-                trackers[i].isConfigured = true; /* Mark as configured for the output task (blink, strobe and momentary) */
-                Serial.printf("Submod %d: Output Init (Pin %d, Type 0x%03X)\n", i, sub.config.digitalOutput.outputPin, sub.introMsgId);
-                break;
+      case OUT_GPIO_DIGITAL_ID:
+      case DISP_ANALOG_BACKLIGHT_ID:
+      case DISP_ANALOG_LED_STRIP_ID:
+      case DISP_MONOCHROME_LED_ID:
+      case DISP_STROBE_MODULE_ID:
+        trackers[i].isConfigured = true; /* Mark as configured for the output task (blink, strobe and momentary) */
+        initGpioOutput(i, sub);
+        break;
 
-            case OUT_GPIO_PWM_ID:
-                initPwmHardware(i, sub);
-                break;
+      case OUT_GPIO_PWM_ID:
+        initPwmHardware(i, sub);
+        break;
 
-            case INPUT_ANALOG_ADC_ID:
-                pinMode(sub.config.analogInput.inputPin, ANALOG);
-                Serial.printf("Submod %d: Analog Input Init (Pin %d)\n", i, sub.config.analogInput.inputPin);
-                break;
+      case INPUT_ANALOG_ADC_ID:
+        initAnalogInput(i, sub);
+        break;
 
-            case DISP_TOUCHSCREEN_LCD_ID:
-                /* Touchscreen init here if needed */
-                Serial.printf("Submod %d: Touchscreen LCD Identified\n", i);
-                break;
+      case DISP_TOUCHSCREEN_LCD_ID:
+        /* Touchscreen init here if needed */
+        Serial.printf("Submod %d: Touchscreen LCD Identified\n", i);
+        break;
 
-            default:
-                /* No hardware init available */
-                Serial.printf("Submod %d: No hardware init available for ID 0x%03X\n", i, sub.introMsgId);
-                break;
-        }
-    }
-}
+      default:
+        /* No hardware init available */
+        Serial.printf("Submod %d: No hardware init available for ID 0x%03X\n", i, sub.introMsgId);
+        break;
+    } /* switch (sub.introMsgId) */
+  } /* for (int i = 0; i < MAX_SUB_MODULES; i++) */
+} /* initHardware() */
 
 /**
  * @brief Calculates a 16-bit CRC for the node configuration.
@@ -406,26 +422,26 @@ void initHardware() {
  * @return uint16_t The calculated checksum.
  */
 uint16_t crc16_ccitt(const uint8_t* data, size_t length) {
-    uint16_t crc = 0xFFFF; // Initial value
-    while (length--) {
-        crc ^= (uint16_t)*data++ << 8;
-        for (int i = 0; i < 8; i++) {
-            if (crc & 0x8000) {
-                crc = (crc << 1) ^ 0x1021; // Polynomial
-            } else {
-                crc <<= 1;
-            }
-        }
+  uint16_t crc = 0xFFFF; // Initial value
+  while (length--) {
+    crc ^= (uint16_t)*data++ << 8;
+    for (int i = 0; i < 8; i++) {
+      if (crc & 0x8000) {
+        crc = (crc << 1) ^ 0x1021; // Polynomial
+      } else {
+        crc <<= 1;
+      }
     }
-    return crc;
+  }
+  return crc;
 }
 
 /**
  * @brief Calculates a 16-bit CRC for the entire node configuration.
  */
 uint16_t getConfigurationCRC(const nodeInfo_t& node) {
-    /* Hash the entire struct without worrying about internal fields */
-    return crc16_ccitt((const uint8_t*)&node, sizeof(nodeInfo_t));
+  /* Hash the entire struct without worrying about internal fields */
+  return crc16_ccitt((const uint8_t*)&node, sizeof(nodeInfo_t));
 }
 
 /**
@@ -433,31 +449,31 @@ uint16_t getConfigurationCRC(const nodeInfo_t& node) {
  * @return ConfigStatus status of the erase operation (OK, NOT_FOUND, or MUTEX).
  */
 ConfigStatus eraseConfig() {
-    /* Attempt to acquire the flash mutex */
-    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        return CFG_ERR_MUTEX;
-    }
+  /* Attempt to acquire the flash mutex */
+  if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    return CFG_ERR_MUTEX;
+  }
 
-    Preferences prefs;
-    if (!prefs.begin("node_cfg", false)) {
-        xSemaphoreGive(flashMutex);
-        return CFG_ERR_NVS_OPEN;
-    }
+  Preferences prefs;
+  if (!prefs.begin("node_cfg", false)) {
+    xSemaphoreGive(flashMutex);
+    return CFG_ERR_NVS_OPEN;
+  }
 
-    /* Check if the data key exists before attempting removal */
-    if (!prefs.isKey("node_data")) {
-        prefs.end();
-        xSemaphoreGive(flashMutex);
-        return CFG_ERR_NOT_FOUND;
-    }
-
-    prefs.remove("node_data");
-    prefs.remove("node_crc");
-
+  /* Check if the data key exists before attempting removal */
+  if (!prefs.isKey("node_data")) {
     prefs.end();
     xSemaphoreGive(flashMutex);
+    return CFG_ERR_NOT_FOUND;
+  }
 
-    return CFG_OK;
+  prefs.remove("node_data");
+  prefs.remove("node_crc");
+
+  prefs.end();
+  xSemaphoreGive(flashMutex);
+
+  return CFG_OK;
 }
 
 /**
@@ -829,23 +845,23 @@ void stopHardwareBlink(uint8_t submodIdx) {
  *   - When triggered, output goes HIGH
  *   - After duration expires, output returns LOW
  */
-void handleMomentaryLogic(subModule_t &sub, outputTracker_t &trk)
-{
-    uint8_t pin = sub.config.digitalOutput.outputPin;
+void handleMomentaryLogic(subModule_t &sub, outputTracker_t &trk) {
+  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
 
-    if (!trk.isActive)
-        return;
+  uint8_t pin = p->gpioPin;
 
-    /* If timer still running → keep output HIGH */
-    if (millis() < trk.nextActionTime)
-    {
-        digitalWrite(pin, HIGH);
-        return;
-    }
+  if (!trk.isActive)
+    return;
 
-    /* Timer expired → turn output OFF */
-    digitalWrite(pin, LOW);
-    trk.isActive = false;
+  /* If timer still running → keep output HIGH */
+  if (millis() < trk.nextActionTime) {
+    digitalWrite(pin, HIGH);
+    return;
+  }
+
+  /* Timer expired → turn output OFF */
+  digitalWrite(pin, LOW);
+  trk.isActive = false;
 }
 
 
@@ -880,12 +896,15 @@ void readCydLdr() {
     send_message(DATA_ADC_RAW_ID, data, DATA_ADC_RAW_DLC);
 #endif
 }
+
 static void setDisplayMode(twai_message_t& msg, uint8_t displayMode = DISPLAY_MODE_OFF) {
   uint8_t displayID = msg.data[4]; /* display ID */
 
   if (displayID >= MAX_SUB_MODULES) return; /* invalid display ID */
   subModule_t& sub = node.subModule[displayID]; /* get submodule reference */
-  uint8_t displayPin = sub.config.digitalOutput.outputPin; /* get output pin */
+  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+
+  uint8_t displayPin = p->gpioPin; /* get output pin */
 
   switch (displayMode) {
     case DISPLAY_MODE_OFF: // display off
@@ -920,9 +939,10 @@ static void setSwMomDur(twai_message_t& msg) {
   uint8_t momDur = msg.data[5];                    /* momentary duration */
   if (switchID >= MAX_SUB_MODULES) return;         /* invalid switch ID */
   subModule_t& sub = node.subModule[switchID];     /* get submodule reference */
-  sub.config.digitalOutput.momPressDur = momDur;   /* update momentary duration */
 
-  Serial.printf("Momentary Duration: %d Switch: %d\n", sub.config.digitalOutput.momPressDur, switchID);
+  sub.config.gpioOutput.param1 = momDur;   /* update momentary duration */
+
+  Serial.printf("Momentary Duration: %d Switch: %d\n", sub.config.gpioOutput.param1, switchID);
 }
 
 
@@ -931,11 +951,12 @@ static void setSwBlinkDelay(twai_message_t& msg) {
   uint8_t freq     = msg.data[5];                      /* blink delay */
   if (switchID >= MAX_SUB_MODULES) return;             /* invalid switch ID */
   subModule_t& sub = node.subModule[switchID];         /* get submodule reference */
-  uint8_t pin      = sub.config.blinkOutput.outputPin; /* get output pin */
-  sub.config.blinkOutput.blinkDelay = freq;            /* update blink delay */
-  handleHardwareBlink(switchID, pin, freq);            /* update hardware blinker */
+  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  uint8_t pin = p->gpioPin; /* get output pin */
+  sub.config.gpioOutput.param1 = freq;            /* update blink delay */
+  handleHardwareBlink(switchID, pin, freq);       /* update hardware blinker */
 
-  Serial.printf("Blink Delay: %d Switch: %d\n", sub.config.blinkOutput.blinkDelay, switchID);
+  Serial.printf("Blink Delay: %d Switch: %d\n", sub.config.gpioOutput.param1, switchID);
 }
 
 static void setSwStrobePat(twai_message_t& msg) {
@@ -943,9 +964,9 @@ static void setSwStrobePat(twai_message_t& msg) {
   uint8_t strobePat = msg.data[5];              /* strobe pattern */
   if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
   subModule_t& sub = node.subModule[switchID];  /* get submodule reference */
-  sub.config.blinkOutput.strobePat = strobePat; /* update strobe pattern */
+  sub.config.gpioOutput.param2 = strobePat; /* update strobe pattern */
 
-  Serial.printf("Strobe Pattern: %d Switch: %d\n", sub.config.blinkOutput.strobePat, switchID);
+  Serial.printf("Strobe Pattern: %d Switch: %d\n", sub.config.gpioOutput.param2, switchID);
 }
 
 
@@ -956,8 +977,9 @@ static void setPWMDuty(twai_message_t& msg) { /* 0x117 */
   pwmDuty = (double)(pwmDuty * LEDC_13BIT_100PCT); /* convert to LEDC duty cycle */
   if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
   subModule_t& sub     = node.subModule[switchID];  /* get submodule reference */
-  uint8_t pin          = sub.config.pwmOutput.outputPin; /* get output pin */
-  uint32_t workingFreq = (uint32_t)(sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR);    /* get pwm frequency */
+  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  uint8_t pin = p->gpioPin; /* get output pin */
+  uint32_t workingFreq = (uint32_t)(sub.config.gpioOutput.param1 * PWM_SCALING_FACTOR);    /* get pwm frequency */
   handleHardwareBlink(switchID, pin, workingFreq, pwmDuty);     /* update hardware */
   Serial.printf("PWM Duty: %d Switch: %d\n", pwmDuty, switchID);
 }
@@ -967,8 +989,9 @@ static void setPWMFreq(twai_message_t& msg) { /* 0x118 */
   uint8_t pwmFreq  = msg.data[5];  /* pwm frequency */
   if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
   subModule_t& sub = node.subModule[switchID];  /* get submodule reference */
-  sub.config.pwmOutput.pwmFreq = pwmFreq;       /* update pwm frequency in config */
-  uint8_t pin      = sub.config.pwmOutput.outputPin; /* get output pin */
+  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  uint8_t pin = p->gpioPin; /* get output pin */
+  sub.config.gpioOutput.param1 = pwmFreq;       /* update pwm frequency in config */
   uint32_t workingFreq = (uint32_t)(pwmFreq * PWM_SCALING_FACTOR);
   handleHardwareBlink(switchID, pin, workingFreq);     /* update hardware */
   Serial.printf("PWM Frequency: %d Switch: %d\n", workingFreq, switchID);
@@ -1023,7 +1046,6 @@ static void setSwitchMode(twai_message_t& msg) { /* 0x112 */
   if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID */
 
   subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
-  uint8_t outPin = sub.config.digitalOutput.outputPin; /* get output pin */
 
   clearPwmHardware(switchID); /* in case it was previously PWM */
 
@@ -1031,24 +1053,20 @@ static void setSwitchMode(twai_message_t& msg) { /* 0x112 */
 
   switch (switchMode) {
     case OUT_MODE_TOGGLE: // solid state (on/off)
-      sub.config.digitalOutput.outputMode = switchMode;
+      sub.config.gpioOutput.mode = switchMode;
       trackers[switchID].isActive = false;
 
       break;
-    case OUT_MODE_MOMENTARY: // one-shot momentary
-      sub.config.digitalOutput.outputMode = switchMode;
-
-      trackers[switchID].isConfigured = true;
-      trackers[switchID].isActive = true;
-      break;
-    case OUT_MODE_STROBE: // strobe
-      sub.config.digitalOutput.outputMode = switchMode;
+    case OUT_MODE_MOMENTARY: // momentary
+    case OUT_MODE_STROBE: // strobe 
+      /** code handles both strobe and momentary modes */
+      sub.config.gpioOutput.mode = switchMode;
 
       trackers[switchID].isConfigured = true;
       trackers[switchID].isActive = true;
       break;
     case OUT_MODE_PWM: // pwm and blinking
-      sub.config.digitalOutput.outputMode = switchMode;
+      sub.config.gpioOutput.mode = switchMode;
 
       trackers[switchID].isConfigured = false;
       trackers[switchID].isActive = false;
@@ -1078,60 +1096,61 @@ static void setSwitchMode(twai_message_t& msg) { /* 0x112 */
 static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
 { /* SET_SWITCH_STATE_ID */
 
-  uint8_t switchID = msg.data[4]; /* switch ID */
+  const uint8_t switchID = msg.data[4]; /* switch ID */
 
   if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID, exit function */
 
   subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
-  uint8_t outPin = sub.config.digitalOutput.outputPin;
+  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+
+  const uint8_t outPin = p->gpioPin;
 
   switch (swState) {
     case OUT_STATE_OFF: // switch off
-
-        switch (sub.config.digitalOutput.outputMode) {
-          case OUT_MODE_MOMENTARY:
-            trackers[switchID].isActive = false;
-            break;
-          case OUT_MODE_STROBE:
-            trackers[switchID].isActive = false;
-            break;
-          case OUT_MODE_PWM: // pwm and blinking
-            stopHardwareBlink(switchID);
-            clearPwmHardware(switchID);
-            break;
-          default:
-            digitalWrite(sub.config.digitalOutput.outputPin, LOW); /* set output driver low */
-            Serial.printf("Switch %d (pin %d) OFF\n", switchID, outPin);
-            break;
-        }
+      switch (sub.config.gpioOutput.mode) {
+        case OUT_MODE_MOMENTARY:
+          trackers[switchID].isActive = false;
+          break;
+        case OUT_MODE_STROBE:
+          trackers[switchID].isActive = false;
+          break;
+        case OUT_MODE_PWM: // pwm and blinking
+          stopHardwareBlink(switchID); 
+          clearPwmHardware(switchID);
+          break;
+        default:
+          digitalWrite(outPin, LOW); /* set output driver low */
+          Serial.printf("Switch %d (pin %d) OFF\n", switchID, outPin);
+          break;
+      }
       break;
 
     case OUT_STATE_ON: // switch on
-        switch (sub.config.digitalOutput.outputMode) {
-          case OUT_MODE_MOMENTARY: /* If we are in momentary mode, 'ON' should behave like a trigger */
-            trackers[switchID].nextActionTime = millis() + (MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur);
-            digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
-            trackers[switchID].isActive = true;
-            break;
+      switch (sub.config.gpioOutput.mode) {
+        case OUT_MODE_MOMENTARY: /* If we are in momentary mode, 'ON' should behave like a trigger */
+          trackers[switchID].nextActionTime = millis() + (MOM_SW_SCALING_FACTOR * sub.config.digitalOutput.momPressDur);
+          digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
+          trackers[switchID].isActive = true;
+          break;
 
-          case OUT_MODE_PWM: /* Use LEDC hardware blinking and pwm*/
-          {
-            //TODO: blinkOutput is going away, need to refactor to a more generic pwmOutput instead
-            uint32_t freq = (uint32_t)(sub.config.blinkOutput.blinkDelay * BLINK_SCALING_FACTOR);
-            uint8_t  pin  = sub.config.digitalOutput.outputPin;
-            if (freq == 0) { /* for debugging don't let the blink rate equal 0*/
-              freq = 5; 
-              sub.config.blinkOutput.blinkDelay = freq;
-            }
-            handleHardwareBlink(switchID, pin, freq);
-            break;
+        case OUT_MODE_PWM: /* Use LEDC hardware blinking and pwm*/
+        {
+          //TODO: blinkOutput is going away, need to refactor to a more generic pwmOutput instead
+          uint32_t freq = (uint32_t)(sub.config.gpioOutput.param1 * BLINK_SCALING_FACTOR);
+          uint8_t  pin  = outPin;
+          if (freq == 0) { /* for debugging don't let the blink rate equal 0*/
+            freq = 5; 
+            sub.config.gpioOutput.param1 = freq;
           }
-
-          default:
-            digitalWrite(sub.config.digitalOutput.outputPin, HIGH); /* set output driver high */
-            Serial.printf("Switch %d (pin %d) ON\n", switchID, outPin);
-            break;
+          handleHardwareBlink(switchID, pin, freq);
+          break;
         }
+
+        default:
+          digitalWrite(outPin, HIGH); /* set output driver high */
+          Serial.printf("Switch %d (pin %d) ON\n", switchID, outPin);
+          break;
+      }
       break;
 
     case OUT_STATE_MOMENTARY: // momentary press
@@ -1159,14 +1178,14 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
 void setupAnalogStripDigitalOut(uint8_t idx, uint8_t pin, uint8_t mode) {
   if (idx >= MAX_SUB_MODULES) return; /* Safety check against array bounds */
 
-  subModule_t& sub = node.subModule[idx];
-  sub.introMsgId  = OUT_GPIO_DIGITAL_ID;
-  sub.introMsgDLC = OUT_GPIO_DIGITAL_DLC;
-  sub.dataMsgId   = SET_ANALOG_STRIP_COLOR_ID;
-  sub.dataMsgDLC  = SET_ANALOG_STRIP_COLOR_DLC;
-  sub.saveState   = true;
-  sub.config.digitalOutput.outputPin  = pin;
-  sub.config.digitalOutput.outputMode = mode;
+  subModule_t& sub           = node.subModule[idx];
+  sub.introMsgId             = OUT_GPIO_DIGITAL_ID;
+  sub.introMsgDLC            = OUT_GPIO_DIGITAL_DLC;
+  sub.flags                 |= SUBMOD_FLAG_SAVE_STATE;
+  sub.config.gpioOutput.mode = mode;
+  // sub.dataMsgId   = SET_ANALOG_STRIP_COLOR_ID; // no longer user configured
+  // sub.dataMsgDLC  = SET_ANALOG_STRIP_COLOR_DLC; // no longer user configured
+  // sub.config.digitalOutput.outputPin  = pin; // no longer user configured
 }
 
 /**
@@ -1177,11 +1196,11 @@ void setupLcdTouchscreen(uint8_t idx) {
   if (idx >= MAX_SUB_MODULES) return;
 
   subModule_t& sub = node.subModule[idx];
-  sub.introMsgId  = DISP_TOUCHSCREEN_LCD_ID;
-  sub.introMsgDLC = DISP_TOUCHSCREEN_LCD_DLC;
-  sub.dataMsgId   = DATA_TOUCHSCREEN_EVENT_ID;
-  sub.dataMsgDLC  = DATA_TOUCHSCREEN_EVENT_DLC;
-  sub.saveState   = true;
+  sub.introMsgId   = DISP_TOUCHSCREEN_LCD_ID;
+  sub.introMsgDLC  = DISP_TOUCHSCREEN_LCD_DLC;
+  sub.flags       |= SUBMOD_FLAG_SAVE_STATE;
+  // sub.dataMsgId   = DATA_TOUCHSCREEN_EVENT_ID;
+  // sub.dataMsgDLC  = DATA_TOUCHSCREEN_EVENT_DLC;
 }
 
 /**
@@ -1195,11 +1214,11 @@ void setupAnalogBacklight(uint8_t idx, uint8_t pin) {
   subModule_t& sub = node.subModule[idx];
   sub.introMsgId  = DISP_ANALOG_BACKLIGHT_ID;
   sub.introMsgDLC = DISP_ANALOG_BACKLIGHT_DLC;
-  sub.dataMsgId   = DATA_DISPLAY_MODE_ID;
-  sub.dataMsgDLC  = DATA_DISPLAY_MODE_DLC;
-  sub.saveState   = true;
-  sub.config.digitalOutput.outputPin  = pin;
-  sub.config.digitalOutput.outputMode = OUT_MODE_TOGGLE;
+  sub.flags      |= SUBMOD_FLAG_SAVE_STATE;
+  sub.config.gpioOutput.mode = OUT_MODE_TOGGLE;
+  // sub.dataMsgId   = DATA_DISPLAY_MODE_ID;
+  // sub.dataMsgDLC  = DATA_DISPLAY_MODE_DLC;
+  // sub.config.digitalOutput.outputPin  = pin;
 }
 
 /**
@@ -1214,8 +1233,8 @@ void setupArgbStrip(uint8_t idx, uint8_t pin, uint16_t count) {
   subModule_t& sub = node.subModule[idx];
   sub.introMsgId  = DISP_ARGB_LED_STRIP_ID;
   sub.introMsgDLC = DISP_ARGB_LED_STRIP_DLC;
-  sub.dataMsgId   = SET_ARGB_STRIP_COLOR_ID;
-  sub.dataMsgDLC  = SET_ARGB_STRIP_COLOR_DLC;
+  // sub.dataMsgId   = SET_ARGB_STRIP_COLOR_ID;
+  // sub.dataMsgDLC  = SET_ARGB_STRIP_COLOR_DLC;
   sub.saveState   = true;
   sub.config.argbLed.outputPin = pin;
   sub.config.argbLed.ledCount  = count;
@@ -2334,54 +2353,64 @@ void TaskOutput(void *pvParameters)
     {
         for (int i = 0; i < MAX_SUB_MODULES; i++)
         {
-            subModule_t &sub = node.subModule[i];
-            outputTracker_t &trk = trackers[i];
+          subModule_t &sub = node.subModule[i];
+          const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
 
-            /* Skip submodules that are not configured for output behavior */
-            if (!trk.isConfigured)
-                continue;
+          outputTracker_t &trk = trackers[i];
 
-            /* Skip personalities that do not support output behavior */
-            if (!(sub.capabilities & CAP_OUTPUT))
-                continue;
+          /* Skip submodules that are not configured for output behavior */
+          if (!trk.isConfigured)
+            continue;
 
-            /* Dispatch based on the configured output mode */
-            switch (sub.config.digitalOutput.outputMode)
-            {
-                case OUT_MODE_MOMENTARY:
-                    handleMomentaryLogic(sub, trk);
-                    break;
+          /* Skip personalities that do not support output behavior */
+          if (!(p->capabilities & CAP_OUTPUT))
+            continue;
 
-                case OUT_MODE_STROBE:
-                    handleStrobeLogic(sub, trk);
-                    break;
+          /* Dispatch based on the configured output mode */
+          switch (sub.config.gpioOutput.mode) {
+            case OUT_MODE_MOMENTARY:
+              handleMomentaryLogic(sub, trk);
+              break;
 
-                case OUT_MODE_PWM:
-                    handlePwmLogic(sub, trk);
-                    break;
+            case OUT_MODE_STROBE:
+              handleStrobeLogic(sub, trk);
+              break;
 
-                case OUT_MODE_ALWAYS_ON:
-                    digitalWrite(sub.config.digitalOutput.outputPin, HIGH);
-                    break;
+            case OUT_MODE_PWM:
+              /** 
+               * PWM is hadnled in a separate helper,
+               * nothing to do here
+               */
+              break;
 
-                case OUT_MODE_ALWAYS_OFF:
-                    digitalWrite(sub.config.digitalOutput.outputPin, LOW);
-                    break;
+            case OUT_MODE_ALWAYS_ON:
+              if (!trk.hasBeenSet) {
+                digitalWrite(p->gpioPin, HIGH);
+                trk.hasBeenSet = true;
+              }
+              break;
 
-                case OUT_MODE_FOLLOW:
-                    /* FOLLOW mode reacts only to incoming CAN events,
-                       so the output task does nothing here. */
-                    break;
+            case OUT_MODE_ALWAYS_OFF:
+              if (!trk.hasBeenSet) {
+                digitalWrite(p->gpioPin, LOW);
+                trk.hasBeenSet = true;
+              }
+              break;
 
-                case OUT_MODE_TOGGLE:
-                    /* TOGGLE is also event-driven; nothing to do here. */
-                    break;
+            case OUT_MODE_FOLLOW:
+              /* FOLLOW mode reacts only to incoming CAN events,
+                  so the output task does nothing here. */
+              break;
 
-                default:
-                    /* Unknown mode — do nothing */
-                    break;
-            }
-        }
+            case OUT_MODE_TOGGLE:
+              /* TOGGLE is also event-driven; nothing to do here. */
+              break;
+
+            default:
+              /* Unknown mode — do nothing */
+              break;
+          } /* switch (sub.config.digitalOutput.outputMode) */
+        } /* for (int i = 0; i < MAX_SUB_MODULES; i++) */
 
         /* 10 ms timing resolution */
         vTaskDelay(pdMS_TO_TICKS(10));
