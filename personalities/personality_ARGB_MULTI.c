@@ -5,6 +5,10 @@
 /** IMPORTANT: Not every personality will need this, some might need an stm32_defs.h */
 #include "esp32_defs.h"  
 
+/** Set the node type message */
+#define NODE_TYPE_MSG IFACE_ARGB_MULTI_ID
+#define NODE_TYPE_DLC IFACE_ARGB_MULTI_DLC
+
 /** Connect the pointer to the table */
 const personalityDef_t *g_personalityTable = personalityTable;
 
@@ -36,7 +40,7 @@ const personalityDef_t personalityTable[] = {
      * Submodule 1 — Digital GPIO Input
      * ---------------------------------------------------------------------- */
     {
-        .personalityId = PERS_DIGITAL_INPUT,
+        .personalityId = PERS_GPIO_INPUT,
         .capabilities  = CAP_INPUT,                   /**< Digital input */
 
         /* Hardware mapping */
