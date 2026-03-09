@@ -33,6 +33,7 @@
  * These flags describe what the hardware *can* do, not what the user configures.
  * Multiple flags may be combined (e.g., CAP_OUTPUT | CAP_PWM).
  */
+#define CAP_NONE         (0x00)     /**< No capabilities */
 #define CAP_INPUT        (1U << 0)  /**< Submodule can read digital/analog input */
 #define CAP_OUTPUT       (1U << 1)  /**< Submodule can drive a GPIO output */
 #define CAP_PWM          (1U << 2)  /**< Submodule supports PWM output */
@@ -41,6 +42,10 @@
 #define CAP_ARGB         (1U << 5)  /**< Submodule supports addressable RGB output */
 #define CAP_ANALOGRGB    (1U << 6)  /**< Submodule supports analog RGB output.  */
 #define CAP_RESERVED7    (1U << 7)  /**< Reserved for future use */
+
+#define NO_DATA_REPORTING 0x00
+#define NO_GPIO_ASSIGNED  0xFF
+#define NO_PWM_ASSIGNED   0xFF
 
 /* --------------------------------------------------------------------------
  * Personality Definition Structure
@@ -95,8 +100,12 @@ typedef enum {
     PERS_ANA_OUTPUT  = 4,       /**< Generic analog output (DAC) */
 
     /* Input personalities */
-    PERS_DIGITAL_INPUT = 10,    /**< Digital GPIO input */
+    PERS_GPIO_INPUT    = 10,    /**< Digital GPIO input */
     PERS_ANALOG_INPUT  = 11,    /**< ADC input */
+
+    /* System personalities */
+    SYS_TOUCH_LCD     = 0xF0,     /**< Touchscreen (e.g., CYD / XPT2046) */
+    SYS_NON_TOUCH_LCD = 0xF1      /**< Generic display (e.g., SSD1306) */
 
     /* Add more as needed */
 } personalityId_t;
