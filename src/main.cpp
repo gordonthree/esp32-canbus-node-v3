@@ -1787,6 +1787,27 @@ void sendIntroduction(int msgPtr = 0) {
 
 } /* end sendIntroduction */
 
+static void buildSyntheticMessage(const router_action_t &action,
+                                  twai_message_t &outMsg)
+{
+    // Start with a clean message
+    memset(&outMsg, 0, sizeof(outMsg));
+
+    outMsg.identifier = action.actionMsgId;
+    outMsg.data_length_code = 8;   // Always 8 for consumer actions
+
+    // Bytes 0–3 = NodeID (same as incoming messages)
+    packUint32ToBytes(node.nodeID, &outMsg.data[0]);
+
+    // Byte 4 = submodule index
+    outMsg.data[4] = action.sub_idx;
+
+    // Byte 5..7 = parameters from router
+    outMsg.data[5] = action.param[0];
+    outMsg.data[6] = action.param[1];
+    outMsg.data[7] = action.param[2];
+}
+
 
 static void handleCanRX(twai_message_t &message) {
   // twai_message_t altmessage;
@@ -1802,25 +1823,18 @@ static void handleCanRX(twai_message_t &message) {
 
     if (memcmp(message.data, (const uint8_t *)myNodeID, 4) == 0) {
       msgFlag = true; // message is for us
-      // Serial.printf("Node ID matched for message id 0x%x\n", message.identifier);
     } else {
       msgFlag = false; // message is not for us
-      // sendIntroack();
-      // Serial.printf("Overheard message 0x%03x for node %02x:%02x:%02x:%02x\n", message.identifier, rxUnitID[0], rxUnitID[1], rxUnitID[2], rxUnitID[3]);
     }
   } else {
-    msgFlag = true; // general broadcast message is valid
+    msgFlag = true; // general broadcast message is valid, messagae has no node id assigned
     Serial.printf("RX BROADCAST MSG: 0x%x NO DATA\n", message.identifier);
   }
 
   if (!msgFlag) {
     // Serial.println("Message does not match our ID, end of process.");
-    return;
+    return; // message is not for us
   }
-
-  // Run consumer routing logic for every valid message
-  checkRoutes(&message);
-
 
   /* debug: dump message data */
   Serial.printf("RX MSG: 0x%03X DATA: ", message.identifier);
@@ -1829,48 +1843,22 @@ static void handleCanRX(twai_message_t &message) {
   }
   Serial.println();
 
-  switch (message.identifier) {
-    case CFG_ROUTE_BEGIN_ID:
-      handleRouteBegin(&message);
-      break;
-    case CFG_ROUTE_DATA_ID:
-      handleRouteData(&message);
-      break;
-    case CFG_ROUTE_END_ID:
-      handleRouteEnd(&message);
-      break;
-    case CFG_ROUTE_DELETE_ID:
-      handleRouteDelete(&message);
-      break;
-    case CFG_ROUTE_PURGE_ID:
-      handleRoutePurge(&message);
-      break;
-    case CFG_ROUTE_WRITE_NVS_ID:
-      handleRouteWriteNVS();
-      break;
-    case CFG_ROUTE_READ_NVS_ID:
-      handleRouteReadNVS();
-      break;
+  // Run consumer routing logic for every valid message
+  router_action_t action = {0};
+  bool takeAction = checkRoutes(&message, &action);
 
-    case CFG_PRODUCER_CFG_ID:
-      handleProducerCfg(&message);
-      break;
-    case CFG_PRODUCER_WRITE_NVS_ID:
-      handleProducerWriteNVS();
-      break;
-    case REQ_PRODUCER_CFG_ID:
-      handleReqProducerCfg(&message);
-      break;
-    case CFG_PRODUCER_PURGE_ID:
-      handleProducerPurge(&message);
-      break;
-    case CFG_PRODUCER_DEFAULTS_ID:
-      handleProducerDefaults(&message);
-      break;
-    case CFG_PRODUCER_APPLY_ID:
-      handleProducerApply();
-      break;
+  twai_message_t msgToConsume;
 
+  if (takeAction) {
+      buildSyntheticMessage(action, msgToConsume);
+  } else {
+      msgToConsume = message;  // use original
+  }
+
+  switch (msgToConsume.identifier) 
+  {
+    case ROUTE_TAKE_NO_ACTION:          // no action 0xFFFF
+      break;
     case SW_SET_PWM_DUTY_ID:      // set output switch pwm duty
       setPWMDuty(message);
       break;
