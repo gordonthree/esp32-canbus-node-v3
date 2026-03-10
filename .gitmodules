@@ -7,3 +7,6 @@
 [submodule "lib/can_router"]
 	path = lib/can_router
 	url = https://github.com/gordonthree/can_router.git
+[submodule "lib/can_producer"]
+	path = lib/can_producer
+	url = https://github.com/gordonthree/can_producer.git
