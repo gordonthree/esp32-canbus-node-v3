@@ -1,4 +1,4 @@
-/** @file personality.c */
+/** @file personality_ARGB_511C.c */
 
 #include "personality_table.h"
 
@@ -9,14 +9,11 @@
 #define NODE_TYPE_MSG IFACE_ARGB_MULTI_ID
 #define NODE_TYPE_DLC IFACE_ARGB_MULTI_DLC
 
-/** Connect the pointer to the table */
-const personalityDef_t *g_personalityTable = personalityTable;
+extern const personalityDef_t g_personalityTable[];
+const personalityDef_t *g_personalityTable_ptr = g_personalityTable;
 
-/** Number of personalities */
-uint8_t g_personalityCount =
-    sizeof(personalityTable) / sizeof(personalityDef_t);
 
-const personalityDef_t personalityTable[] = {
+const personalityDef_t g_personalityTable[] = {
 
     /* ----------------------------------------------------------------------
      * Submodule 0 — ARGB LED Output
@@ -72,3 +69,7 @@ const personalityDef_t personalityTable[] = {
     }
 };
 
+
+/** Number of personalities */
+uint8_t g_personalityCount =
+    sizeof(g_personalityTable) / sizeof(personalityDef_t);
