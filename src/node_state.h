@@ -21,7 +21,7 @@ extern "C" {
 struct outputTracker_t {
     uint32_t     nextActionTime;        /**< Timestamp for the next state change */
     uint8_t      currentStep;           /**< Current step in a multi-stage pattern (strobe) */
-    uint8_t timer;                 /**< LEDC timer */
+    uint8_t      timer;                 /**< LEDC timer */
     bool         isActive;              /**< Flag to indicate if a momentary/strobe is running */
     bool         isConfigured;          /**< Flag to indicate if a switch is configured */
     bool         hardwareInitialized;   /**< Flag to indicate if hardware is initialized */
