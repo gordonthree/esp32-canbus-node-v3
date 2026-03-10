@@ -33,3 +33,21 @@ Create a "secrets.ini" file in the same directory as platformio.ini
 OTA_PASSWORD = your_password
 ```
 
+## Copilot wisdom regarding the producer/consumer relationship and the can bus router routines.
+
+Producer node
+    ↓
+Broadcasts raw or semantic messages
+    ↓
+CAN bus
+    ↓
+Router on consumer node
+    ↓
+Route table (subscriptions)
+    ↓
+Router forwards semantic messages
+    ↓
+Consumer (main.cpp switch/case)
+    ↓
+Hardware (TaskOutput, LEDC, GPIO)
+
