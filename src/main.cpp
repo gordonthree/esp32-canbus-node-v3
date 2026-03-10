@@ -38,7 +38,8 @@
 /* === Local includes === */
 #include "canbus_project.h"    /**< my various CAN functions and structs */
 #include "secrets.h"           /**< WiFi credentials and such */
-#include "can_router.h"        /**< CAN routing routines and constants */
+#include "can_router.h"        /**< CAN routing (subcriber) routines and constants */
+#include "can_producer.h"      /**< CAN producer routines and constants */
 #include "personality_table.h" /**< Node and sub-module personality table */
 #include "node_state.h"        /**< Node and sub-module state table */
 
@@ -134,9 +135,6 @@ TaskHandle_t xSwitchHandle = NULL; /**< Handle for the output switch logic task 
 
 /** Runtime data storage */
 submoduleRuntime_t g_subRuntime[MAX_SUB_MODULES];
-
-/** Producer tick counter */
-uint32_t lastProducerTick[MAX_SUB_MODULES] = {0};
 
 /* memory allocation for the flags */
 uint8_t FLAG_SEND_INTRODUCTION = 0;
@@ -2147,11 +2145,11 @@ void managePeriodicMessages() {
 
     // Producer broadcasts
     for (uint8_t i = 0; i < node.subModCnt; i++) {
-        uint8_t rate = g_producerCfg[i].rate_hz;
+        const subModule_t& sub = node.subModule[i];
+        const uint8_t rate  = sub.producer_cfg.rate_hz; // g_producerCfg[i].rate_hz;
+        const uint8_t flags = sub.producer_cfg.flags; // g_producerCfg[i].flags;
         if (rate == 0) continue;
-        if (!(g_producerCfg[i].flags & PRODUCER_FLAG_ENABLED)) continue;
-        // TODO: Should we make sure the subModule exists before trying to assign a pointer?
-        subModule_t& sub = node.subModule[i];
+        if (!(flags & PRODUCER_FLAG_ENABLED)) continue;
         const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
 
         uint32_t interval = 1000U / rate; // ms
