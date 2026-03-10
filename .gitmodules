@@ -10,3 +10,6 @@
 [submodule "lib/can_producer"]
 	path = lib/can_producer
 	url = https://github.com/gordonthree/can_producer.git
+[submodule "lib/can_personality"]
+	path = lib/can_personality
+	url = https://github.com/gordonthree/can_personality.git
