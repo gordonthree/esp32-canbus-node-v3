@@ -24,13 +24,24 @@ Right now the most time has been spent working with the ESP32-CYD board. The ESP
 
 ## Important setup notes
 
-Be sure to use ``git clone --recursive`` to clone this repository so you pull in the two linked submodules. This will clone the ``lib/can-canbus-data`` and ``lib/can-canbus`` directories.
+### Cloning
 
+Be sure to use ``git clone --recursive`` to clone this repository so you pull in the correct linked submodules. This will clone libraries in ``/lib``.
+
+### Secrets
 Create a "secrets.ini" file in the same directory as platformio.ini
 
-```
+```toml
 [secrets]
 OTA_PASSWORD = your_password
+```
+
+Create "secrets.h" in the src directory
+
+```c
+const char* SECRET_SSID = "SSID HERE";     // Replace with your WiFi SSID
+const char* SECRET_PSK = "PSK HERE";       // Replace with your WiFi password
+const char* OTA_PASSWORD = "OTA PSK HERE"; // Replace with your OTA password
 ```
 
 ## Copilot wisdom regarding the producer/consumer relationship and the can bus router routines.
