@@ -127,12 +127,18 @@ typedef enum {
  *
  * The actual table is defined in a node-type-specific .c file.
  */
-extern const personalityDef_t *g_personalityTable;  /**< Active personality table */
+extern const personalityDef_t *personalityTable;  /**< Active personality table */
 extern uint8_t g_personalityCount;                  /**< Number of personalities */
 
 /* --------------------------------------------------------------------------
  * Lookup Helpers
  * -------------------------------------------------------------------------- */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+const personalityDef_t *getPersonality(uint8_t index);
 
 /**
  * @brief Retrieve a personality definition by ID.
@@ -142,3 +148,6 @@ extern uint8_t g_personalityCount;                  /**< Number of personalities
  */
 const personalityDef_t *getPersonality(uint8_t personalityId);
 
+#ifdef __cplusplus
+}
+#endif 
