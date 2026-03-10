@@ -42,6 +42,7 @@
 #include "can_producer.h"      /**< CAN producer routines and constants */
 #include "personality_table.h" /**< Node and sub-module personality table */
 #include "node_state.h"        /**< Node and sub-module state table */
+#include "storage.h"           /**< NVS storage routines */
 
 /* my can bus stuff */
 #include "byte_conversion.h"
@@ -2441,6 +2442,15 @@ void printWifi() {
 
 
 void loop() {
+  if (g_routeSaveRequested) {
+    g_routeSaveRequested = false;
+    saveRoutesToNVS();
+  }
+
+  if (g_routeLoadRequested) {
+    g_routeLoadRequested = false;
+    loadRoutesFromNVS();
+  }
 
   // NOP;
 }
