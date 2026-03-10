@@ -40,6 +40,7 @@
 #include "secrets.h"           /**< WiFi credentials and such */
 #include "can_router.h"        /**< CAN routing routines and constants */
 #include "personality_table.h" /**< Node and sub-module personality table */
+#include "node_state.h"        /**< Node and sub-module state table */
 
 /* my can bus stuff */
 #include "byte_conversion.h"
@@ -74,9 +75,6 @@
 #define CRC_INVALID_CONFIG     (0xFFFF)
 #define SUBMOD_PART_B_FLAG     (0x80U)
 
-
-
-
 /* Default CAN transceiver pins */
 #ifndef RX_PIN
 #define RX_PIN 22
@@ -108,28 +106,6 @@ enum ConfigStatus {
     CFG_ERR_CRC,       /**< Data found but CRC is invalid (corrupt) */
     CFG_ERR_NVS_OPEN   /**< Failed to open NVS namespace */
 };
-
-/**
- * @struct outputTracker_t
- * @brief Represents the state of an output module.
- *
- * This struct is used to track the state of an output module. It contains the following fields:
- *
- * @param nextActionTime: The timestamp for the next state change.
- * @param currentStep: The current step in a multi-stage pattern (strobe).
- * @param isActive: A flag to indicate if a momentary/strobe is running.
- * @param isConfigured: A flag to indicate if a switch is configured.
- * @param hardwareInitialized: A flag to indicate if hardware is initialized.
- */
-struct outputTracker_t {
-    uint32_t     nextActionTime;        /**< Timestamp for the next state change */
-    uint8_t      currentStep;           /**< Current step in a multi-stage pattern (strobe) */
-    ledc_timer_t timer;                 /**< LEDC timer */
-    bool         isActive;              /**< Flag to indicate if a momentary/strobe is running */
-    bool         isConfigured;          /**< Flag to indicate if a switch is configured */
-    bool         hardwareInitialized;   /**< Flag to indicate if hardware is initialized */
-    bool         hasBeenSet;            /**< Flag to indicate if a switch has been set */
-}; /* end struct outputTracker_t */
 
 outputTracker_t trackers[MAX_SUB_MODULES];
 
@@ -177,6 +153,7 @@ const char*   ota_password = OTA_PASSWORD; // change this
 
 /* dynamic discovery stuff */
 nodeInfo_t node; /**< Store information about this node */
+
 volatile uint16_t node_crc = 0xffff; /**< CRC-16 for the node configuration */
 volatile int introMsgPtr;  /**< Pointer for the introduction and interview process */
 volatile bool FLAG_VALID_CONFIG    = false;
@@ -689,71 +666,73 @@ void WiFiEvent(WiFiEvent_t event){
     }
 }
 
-/**
- * @brief Send a message to the CAN bus
- * @param msgid The message ID of the frame to be sent
- * @param data The data to be sent in the frame
- * @param dlc The data length code of the frame, which is the number of bytes of data to be sent
- */
-void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
-  twai_message_t message;
-  static int failCount = 0; /* tx fail counter */
+extern "C" {
+  /**
+   * @brief Send a message to the CAN bus
+   * @param msgid The message ID of the frame to be sent
+   * @param data The data to be sent in the frame
+   * @param dlc The data length code of the frame, which is the number of bytes of data to be sent
+   */
+  void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc) {
+    twai_message_t message;
+    static int failCount = 0; /* tx fail counter */
 
-  #define CAN_STD_FRAME 0      /**< 0 = standard frame, 1 = extended frame */
-  #define CAN_DATA_FRAME 0     /**< 0 = data frame, 1 = remote frame */
-  #define CAN_NORMAL_TX 0      /**< 0 = normal transmission, 1 = SELF_RECEPTION 0 */
-  #define CAN_NON_COMP_DLC 0   /**< non-compliant DLC (0-8 bytes) */
-  
-  /* Format message */
-  message.identifier = msgid;       /**< set message ID */
-  message.extd = CAN_STD_FRAME;                 /**< 0 = standard frame, 1 = extended frame */
-  message.rtr = CAN_DATA_FRAME;                  /**< 0 = data frame, 1 = remote frame */
-  message.self = CAN_NORMAL_TX;                 /**< 0 = normal transmission, 1 = self reception request */
-  message.dlc_non_comp = CAN_NON_COMP_DLC;         /**< non-compliant DLC (0-8 bytes) */
-  message.data_length_code = dlc;   /**< data length code (0-8 bytes) */
+    #define CAN_STD_FRAME 0      /**< 0 = standard frame, 1 = extended frame */
+    #define CAN_DATA_FRAME 0     /**< 0 = data frame, 1 = remote frame */
+    #define CAN_NORMAL_TX 0      /**< 0 = normal transmission, 1 = SELF_RECEPTION 0 */
+    #define CAN_NON_COMP_DLC 0   /**< non-compliant DLC (0-8 bytes) */
+    
+    /* Format message */
+    message.identifier = msgid;       /**< set message ID */
+    message.extd = CAN_STD_FRAME;                 /**< 0 = standard frame, 1 = extended frame */
+    message.rtr = CAN_DATA_FRAME;                  /**< 0 = data frame, 1 = remote frame */
+    message.self = CAN_NORMAL_TX;                 /**< 0 = normal transmission, 1 = self reception request */
+    message.dlc_non_comp = CAN_NON_COMP_DLC;         /**< non-compliant DLC (0-8 bytes) */
+    message.data_length_code = dlc;   /**< data length code (0-8 bytes) */
 
-  if (dlc > CAN_MAX_DLC) dlc = CAN_MAX_DLC; /* Safety check */
-  memcpy(message.data, data, dlc);  /**< copy data to message data field */
+    if (dlc > CAN_MAX_DLC) dlc = CAN_MAX_DLC; /* Safety check */
+    memcpy(message.data, data, dlc);  /**< copy data to message data field */
 
-  /* Attempt transmission with a 10ms timeout */
-  if (twai_transmit(&message, pdMS_TO_TICKS(10)) == ESP_OK) {
-#ifdef ESP32CYD
-    digitalWrite(LED_RED, LOW); /* Turn on RED LED */
-#endif
-    failCount = 0; /* Reset counter on successful queueing */
-    // Serial.printf("ID: 0x%03X queued\n", msgid);
-  } else {
-    failCount++;
-    Serial.printf("Tx Fail (%d/3)\n", failCount);
+    /* Attempt transmission with a 10ms timeout */
+    if (twai_transmit(&message, pdMS_TO_TICKS(10)) == ESP_OK) {
+  #ifdef ESP32CYD
+      digitalWrite(LED_RED, LOW); /* Turn on RED LED */
+  #endif
+      failCount = 0; /* Reset counter on successful queueing */
+      // Serial.printf("ID: 0x%03X queued\n", msgid);
+    } else {
+      failCount++;
+      Serial.printf("Tx Fail (%d/3)\n", failCount);
 
-    if (failCount >= 3) {
-      Serial.println("Persistent failure: Initiating TWAI Recovery...");
+      if (failCount >= 3) {
+        Serial.println("Persistent failure: Initiating TWAI Recovery...");
 
-      /* Physical Bus Recovery Sequence */
-      twai_stop();
-      twai_initiate_recovery();
+        /* Physical Bus Recovery Sequence */
+        twai_stop();
+        twai_initiate_recovery();
 
-      vTaskDelay(pdMS_TO_TICKS(100)); /* Short delay for hardware state change */
+        vTaskDelay(pdMS_TO_TICKS(100)); /* Short delay for hardware state change */
 
-      twai_start();
-      Serial.println("TWAI Restarted");
+        twai_start();
+        Serial.println("TWAI Restarted");
 
-      failCount = 0; /* Reset after recovery attempt */
+        failCount = 0; /* Reset after recovery attempt */
+      }
     }
-  }
-  // vTaskDelay(10);
-#ifdef ESP32CYD
-  digitalWrite(LED_RED, HIGH); /* Turn off RED LED */
-#endif
+    // vTaskDelay(10);
+  #ifdef ESP32CYD
+    digitalWrite(LED_RED, HIGH); /* Turn off RED LED */
+  #endif
 
-}
+  } /* send_message() */
+} /* extern "C" */
 
 /** * @brief Configures LEDC hardware using the blinkerTracker_t structure.
  * @param idx  The index for both the blinker tracker and the LEDC timer (0-3).
  * @param pin  The hardware GPIO pin to use.
  * @param freq The desired frequency in Hertz (defaults to 5 Hz).
  */
-void handleHardwareBlink(uint8_t submodIdx, uint8_t pin, uint32_t freq, uint32_t duty = (LEDC_13BIT_50PCT)) {
+void handleHardwarePwm(uint8_t submodIdx, uint8_t pin, uint32_t freq, uint32_t duty = (LEDC_13BIT_50PCT)) {
     uint8_t idx = (submodIdx - 1); /* submodule 0 will never be a blinker, so subtract 1 from index */
 
     /** * Safety check: Ensure index does not exceed hardware timer or array limits.
@@ -811,7 +790,7 @@ void handleHardwareBlink(uint8_t submodIdx, uint8_t pin, uint32_t freq, uint32_t
  * and clears the tracker status.
  * @param idx The index of the blinker in the global tracker array.
  */
-void stopHardwareBlink(uint8_t submodIdx) {
+void stopHardwarePwm(uint8_t submodIdx) {
     uint8_t idx = (submodIdx - 1); /* submodule 0 will never be a blinker, so subtract 1 from index */
 
     /** Safety check: Ensure index does not exceed hardware timer or array limits. */
@@ -908,23 +887,23 @@ static void setDisplayMode(twai_message_t& msg, uint8_t displayMode = DISPLAY_MO
 
   switch (displayMode) {
     case DISPLAY_MODE_OFF: // display off
-      stopHardwareBlink(displayID);
+      stopHardwarePwm(displayID);
       digitalWrite(displayPin, LOW);
       Serial.printf("Display %d OFF\n", displayID);
       break;
     case DISPLAY_MODE_ON: // display on
-      stopHardwareBlink(displayID);
+      stopHardwarePwm(displayID);
       digitalWrite(displayPin, HIGH);
       Serial.printf("Display %d ON\n", displayID);
       break;
     case DISPLAY_MODE_CLEAR: // clear display
-      stopHardwareBlink(displayID);
+      stopHardwarePwm(displayID);
       Serial.printf("Display %d CLEAR\n", displayID);
       break;
     case DISPLAY_MODE_FLASH: // flash display
     {
       uint8_t flashRate = msg.data[5];
-      handleHardwareBlink(displayID, displayPin, flashRate);
+      handleHardwarePwm(displayID, displayPin, flashRate);
       Serial.printf("Display %d FLASH AT %d rate\n", displayID, flashRate);
     }
       break;
@@ -954,7 +933,7 @@ static void setSwBlinkDelay(twai_message_t& msg) {
   const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
   uint8_t pin = p->gpioPin; /* get output pin */
   sub.config.gpioOutput.param1 = freq;            /* update blink delay */
-  handleHardwareBlink(switchID, pin, freq);       /* update hardware blinker */
+  handleHardwarePwm(switchID, pin, freq);       /* update hardware blinker */
 
   Serial.printf("Blink Delay: %d Switch: %d\n", sub.config.gpioOutput.param1, switchID);
 }
@@ -980,7 +959,7 @@ static void setPWMDuty(twai_message_t& msg) { /* 0x117 */
   const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
   uint8_t pin = p->gpioPin; /* get output pin */
   uint32_t workingFreq = (uint32_t)(sub.config.gpioOutput.param1 * PWM_SCALING_FACTOR);    /* get pwm frequency */
-  handleHardwareBlink(switchID, pin, workingFreq, pwmDuty);     /* update hardware */
+  handleHardwarePwm(switchID, pin, workingFreq, pwmDuty);     /* update hardware */
   Serial.printf("PWM Duty: %d Switch: %d\n", pwmDuty, switchID);
 }
 
@@ -993,7 +972,7 @@ static void setPWMFreq(twai_message_t& msg) { /* 0x118 */
   uint8_t pin = p->gpioPin; /* get output pin */
   sub.config.gpioOutput.param1 = pwmFreq;       /* update pwm frequency in config */
   uint32_t workingFreq = (uint32_t)(pwmFreq * PWM_SCALING_FACTOR);
-  handleHardwareBlink(switchID, pin, workingFreq);     /* update hardware */
+  handleHardwarePwm(switchID, pin, workingFreq);     /* update hardware */
   Serial.printf("PWM Frequency: %d Switch: %d\n", workingFreq, switchID);
 }
 
@@ -1032,6 +1011,7 @@ static void txSwitchState(uint8_t* txUnitID, uint16_t txSwitchID, uint8_t swStat
  * - OUT_MODE_MOMENTARY: One-shot momentary
  * - OUT_MODE_STROBE: Strobe
  * - OUT_MODE_PWM: PWM
+ * - OUT_MODE_BLINK: Same as PWM, but with slower timing
  *
  * If the switch is configured for momentary, blinking or pwm, the function will
  * set a flag for the outputTask to set the state of the switch accordingly.
@@ -1065,6 +1045,7 @@ static void setSwitchMode(twai_message_t& msg) { /* 0x112 */
       trackers[switchID].isConfigured = true;
       trackers[switchID].isActive = true;
       break;
+    case OUT_MODE_BLINK:
     case OUT_MODE_PWM: // pwm and blinking
       sub.config.gpioOutput.mode = switchMode;
 
@@ -1114,8 +1095,9 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
         case OUT_MODE_STROBE:
           trackers[switchID].isActive = false;
           break;
+        case OUT_MODE_BLINK:
         case OUT_MODE_PWM: // pwm and blinking
-          stopHardwareBlink(switchID); 
+          stopHardwarePwm(switchID); 
           clearPwmHardware(switchID);
           break;
         default:
@@ -1133,17 +1115,17 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
           digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
           trackers[switchID].isActive = true;
           break;
-
-        case OUT_MODE_PWM: /* Use LEDC hardware blinking and pwm*/
+        case OUT_MODE_BLINK: /* If we are in blink mode, 'ON' should behave like a trigger */
+        case OUT_MODE_PWM: /* Use LEDC hardware for blinking and pwm*/
         {
           //TODO: blinkOutput is going away, need to refactor to a more generic pwmOutput instead
           uint32_t freq = (uint32_t)(sub.config.gpioOutput.param1 * BLINK_SCALING_FACTOR);
           uint8_t  pin  = outPin;
           if (freq == 0) { /* for debugging don't let the blink rate equal 0*/
-            freq = 5; 
+            freq = 5; //TODO: FIX THIS NO MAGIC NUMBERS
             sub.config.gpioOutput.param1 = freq;
           }
-          handleHardwareBlink(switchID, pin, freq);
+          handleHardwarePwm(switchID, pin, freq);
           break;
         }
 
@@ -2062,22 +2044,16 @@ static void handleCanRX(twai_message_t &message) {
         responseData[4] = (uint8_t)(localCrc >> 8);
         responseData[5] = (uint8_t)(localCrc & 0xFF);
 
-        if (masterCrc == localCrc) {
-            /** CRCs match, attempt to persist to flash */
-            if (saveConfig(node) == CFG_OK) {
-                /** SUCCESS: Set the flag indicating config is valid and send back the verified CRC */
-                FLAG_VALID_CONFIG = true;
-                send_message(DATA_CONFIG_CRC_ID, responseData, DATA_CONFIG_CRC_DLC);
-                Serial.println("NVS Commit Successful");
-            } else {
-                /** Flash hardware error */
-                send_message(DATA_CFGWRITE_FAILED_ID, responseData, DATA_CFGWRITE_FAILED_DLC);
-                Serial.println("NVS Commit Failed: Flash Error");
-            }
+        /** CRCs match, attempt to persist to flash */
+        if (saveConfig(node) == CFG_OK) {
+            /** SUCCESS: Set the flag indicating config is valid and send back the verified CRC */
+            FLAG_VALID_CONFIG = true;
+            send_message(DATA_CONFIG_CRC_ID, responseData, DATA_CONFIG_CRC_DLC);
+            Serial.println("NVS Commit Successful");
         } else {
-            /** CRC Mismatch: Provisioning corrupted or incomplete */
+            /** Flash hardware error */
             send_message(DATA_CFGWRITE_FAILED_ID, responseData, DATA_CFGWRITE_FAILED_DLC);
-            Serial.printf("NVS Commit Failed: CRC Mismatch (M:%04X L:%04X)\n", masterCrc, localCrc);
+            Serial.println("NVS Commit Failed: Flash Error");
         }
       }
       break;
@@ -2348,10 +2324,10 @@ void TaskOutput(void *pvParameters)
             case OUT_MODE_STROBE:
               handleStrobeLogic(sub, trk);
               break;
-
+            case OUT_MODE_BLINK:
             case OUT_MODE_PWM:
               /** 
-               * PWM is hadnled in a separate helper,
+               * BLINK and PWM are handled in a separate helper,
                * nothing to do here
                */
               break;
