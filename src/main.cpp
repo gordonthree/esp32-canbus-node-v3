@@ -97,18 +97,6 @@
 /* WiFi Constants */
 #define AP_SSID  "canesp32"
 
-/**
- * @enum ConfigStatus
- * @brief Result codes for NVS operations.
- */
-enum ConfigStatus {
-    CFG_OK = 0,        /**< Load successful and CRC valid */
-    CFG_ERR_MUTEX,     /**< Failed to acquire flash mutex */
-    CFG_ERR_NOT_FOUND, /**< No configuration exists in NVS */
-    CFG_ERR_CRC,       /**< Data found but CRC is invalid (corrupt) */
-    CFG_ERR_NVS_OPEN   /**< Failed to open NVS namespace */
-};
-
 outputTracker_t trackers[MAX_SUB_MODULES];
 
 struct blinkerTracker_t {
@@ -155,7 +143,7 @@ nodeInfo_t node; /**< Store information about this node */
 
 volatile uint16_t node_crc = 0xffff; /**< CRC-16 for the node configuration */
 volatile int introMsgPtr;  /**< Pointer for the introduction and interview process */
-volatile bool FLAG_VALID_CONFIG    = false;
+
 volatile bool FLAG_ARGB_CONFIG     = false;
 volatile bool can_suspended        = false;
 volatile bool can_driver_installed = false;
@@ -418,112 +406,6 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t length) {
 uint16_t getConfigurationCRC(const nodeInfo_t& node) {
   /* Hash the entire struct without worrying about internal fields */
   return crc16_ccitt((const uint8_t*)&node, sizeof(nodeInfo_t));
-}
-
-/**
- * @brief Erases the node configuration and CRC from NVS.
- * @return ConfigStatus status of the erase operation (OK, NOT_FOUND, or MUTEX).
- */
-ConfigStatus eraseConfig() {
-  /* Attempt to acquire the flash mutex */
-  if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-    return CFG_ERR_MUTEX;
-  }
-
-  Preferences prefs;
-  if (!prefs.begin("node_cfg", false)) {
-    xSemaphoreGive(flashMutex);
-    return CFG_ERR_NVS_OPEN;
-  }
-
-  /* Check if the data key exists before attempting removal */
-  if (!prefs.isKey("node_data")) {
-    prefs.end();
-    xSemaphoreGive(flashMutex);
-    return CFG_ERR_NOT_FOUND;
-  }
-
-  prefs.remove("node_data");
-  prefs.remove("node_crc");
-
-  prefs.end();
-  xSemaphoreGive(flashMutex);
-
-  return CFG_OK;
-}
-
-/**
- * @brief Saves the node configuration to NVS and updates the external CRC.
- * @param node Reference to the nodeInfo_t struct to persist.
- * @return CFG_OK on success, or CFG_ERR_MUTEX if flash is busy.
- */
-ConfigStatus saveConfig(const nodeInfo_t& node) {
-    /* Attempt to acquire the flash mutex */
-    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        return CFG_ERR_MUTEX;
-    }
-
-    Preferences prefs;
-    /* Open namespace in read/write mode */
-    if (!prefs.begin("node_cfg", false)) {
-        xSemaphoreGive(flashMutex);
-        return CFG_ERR_NVS_OPEN; /* Return error if NVS open fails */
-    }
-
-    /** Calculate the CRC of the current RAM buffer before saving */
-    uint16_t currentCrc = getConfigurationCRC(node);
-
-    /** Write the configuration blob and the CRC key separately */
-    prefs.putBytes("node_data", &node, sizeof(nodeInfo_t));
-    prefs.putUShort("node_crc", currentCrc);
-
-    prefs.end();
-    xSemaphoreGive(flashMutex);
-
-    return CFG_OK;
-}
-
-
-/**
- * @brief Loads the current node configuration and CRC from NVS.
- * @param[in,out] node Reference to the nodeInfo_t struct to be loaded.
- * @return ConfigStatus indicating the result of the operation.
- * @retval CFG_OK Load successful and CRC valid.
- * @retval CFG_ERR_MUTEX Failed to acquire flash mutex.
- * @retval CFG_ERR_NOT_FOUND No configuration exists in NVS.
- * @retval CFG_ERR_CRC Data found but CRC is invalid (corrupt).
- */
-ConfigStatus loadConfig(nodeInfo_t& node) {
-    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        return CFG_ERR_MUTEX;
-    }
-
-    Preferences prefs;
-    if (!prefs.begin("node_cfg", true)) {
-        xSemaphoreGive(flashMutex);
-        return CFG_ERR_NOT_FOUND;
-    }
-
-    // Check if the key exists before reading
-    if (!prefs.isKey("node_data")) {
-        prefs.end();
-        xSemaphoreGive(flashMutex);
-        return CFG_ERR_NOT_FOUND;
-    }
-
-    // Read data and stored CRC
-    prefs.getBytes("node_data", &node, sizeof(nodeInfo_t));
-    uint16_t storedCrc = prefs.getUShort("node_crc", 0);
-
-    prefs.end();
-    xSemaphoreGive(flashMutex);
-
-    // Validate
-    if (getConfigurationCRC(node) != storedCrc) {
-        return CFG_ERR_CRC;
-    }
-
-    return CFG_OK;
 }
 
 void TaskOTA(void *pvParameters) {
@@ -1305,7 +1187,7 @@ void printHexDump(const void* ptr, size_t size) {
     Serial.println("\n---------------------------");
 }
 
-static void loadDefaults(uint16_t nodeType) {
+void loadDefaults(uint16_t nodeType) {
   switch (nodeType) {
       case (IFACE_ARGB_MULTI_ID): /* ARGB multi */
         nodeInfoARGB(); /* load node info */
@@ -1606,91 +1488,7 @@ void manageColorPickerList(twai_message_t& msg) {
 #endif
 } /* end manageColorPickerList() */
 
-/**
- * @brief Handles the erase NVS command from the master node
- *
- * This function attempts to erase the NVS configuration and
- * reset the node to its default configuration. If the erase
- * operation fails due to a mutex timeout, the function will
- * retry up to 3 times with a short delay in between retries.
- */
-void handleEraseNVS() {
-  ConfigStatus cfgStatus;
-  int retries = 0;
 
-  Serial.println("\nErasing config...");
-
-  do {
-      cfgStatus = eraseConfig();
-
-      if (cfgStatus == CFG_OK) {
-          Serial.println("Config erased successfully, rebooting...");
-          vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before reboot */
-          ESP.restart(); /**< Reboot the ESP32 */
-          break;
-      }
-
-      if (cfgStatus == CFG_ERR_NOT_FOUND) {
-          Serial.println("Config not found.");
-          break;
-      }
-
-      if (cfgStatus == CFG_ERR_MUTEX) {
-          Serial.printf("Flash busy - Retry %d/3...\n", retries + 1);
-          vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
-      }
-
-  } while ((cfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
-
-  if (cfgStatus == CFG_ERR_MUTEX) {
-      Serial.println("Critical Error: Could not access NVS (Mutex Timeout)");
-  }
-}
-
-/**
- * @brief Attempts to load the configuration from NVS.
- *
- * This function attempts to load the configuration from NVS and
- * initializes the hardware if successful. If the configuration
- * is invalid or not found, it loads the default configuration from
- * the build flag node type and starts in PROVISIONING MODE. If the
- * function is unable to access NVS due to a mutex timeout, it
- * loads the default configuration from the build flag node type.
- */
-void handleReadNVS() {
-  ConfigStatus loadCfgStatus;
-  int retries = 0;
-
-  Serial.println("\nLoading config...");
-
-  do {
-      loadCfgStatus = loadConfig(node);
-
-      if (loadCfgStatus == CFG_OK) {
-          Serial.println("Config loaded successfully.");
-          FLAG_VALID_CONFIG = true;
-          initHardware(); /**< Initialize the hardware */
-          break;
-      }
-
-      if (loadCfgStatus == CFG_ERR_CRC || loadCfgStatus == CFG_ERR_NOT_FOUND) {
-          Serial.println("Invalid config - Starting in PROVISIONING MODE");
-          loadDefaults(NODEMSGID); /**< load defaults from build flag node type */
-          break;
-      }
-
-      if (loadCfgStatus == CFG_ERR_MUTEX) {
-          Serial.printf("Flash busy - Retry %d/3...\n", retries + 1);
-          vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
-      }
-
-  } while ((loadCfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
-
-  if (loadCfgStatus == CFG_ERR_MUTEX) {
-      Serial.println("Critical Error: Could not access NVS (Mutex Timeout)");
-      loadDefaults(NODEMSGID); /* load defaults from build flag node type */
-  }
-}
 
 /**
  * @brief Dynamically counts active submodules in the node structure
@@ -2009,7 +1807,7 @@ static void handleCanRX(twai_message_t &message) {
     case CFG_ERASE_NVS_ID: /**< 0x41B: Master requesting NVS erase */
       {
         Serial.println("Master requesting NVS erase...");
-        handleEraseNVS();
+        handleEraseCfgNVS();
       }
       break;
     case CFG_REBOOT_ID: /**< 0x41C: Master requesting reboot */
@@ -2032,7 +1830,7 @@ static void handleCanRX(twai_message_t &message) {
         responseData[5] = (uint8_t)(localCrc & 0xFF);
 
         /** CRCs match, attempt to persist to flash */
-        if (saveConfig(node) == CFG_OK) {
+        if (saveConfigNvs(node) == CFG_OK) {
             /** SUCCESS: Set the flag indicating config is valid and send back the verified CRC */
             FLAG_VALID_CONFIG = true;
             send_message(DATA_CONFIG_CRC_ID, responseData, DATA_CONFIG_CRC_DLC);
@@ -2049,7 +1847,7 @@ static void handleCanRX(twai_message_t &message) {
         Serial.println("NVS Read Request");
         uint16_t masterCrc = (message.data[4] << 8) | message.data[5];
 
-        handleReadNVS();
+        handleReadCfgNVS();
 
         uint16_t localCrc  = getConfigurationCRC(node);
         uint8_t responseData[6];
@@ -2355,6 +2153,8 @@ void TaskOutput(void *pvParameters)
 
 
 void setup() {
+/** clear config valid flag */ 
+FLAG_VALID_CONFIG    = false;
 
 #ifdef ESP32CYD
   pinMode(LED_BLUE, OUTPUT);
@@ -2392,7 +2192,7 @@ void setup() {
   memset(&pwmPins, 0, sizeof(uint8_t) * LEDC_MAX_TIMERS);          /* clear the array of pwm pins */
 
   /* Node Setup Logic */
-  handleReadNVS();                                                 /* Read the NVS data from flash and init hardware */
+  handleReadCfgNVS();                                                 /* Read the NVS data from flash and init hardware */
 
   #ifdef ESP32CYD
   initCYD();                                                       /* Initialize CYD interface */
