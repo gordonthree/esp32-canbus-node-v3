@@ -13,6 +13,7 @@ extern "C" {
  /** @brief Send message to the CAN bus, lives in main.cpp */
 extern void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc );
 
+
 /* ============================================================================
  *  NODE STATE API
  * ============================================================================ */ 
