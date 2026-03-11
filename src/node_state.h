@@ -2,19 +2,25 @@
 
 #include "canbus_project.h"   // for node_t, subModule_t, etc.
 
+/* ============================================================================
+ *  GLOBAL VARIABLES
+ * ============================================================================ */ 
+
+extern volatile bool FLAG_VALID_CONFIG;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 
-extern volatile bool FLAG_VALID_CONFIG;
+
 
 /* ============================================================================
  *  GLOBAL FUNCTIONS
  * ============================================================================ */ 
 
  /** @brief Send message to the CAN bus, lives in main.cpp */
-extern void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc );
+void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc );
 
 
 /* ============================================================================
