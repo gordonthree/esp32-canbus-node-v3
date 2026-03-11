@@ -13,3 +13,6 @@
 [submodule "lib/can_personality"]
 	path = lib/can_personality
 	url = https://github.com/gordonthree/can_personality.git
+[submodule "lib/can_platform"]
+	path = lib/can_platform
+	url = https://github.com/gordonthree/can_platform.git
