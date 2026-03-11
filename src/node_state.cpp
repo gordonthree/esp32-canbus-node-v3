@@ -15,3 +15,4 @@ uint8_t producerGetFlags(const uint8_t sub_idx) {
 void producerSetFlags(const uint8_t sub_idx, uint8_t flags) {
     node.subModule[sub_idx].flags = flags;
 }
+
