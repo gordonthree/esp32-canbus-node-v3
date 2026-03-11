@@ -6,6 +6,9 @@
 extern "C" {
 #endif
 
+
+extern volatile bool FLAG_VALID_CONFIG;
+
 /* ============================================================================
  *  GLOBAL FUNCTIONS
  * ============================================================================ */ 
@@ -46,3 +49,11 @@ extern outputTracker_t trackers[MAX_SUB_MODULES];
 #ifdef __cplusplus
 }
 #endif
+
+/* ============================================================================
+ *  NODE RELATED FUNCTIONS
+ * ============================================================================ */ 
+
+void initHardware();
+void loadDefaults(uint16_t nodeType);
+uint16_t getConfigurationCRC(const nodeInfo_t& node);
