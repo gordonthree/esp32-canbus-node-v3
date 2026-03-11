@@ -6,7 +6,32 @@
 #include <stdint.h>
 
 #include "can_router.h"        // for g_routes + MAX_ROUTES
-#include "can_producer.h"      // for g_producerCfg (your producer config struct)
+// #include "can_producer.h"      // for producer  (your producer config struct)
+#include "node_state.h"        // for shared objects from main.cpp
+
+
+/**
+ * @enum ConfigStatus
+ * @brief Result codes for NVS operations.
+ */
+enum ConfigStatus {
+    CFG_OK = 0,        /**< Load successful and CRC valid */
+    CFG_ERR_MUTEX,     /**< Failed to acquire flash mutex */
+    CFG_ERR_NOT_FOUND, /**< No configuration exists in NVS */
+    CFG_ERR_CRC,       /**< Data found but CRC is invalid (corrupt) */
+    CFG_ERR_NVS_OPEN   /**< Failed to open NVS namespace */
+};
+
+// NVS namespaces
+static constexpr const char* ROUTE_NS        = "route_table";
+static constexpr const char* ROUTE_KEY       = "routes";
+
+static constexpr const char* PROD_NS         = "producer_cfg";
+static constexpr const char* PROD_KEY        = "cfg";
+
+static constexpr const char* NODE_NS         = "node_cfg";
+static constexpr const char* NODE_CRC_KEY    = "node_crc";
+static constexpr const char* NODE_DATA_KEY   = "node_data";
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,3 +72,14 @@ void saveProducerCfgToNVS(void);
 #ifdef __cplusplus
 }
 #endif
+
+
+/* ============================================================================
+ *  NODE CONFIG STORAGE API
+ * ========================================================================== */
+
+void handleReadCfgNVS();
+void handleEraseCfgNVS();
+ConfigStatus eraseConfigNvs();
+ConfigStatus saveConfigNvs(const nodeInfo_t& node);
+ConfigStatus loadConfigNvs(nodeInfo_t& node);
