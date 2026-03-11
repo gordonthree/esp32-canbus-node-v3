@@ -40,11 +40,12 @@
 #include "secrets.h"           /**< WiFi credentials and such */
 #include "can_router.h"        /**< CAN routing (subcriber) routines and constants */
 #include "can_producer.h"      /**< CAN producer routines and constants */
+#include "can_platform.h"      /**< CAN platform routines and constants */
 #include "personality_table.h" /**< Node and sub-module personality table */
 #include "node_state.h"        /**< Node and sub-module state table */
 #include "storage.h"           /**< NVS storage routines */
 
-/* my can bus stuff */
+/* my byte routines */
 #include "byte_conversion.h"
 
 /* hardware constants */
@@ -147,6 +148,7 @@ volatile int introMsgPtr;  /**< Pointer for the introduction and interview proce
 volatile bool FLAG_ARGB_CONFIG     = false;
 volatile bool can_suspended        = false;
 volatile bool can_driver_installed = false;
+volatile bool FLAG_VALID_CONFIG    = false; /**< Clear the flag indicating a valid configuration  */
 
 unsigned long previousMillis = 0;  /* will store last time a message was sent */
 unsigned long lastCanError   = 0;  /* will store last time a CAN error occurred */
@@ -186,6 +188,7 @@ void IRAM_ATTR Timer0_ISR()
 {
   isrFlag = true;
 }
+
 
 
 /**
@@ -1644,7 +1647,9 @@ static void handleCanRX(twai_message_t &message) {
 
   // Run consumer routing logic for every valid message
   router_action_t action = {0};
-  bool takeAction = checkRoutes(&message, &action);
+  /** recast message so it matches the checkRoutes() signature */
+  const can_msg_t newMsg = toCanMsg(&message);
+  bool takeAction = checkRoutes(&newMsg, &action);
 
   twai_message_t msgToConsume;
 
