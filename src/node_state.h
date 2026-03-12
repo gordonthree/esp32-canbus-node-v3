@@ -49,12 +49,17 @@ void updateSubmoduleRuntime(void);
  * ============================================================================ */ 
 
 /* ============================================================================
- *  NODE RELATED FUNCTIONS
+ *  ACCESSOR FUNCTIONS
  * ============================================================================ */ 
-subModule_t* producerGetSubmodule(const uint8_t sub_idx);
+/* producer specific accessor functions */
 runTime_t*   producerGetRuntime(const uint8_t sub_idx);
 uint8_t      producerGetFlags(const uint8_t sub_idx);
 void         producerSetFlags(const uint8_t sub_idx, uint8_t flags);
+
+/* generic accessor functions */
+subModule_t* nodeGetSubmodule(const uint8_t sub_idx);
+uint8_t      nodeGetSubmoduleCount(void);
+
 
 
 #ifdef __cplusplus
