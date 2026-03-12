@@ -1,18 +1,40 @@
 #include "node_state.h"
 
-producer_t* producerGetState(const uint8_t sub_idx) {
-    return &node.subModule[sub_idx].producer;
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
+subModule_t* producerGetSubmodule(const uint8_t sub_idx)
+{
+    if (sub_idx >= MAX_SUB_MODULES)
+        return NULL;
+
+    return &node.subModule[sub_idx];
 }
 
-producer_cfg_t* producerGetConfig(const uint8_t sub_idx) {
-    return &node.subModule[sub_idx].producer_cfg;
+runTime_t* producerGetRuntime(const uint8_t sub_idx) 
+{
+    if (sub_idx >= MAX_SUB_MODULES)
+        return NULL;
+    return &node.subModule[sub_idx].runTime;
 }
 
-uint8_t producerGetFlags(const uint8_t sub_idx) {
-    return node.subModule[sub_idx].flags;   // or whatever field is relevant
+
+uint8_t producerGetFlags(const uint8_t sub_idx) 
+{
+    if (sub_idx >= MAX_SUB_MODULES)
+        return SUBMOD_FLAG_NONE;
+    return node.subModule[sub_idx].producer_flags;   /* access producer flags only */
 }
 
-void producerSetFlags(const uint8_t sub_idx, uint8_t flags) {
-    node.subModule[sub_idx].flags = flags;
+void producerSetFlags(const uint8_t sub_idx, const uint8_t flags) 
+{
+    if (sub_idx >= MAX_SUB_MODULES)
+        return;
+    node.subModule[sub_idx].producer_flags = flags;   /* update producer flags only */
 }
 
+#ifdef __cplusplus
+}
+#endif

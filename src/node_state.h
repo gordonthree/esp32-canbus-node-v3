@@ -1,6 +1,14 @@
 #pragma once
 
+#include <stddef.h>
+
 #include "canbus_project.h"   // for node_t, subModule_t, etc.
+
+
+/* ============================================================================
+ *  CONSTANTS
+ * ============================================================================ */ 
+
 
 /* ============================================================================
  *  GLOBAL VARIABLES
@@ -8,37 +16,6 @@
 
 extern volatile bool FLAG_VALID_CONFIG;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-
-
-
-/* ============================================================================
- *  GLOBAL FUNCTIONS
- * ============================================================================ */ 
-
- /** @brief Send message to the CAN bus, lives in main.cpp */
-void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc );
-
-
-/* ============================================================================
- *  NODE STATE API
- * ============================================================================ */ 
-
-/**
- * @struct outputTracker_t
- * @brief Represents the state of an output module.
- *
- * This struct is used to track the state of an output module. It contains the following fields:
- *
- * @param nextActionTime: The timestamp for the next state change.
- * @param currentStep: The current step in a multi-stage pattern (strobe).
- * @param isActive: A flag to indicate if a momentary/strobe is running.
- * @param isConfigured: A flag to indicate if a switch is configured.
- * @param hardwareInitialized: A flag to indicate if hardware is initialized.
- */
 struct outputTracker_t {
     uint32_t     nextActionTime;        /**< Timestamp for the next state change */
     uint8_t      currentStep;           /**< Current step in a multi-stage pattern (strobe) */
@@ -49,8 +26,36 @@ struct outputTracker_t {
     bool         hasBeenSet;            /**< Flag to indicate if a switch has been set */
 }; /* end struct outputTracker_t */
 
-extern nodeInfo_t node;
-extern outputTracker_t trackers[MAX_SUB_MODULES];
+extern nodeInfo_t node;                           /**< Store information about this node */
+extern outputTracker_t trackers[MAX_SUB_MODULES]; /**< Track hardware output states */
+
+
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ============================================================================
+ *  GLOBAL FUNCTIONS
+ * ============================================================================ */ 
+
+ /** @brief Send message to the CAN bus, lives in main.cpp */
+void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc );
+void updateSubmoduleRuntime(void);
+
+/* ============================================================================
+ *  NODE STATE API
+ * ============================================================================ */ 
+
+/* ============================================================================
+ *  NODE RELATED FUNCTIONS
+ * ============================================================================ */ 
+subModule_t* producerGetSubmodule(const uint8_t sub_idx);
+runTime_t*   producerGetRuntime(const uint8_t sub_idx);
+uint8_t      producerGetFlags(const uint8_t sub_idx);
+void         producerSetFlags(const uint8_t sub_idx, uint8_t flags);
+
 
 #ifdef __cplusplus
 }
