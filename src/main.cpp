@@ -14,6 +14,7 @@
 #include <ArduinoOTA.h>
 
 #include <stdio.h>
+#include <stddef.h>
 
 /* === ESP32 includes === */
 #include <Preferences.h>
@@ -140,7 +141,7 @@ volatile bool ota_started  = false;
 const char*   ota_password = OTA_PASSWORD; // change this
 
 /* dynamic discovery stuff */
-nodeInfo_t node; /**< Store information about this node */
+nodeInfo_t node = {0}; /* zero out the array */
 
 volatile uint16_t node_crc = 0xffff; /**< CRC-16 for the node configuration */
 volatile int introMsgPtr;  /**< Pointer for the introduction and interview process */
@@ -1938,8 +1939,10 @@ void managePeriodicMessages() {
     // Producer broadcasts
     for (uint8_t i = 0; i < node.subModCnt; i++) {
         const subModule_t& sub = node.subModule[i];
-        const uint8_t rate  = sub.producer_cfg.rate_hz; // g_producerCfg[i].rate_hz;
-        const uint8_t flags = sub.producer_cfg.flags; // g_producerCfg[i].flags;
+        const runtime_t& runtime = sub.runtime;
+
+        const uint8_t rate  = runtime.; // g_producerCfg[i].rate_hz;
+        const uint8_t flags = sub.runtime.flags; // g_producerCfg[i].flags;
         if (rate == 0) continue;
         if (!(flags & PRODUCER_FLAG_ENABLED)) continue;
         const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
