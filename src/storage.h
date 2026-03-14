@@ -8,6 +8,7 @@
 #include "can_router.h"        // for g_routes + MAX_ROUTES
 // #include "can_producer.h"      // for producer  (your producer config struct)
 #include "node_state.h"        // for shared objects from main.cpp
+#include "submodule_types.h"   /**< Sub-module type definitions */
 
 
 /**
