@@ -1,6 +1,7 @@
 #pragma once
 
 #include "canbus_project.h"   // for node_t, subModule_t, etc.
+#include "submodule_types.h"   /**< Sub-module type definitions */
 
 /* ============================================================================
  *  GLOBAL VARIABLES
@@ -12,7 +13,23 @@ extern volatile bool FLAG_VALID_CONFIG;
 extern "C" {
 #endif
 
+/* ============================================================================ */
+/*  NODE STATE API
+ * ============================================================================ */
 
+/* Node state accessor functions */
+subModule_t* nodeGetSubModule(const uint8_t sub_idx);
+runTime_t* nodeGetRuntime(const uint8_t sub_idx);
+const uint8_t nodeGetSubModuleCount(void);
+
+
+/* Flags accessor functions */
+uint8_t* nodeGetProducerFlags(const uint8_t sub_idx) ;
+uint8_t* nodeGetSubmodFlags(const uint8_t sub_idx);
+uint8_t* nodeGetRouterFlags(const uint8_t sub_idx);
+void nodeSetProducerFlags(const uint8_t sub_idx, uint8_t flags);
+void nodeSetSubmodFlags(const uint8_t sub_idx, uint8_t flags);
+void nodeSetRouterFlags(const uint8_t sub_idx, uint8_t flags);
 
 
 /* ============================================================================
@@ -49,8 +66,8 @@ struct outputTracker_t {
     bool         hasBeenSet;            /**< Flag to indicate if a switch has been set */
 }; /* end struct outputTracker_t */
 
-extern nodeInfo_t node;
-extern outputTracker_t trackers[MAX_SUB_MODULES];
+extern nodeInfo_t node; /**< Global node configuration */
+extern outputTracker_t trackers[MAX_SUB_MODULES]; /**< Global output trackers */
 
 #ifdef __cplusplus
 }
