@@ -44,6 +44,7 @@
 #include "personality_table.h" /**< Node and sub-module personality table */
 #include "node_state.h"        /**< Node and sub-module state table */
 #include "storage.h"           /**< NVS storage routines */
+#include "submodule_types.h"   /**< Sub-module type definitions */
 
 /* my byte routines */
 #include "byte_conversion.h"
