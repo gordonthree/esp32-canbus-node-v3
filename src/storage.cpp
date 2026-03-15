@@ -50,9 +50,11 @@ void loadProducerCfgFromNVS()
     Preferences prefs;
     if (prefs.begin(PROD_NS, true)) {
 
-        if (prefs.isKey(PROD_KEY)) {
+        if (prefs.isKey(PROD_KEY)) 
+        {
+            // Read from NVS
 
-            producer_cfg_t temp[MAX_SUB_MODULES];
+            runTime_t temp[MAX_SUB_MODULES] = {0}; /* zero-initialize array */
             size_t expected = sizeof(temp);
 
             size_t read = prefs.getBytes(PROD_KEY, temp, expected);
@@ -60,7 +62,7 @@ void loadProducerCfgFromNVS()
             if (read == expected) {
                 // Copy into submodules
                 for (uint8_t i = 0; i < MAX_SUB_MODULES; i++) {
-                    node.subModule[i].producer_cfg = temp[i];
+                    node.subModule[i].runTime = temp[i];
                 }
             }
         }
@@ -79,11 +81,11 @@ void saveProducerCfgToNVS()
     Preferences prefs;
     if (prefs.begin(PROD_NS, false)) {
 
-        producer_cfg_t temp[MAX_SUB_MODULES];
+        runTime_t temp[MAX_SUB_MODULES];
 
         // Copy from submodules
         for (uint8_t i = 0; i < MAX_SUB_MODULES; i++) {
-            temp[i] = node.subModule[i].producer_cfg;
+            temp[i] = node.subModule[i].runTime;
         }
 
         prefs.putBytes(PROD_KEY, temp, sizeof(temp));
