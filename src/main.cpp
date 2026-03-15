@@ -1049,7 +1049,7 @@ void setupAnalogStripDigitalOut(uint8_t idx, uint8_t pin, uint8_t mode) {
   subModule_t& sub           = node.subModule[idx];
   sub.introMsgId             = OUT_GPIO_DIGITAL_ID;
   sub.introMsgDLC            = OUT_GPIO_DIGITAL_DLC;
-  sub.flags                 |= SUBMOD_FLAG_SAVE_STATE;
+  sub.submod_flags          |= SUBMOD_FLAG_SAVE_STATE;
   sub.config.gpioOutput.mode = mode;
   // sub.dataMsgId   = SET_ANALOG_STRIP_COLOR_ID; // no longer user configured
   // sub.dataMsgDLC  = SET_ANALOG_STRIP_COLOR_DLC; // no longer user configured
@@ -1066,7 +1066,7 @@ void setupLcdTouchscreen(uint8_t idx) {
   subModule_t& sub = node.subModule[idx];
   sub.introMsgId   = DISP_TOUCHSCREEN_LCD_ID;
   sub.introMsgDLC  = DISP_TOUCHSCREEN_LCD_DLC;
-  sub.flags       |= SUBMOD_FLAG_SAVE_STATE;
+  sub.submod_flags|= SUBMOD_FLAG_SAVE_STATE;
   // sub.dataMsgId   = DATA_TOUCHSCREEN_EVENT_ID;
   // sub.dataMsgDLC  = DATA_TOUCHSCREEN_EVENT_DLC;
 }
@@ -1080,9 +1080,9 @@ void setupAnalogBacklight(uint8_t idx, uint8_t pin) {
   if (idx >= MAX_SUB_MODULES) return;
 
   subModule_t& sub = node.subModule[idx];
-  sub.introMsgId  = DISP_ANALOG_BACKLIGHT_ID;
-  sub.introMsgDLC = DISP_ANALOG_BACKLIGHT_DLC;
-  sub.flags      |= SUBMOD_FLAG_SAVE_STATE;
+  sub.introMsgId    = DISP_ANALOG_BACKLIGHT_ID;
+  sub.introMsgDLC   = DISP_ANALOG_BACKLIGHT_DLC;
+  sub.submod_flags |= SUBMOD_FLAG_SAVE_STATE;
   sub.config.gpioOutput.mode = OUT_MODE_TOGGLE;
   // sub.dataMsgId   = DATA_DISPLAY_MODE_ID;
   // sub.dataMsgDLC  = DATA_DISPLAY_MODE_DLC;
@@ -1099,11 +1099,9 @@ void setupArgbStrip(uint8_t idx, uint8_t pin, uint16_t count) {
   if (idx >= MAX_SUB_MODULES) return;
 
   subModule_t& sub = node.subModule[idx];
-  sub.introMsgId  = DISP_ARGB_LED_STRIP_ID;
-  sub.introMsgDLC = DISP_ARGB_LED_STRIP_DLC;
-  // sub.dataMsgId   = SET_ARGB_STRIP_COLOR_ID;
-  // sub.dataMsgDLC  = SET_ARGB_STRIP_COLOR_DLC;
-  sub.flags |= SUBMOD_FLAG_SAVE_STATE;
+  sub.introMsgId    = DISP_ARGB_LED_STRIP_ID;
+  sub.introMsgDLC   = DISP_ARGB_LED_STRIP_DLC;
+  sub.submod_flags |= SUBMOD_FLAG_SAVE_STATE;
   // sub.config.argbLed.outputPin = pin;
   // sub.config.argbLed.ledCount  = count;
 }
@@ -1118,15 +1116,10 @@ void setupDigitalInput(uint8_t idx, uint8_t pin, uint8_t res) {
   if (idx >= MAX_SUB_MODULES) return;
 
   subModule_t& sub = node.subModule[idx];
-  sub.introMsgId  = INPUT_DIGITAL_GPIO_ID;
-  sub.introMsgDLC = INPUT_DIGITAL_GPIO_DLC;
-  sub.flags |= SUBMOD_FLAG_SAVE_STATE;
+  sub.introMsgId    = INPUT_DIGITAL_GPIO_ID;
+  sub.introMsgDLC   = INPUT_DIGITAL_GPIO_DLC;
+  sub.submod_flags |= SUBMOD_FLAG_SAVE_STATE;
 
-  // sub.dataMsgId   = DATA_BUTTON_DOWN_ID;
-  // sub.dataMsgDLC  = DATA_BUTTON_DOWN_DLC;
-  // sub.saveState   = false;
-  // sub.config.digitalInput.inputPin = pin;
-  // sub.config.digitalInput.outputRes = res;
 }
 
 /** Load CYD node info into the nodeInfo struct */
@@ -1575,7 +1568,7 @@ void sendIntroduction(int msgPtr = 0) {
         msgData[5] = (uint8_t)(dataMsgId >> 8);
         msgData[6] = (uint8_t)(dataMsgId);
         /* Pack DLC (4 bits) and SaveState (1 bit) into byte 7 */
-        msgData[7] = (dataMsgDlc & 0x0F) | (sub.flags ? SUBMOD_PART_B_FLAG : 0x00);
+        msgData[7] = (dataMsgDlc & 0x0F) | (sub.submod_flags ? SUBMOD_PART_B_FLAG : 0x00);
     }
 
     if (txMsgID == 0) {
@@ -1757,8 +1750,9 @@ static void handleCanRX(twai_message_t &message) {
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.analogInput.overSampleCnt = (uint16_t)((message.data[5] << 8) | (message.data[6] & 0xFF));
-        sub.config.analogInput.reserved      = message.data[7]; /* store reserved byte if sent */
+        sub.config.analogInput.overSampleFlag = message.data[5];
+        sub.config.analogInput.reserved1      = message.data[6]; /* store reserved byte if sent */
+        sub.config.analogInput.reserved2      = message.data[7]; /* store reserved byte if sent */
       }
       break;
 
@@ -1937,25 +1931,9 @@ void managePeriodicMessages() {
     }
 
     // Producer broadcasts
-    for (uint8_t i = 0; i < node.subModCnt; i++) {
-        const subModule_t& sub = node.subModule[i];
-        const uint8_t rate  = sub.producer_cfg.rate_hz; // g_producerCfg[i].rate_hz;
-        const uint8_t flags = sub.producer_cfg.flags; // g_producerCfg[i].flags;
-        if (rate == 0) continue;
-        if (!(flags & PRODUCER_FLAG_ENABLED)) continue;
-        const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
-
-        uint32_t interval = 1000U / rate; // ms
-        if (currentMillis - lastProducerTick[i] >= interval) {
-            lastProducerTick[i] = currentMillis;
-            const uint16_t dataMsgId  = p->dataMsgId;
-            const uint8_t  dataMsgDlc = p->dataMsgDlc;
-
-            // TODO: implement sendProducerData(i) using subModule_t dataMsgId/dataMsgDLC
-            // For now, just log:
-            Serial.printf("ProducerTx: sub %u msg 0x%03X dlc %u\n", i, dataMsgId, dataMsgDlc);
-        }
-    }
+    
+    // TODO: implement sendProducerData(i) using subModule_t dataMsgId/dataMsgDLC
+    
 }
 
 void TaskTWAI(void *pvParameters) {
