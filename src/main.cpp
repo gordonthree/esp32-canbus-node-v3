@@ -2165,6 +2165,9 @@ FLAG_VALID_CONFIG    = false;
   /** Initialize producer library callbacks */
   producerInit(&producerCB);
 
+  /** Pretty print nodeInfo */
+  printNodeInfo(&node);
+  
   #ifdef ESP32CYD
   initCYD();                                                       /* Initialize CYD interface */
   analogSetAttenuation(ADC_11db);
