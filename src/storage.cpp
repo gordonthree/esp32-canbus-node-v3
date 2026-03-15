@@ -3,6 +3,30 @@
 // Global mutex for NVS access (declared in main.cpp)
 extern SemaphoreHandle_t flashMutex;
 
+/* ============================================================================
+ *  HELPERS
+ * ========================================================================== */
+
+/** * @brief Prints a hex dump of a memory block to the Serial console.
+ * @param ptr Pointer to the memory block
+ * @param size Size of the block in bytes
+ */
+void printHexDump(const void* ptr, size_t size) {
+    const uint8_t* p = (const uint8_t*)ptr;
+    char buf[16]; /* Buffer for hex formatting */
+
+    Serial.println("\n--- nodeInfo_t Hex Dump ---");
+    for (size_t i = 0; i < size; i++) {
+        /* Print address offset every 16 bytes */
+        if (i % 16 == 0) {
+            if (i > 0) Serial.println();
+            Serial.printf("%04X: ", (uint16_t)i);
+        }
+
+        Serial.printf("%02X ", p[i]);
+    }
+    Serial.println("\n---------------------------");
+}
 
 
 /* ============================================================================
@@ -117,6 +141,38 @@ void deleteProducerCfgFromNVS()
  *  NODE CONFIG LOAD/SAVE
  * ========================================================================== */
 
+ /**
+  * @brief Load default subModule configuration from personality library if no config
+  * was found in NVS.
+  * 
+  */
+ void loadNodeDefaults() {
+
+    /** Set the number of submodules */
+    node.subModCnt = g_submodules_count;
+
+    /* Guardrail: personality library must define at least one submodule */
+    if (g_submodules_count == 0) {
+        printf("[ERR] loadNodeDefaults(): submod_setup is empty (count = 0)\n");
+        return;
+    }
+
+    /* Guardrail: pointer should never be NULL, but check anyway */
+    if (submod_setup == NULL) {
+        printf("[ERR] loadNodeDefaults(): submod_setup pointer is NULL\n");
+        return;
+    }
+
+    /** Copy submodules from submod_setup array */
+    for (uint8_t i = 0; i < g_submodules_count; i++) {
+        node.subModule[i] = submod_setup[i];
+    }
+
+    Serial.printf("[INIT] Defaults loaded, submod count: %d\n", g_submodules_count);
+    /** Print hex dump of nodeInfo_t */
+    // printHexDump(&node, sizeof(node));
+}
+
 
 /**
  * @brief Attempts to load the configuration from NVS.
@@ -133,34 +189,34 @@ void handleReadCfgNVS()
   ConfigStatus loadCfgStatus;
   int retries = 0;
 
-  Serial.println("\nLoading config...");
+  Serial.println("\n[INIT] Loading config from NVS...");
 
   do {
       loadCfgStatus = loadConfigNvs(node);
 
       if (loadCfgStatus == CFG_OK) {
-          Serial.println("Config loaded successfully.");
+          Serial.println("[INIT] Config loaded successfully.");
           FLAG_VALID_CONFIG = true;
           initHardware(); /**< Initialize the hardware */
           break;
       }
 
       if (loadCfgStatus == CFG_ERR_CRC || loadCfgStatus == CFG_ERR_NOT_FOUND) {
-          Serial.println("Invalid config - Starting in PROVISIONING MODE");
-          loadDefaults(NODEMSGID); /**< load defaults from build flag node type */
+          Serial.println("[INIT] Invalid config - loading internal defaults");
+          loadNodeDefaults(); /**< load defaults from build flag node type */
           break;
       }
 
       if (loadCfgStatus == CFG_ERR_MUTEX) {
-          Serial.printf("Flash busy - Retry %d/3...\n", retries + 1);
+          Serial.printf("[INIT] Flash busy - Retry %d/3...\n", retries + 1);
           vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
       }
 
   } while ((loadCfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
 
   if (loadCfgStatus == CFG_ERR_MUTEX) {
-      Serial.println("Critical Error: Could not access NVS (Mutex Timeout)");
-      loadDefaults(NODEMSGID); /* load defaults from build flag node type */
+      Serial.println("[INIT] Critical Error: Could not access NVS (Mutex Timeout), loading internal defaults.");
+      loadNodeDefaults(); /* load defaults from build flag node type */
   }
 }
 
@@ -315,3 +371,4 @@ ConfigStatus loadConfigNvs(nodeInfo_t& node)
 
     return CFG_OK;
 }
+

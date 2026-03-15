@@ -78,7 +78,7 @@ void saveProducerCfgToNVS(void);
 /* ============================================================================
  *  NODE CONFIG STORAGE API
  * ========================================================================== */
-
+void loadNodeDefaults();
 void handleReadCfgNVS();
 void handleEraseCfgNVS();
 ConfigStatus eraseConfigNvs();
