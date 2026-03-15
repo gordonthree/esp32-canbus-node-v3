@@ -201,8 +201,20 @@ void handleReadCfgNVS()
           break;
       }
 
-      if (loadCfgStatus == CFG_ERR_CRC || loadCfgStatus == CFG_ERR_NOT_FOUND) {
-          Serial.println("[INIT] Invalid config - loading internal defaults");
+      if (loadCfgStatus == CFG_ERR_CRC) {
+          Serial.println("[INIT] Config CRC mismatch - loading internal defaults");
+          loadNodeDefaults(); /**< load defaults from build flag node type */
+          break;
+      }
+
+      if (loadCfgStatus == CFG_ERR_CRC_MISS) {
+          Serial.println("[INIT] Config CRC not found in NVS - loading internal defaults");
+          loadNodeDefaults(); /**< load defaults from build flag node type */
+          break;
+      }
+
+      if (loadCfgStatus == CFG_ERR_NOT_FOUND) {
+          Serial.println("[INIT] Config data not found in NVS - loading internal defaults");
           loadNodeDefaults(); /**< load defaults from build flag node type */
           break;
       }
@@ -350,11 +362,18 @@ ConfigStatus loadConfigNvs(nodeInfo_t& node)
         return CFG_ERR_NOT_FOUND;
     }
 
-    // Check if the key exists before reading
+    /** Check if the data key exists */
     if (!prefs.isKey(NODE_DATA_KEY)) {
         prefs.end();
         xSemaphoreGive(flashMutex);
         return CFG_ERR_NOT_FOUND;
+    }
+
+    /** Check if the CRC key exists */
+    if (!prefs.isKey(NODE_CRC_KEY)) {
+        prefs.end();
+        xSemaphoreGive(flashMutex);
+        return CFG_ERR_CRC_MISS;
     }
 
     // Read data and stored CRC

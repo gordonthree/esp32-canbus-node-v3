@@ -20,6 +20,7 @@ enum ConfigStatus {
     CFG_ERR_MUTEX,     /**< Failed to acquire flash mutex */
     CFG_ERR_NOT_FOUND, /**< No configuration exists in NVS */
     CFG_ERR_CRC,       /**< Data found but CRC is invalid (corrupt) */
+    CFG_ERR_CRC_MISS,  /**< CRC key not found in NVS */
     CFG_ERR_NVS_OPEN   /**< Failed to open NVS namespace */
 };
 
