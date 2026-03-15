@@ -39,6 +39,10 @@ void nodeSetRouterFlags(const uint8_t sub_idx, uint8_t flags);
  /** @brief Send message to the CAN bus, lives in main.cpp */
 void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc );
 
+/** pretty print the in-memory node config database */
+void printNodeInfo(const nodeInfo_t* node);
+
+
 
 /* ============================================================================
  *  NODE STATE API
