@@ -13,8 +13,6 @@
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 
-#include <stdio.h>
-
 /* === ESP32 includes === */
 #include <Preferences.h>
 #include <rom/crc.h>
@@ -22,6 +20,10 @@
 #include <ESPmDNS.h>
 #include <esp_wifi.h>
 #include <time.h>
+/* === Standard library includes === */
+#include <stdio.h>
+#include <stddef.h>
+/* === ESP32 native IDF includes === */
 #include "driver/twai.h" /* esp32 native TWAI CAN library */
 #include "driver/ledc.h" /* esp32 native LEDC PWM library */
 #include "esp_err.h"     /* esp32 error handler */
@@ -69,8 +71,6 @@
 #define tskNormalPriority      (tskIDLE_PRIORITY + 2)
 #define tskHighPriority        (tskIDLE_PRIORITY + 4)
 
-
-
 #define CAN_ID_MASK            (0x3F)      /**< Mask for lower 6 bits of CAN ID */
 #define PWM_RES_BITS           (8U)        /**< 8-bit resolution for PWM */
 #define DEFAULT_TIMEZONE       "EST5EDT,M3.2.0,M11.1.0"
@@ -98,6 +98,13 @@
 
 /* WiFi Constants */
 #define AP_SSID  "canesp32"
+
+/* Connect node state functions to producer library callback table */
+static const producerCallbacks_t producerCB = {
+    .getSubModuleCount = nodeGetSubModuleCount,
+    .getSubModule      = nodeGetSubModule,
+    .getRuntime        = nodeGetRuntime
+};
 
 outputTracker_t trackers[MAX_SUB_MODULES];
 
@@ -418,6 +425,8 @@ void TaskOTA(void *pvParameters) {
     vTaskDelay(200 / portTICK_PERIOD_MS);
   }
 
+  Serial.println("[RTOS] OTA task started.");
+
   /* Configure ArduinoOTA */
   ArduinoOTA.setHostname(hostname);
   ArduinoOTA.setPassword(ota_password);
@@ -457,7 +466,7 @@ void TaskOTA(void *pvParameters) {
   /* Option A: Always enable OTA listener */
   ArduinoOTA.begin();
   ota_started = true;
-  Serial.println("ArduinoOTA ready");
+  Serial.println("[OTA] OTA library ready");
 
   /* Main loop: handle OTA requests */
   for (;;) {
@@ -478,7 +487,7 @@ void readMacAddress() {
   /* Copy 4 bytes starting from index 2 of baseMac into myNodeID */
   memcpy((void*)myNodeID, &baseMac[2], 4);
 
-  Serial.print("Node ID extracted: ");
+  Serial.print("[INIT] Node ID extracted: ");
   for(int i = 0; i < 4; i++) {
     Serial.printf("%02X ", myNodeID[i]);
   }
@@ -493,17 +502,17 @@ void readMacAddress() {
  */
 
 void wifiOnConnect(){
-  Serial.println("STA Connected");
-  Serial.print("STA SSID: ");
+  Serial.println("[WIFI] STA Connected");
+  Serial.print("[WIFI] STA SSID: ");
   Serial.println(WiFi.SSID());
-  Serial.print("STA IPv4: ");
+  Serial.print("[WIFI] STA IPv4: ");
   Serial.println(WiFi.localIP());
   wifiIP = WiFi.localIP().toString();
 }
 
 /* when wifi disconnects */
 void wifiOnDisconnect(){
-  Serial.println("STA disconnected, reconnecting...");
+  Serial.println("[WIFI] STA disconnected, reconnecting...");
   delay(1000);
   WiFi.begin(ssid, password);
 }
@@ -587,10 +596,10 @@ extern "C" {
       // Serial.printf("ID: 0x%03X queued\n", msgid);
     } else {
       failCount++;
-      Serial.printf("Tx Fail (%d/3)\n", failCount);
+      Serial.printf("[TWAI] Tx Fail (%d/3)\n", failCount);
 
       if (failCount >= 3) {
-        Serial.println("Persistent failure: Initiating TWAI Recovery...");
+        Serial.println("[TWAI] Persistent failure: Initiating TWAI Recovery...");
 
         /* Physical Bus Recovery Sequence */
         twai_stop();
@@ -599,7 +608,7 @@ extern "C" {
         vTaskDelay(pdMS_TO_TICKS(100)); /* Short delay for hardware state change */
 
         twai_start();
-        Serial.println("TWAI Restarted");
+        Serial.println("[TWAI] TWAI Restarted");
 
         failCount = 0; /* Reset after recovery attempt */
       }
@@ -623,7 +632,7 @@ void handleHardwarePwm(uint8_t submodIdx, uint8_t pin, uint32_t freq, uint32_t d
     /** * Safety check: Ensure index does not exceed hardware timer or array limits.
      */
     if (idx >= LEDC_MAX_TIMERS) {
-        Serial.println("Invalid index for LEDC timer, expected 0 to 3.");
+        Serial.println("[PWM] Invalid index for LEDC timer, expected 0 to 3.");
         return;
     }
 
@@ -680,7 +689,7 @@ void stopHardwarePwm(uint8_t submodIdx) {
 
     /** Safety check: Ensure index does not exceed hardware timer or array limits. */
     if (idx >= LEDC_MAX_TIMERS) {
-        Serial.println("Invalid index for LEDC timer, expected 0 to 3.");
+        Serial.println("[PWM] Invalid index for LEDC stop timer, expected 0 to 3.");
         return;
     }
 
@@ -698,7 +707,7 @@ void stopHardwarePwm(uint8_t submodIdx) {
         /** Update tracker state */
         blinkers[idx].isActive = false;
 
-        Serial.printf("Submod %d: Blinker Stopped (Pin %d)\n", idx, pin);
+        Serial.printf("[PWM] Submod %d: Blinker Stopped (Pin %d)\n", idx, pin);
     }
 }
 
@@ -1120,84 +1129,6 @@ void setupDigitalInput(uint8_t idx, uint8_t pin, uint8_t res) {
   sub.introMsgDLC   = INPUT_DIGITAL_GPIO_DLC;
   sub.submod_flags |= SUBMOD_FLAG_SAVE_STATE;
 
-}
-
-/** Load CYD node info into the nodeInfo struct */
-void nodeInfoCYD() { /* remote node type IFACE_TOUCHSCREEN_TYPE_A_ID 0x792 */
-  node.nodeID      = unpackBytestoUint32((const uint8_t*)&myNodeID[0]);
-  node.nodeTypeMsg = IFACE_TOUCHSCREEN_TYPE_A_ID;
-  node.nodeTypeDLC = IFACE_TOUCHSCREEN_TYPE_A_DLC;
-  node_crc         = CRC_INVALID_CONFIG; /* set the CRC to an invalid value indicating node has not received a configuration */
-
-  /* Touchscreen and backlight: Handled via helper */
-  setupLcdTouchscreen(0);
-  setupAnalogBacklight(1, CYD_BACKLIGHT_PIN);
-
-  /* RGB LED: Handled via helper */
-  setupAnalogStripDigitalOut(2, CYD_LED_BLUE_PIN,  OUT_STATE_ON);  /* Index 2 */
-  setupAnalogStripDigitalOut(3, CYD_LED_GREEN_PIN, OUT_STATE_ON);  /* Index 3 */
-  setupAnalogStripDigitalOut(4, CYD_LED_RED_PIN,   OUT_STATE_OFF); /* Index 4 */
-}
-
-
-/**
- * @brief Load ARGB node info into the nodeInfo struct
- *
- * @details This function populates the nodeInfo struct with the
- *          necessary information for an ARGB node. This includes
- *          the node ID, node type message ID, node type DLC,
- *          and the CRC value. Additionally, this function sets
- *          up the sub modules associated with the node, which are
- *          the ARGB strip and a digital input.
- */
-void nodeInfoARGB() { /* remote node type IFACE_ARGB_MULTI_ID 0x79C */
-  node.nodeID      = unpackBytestoUint32((const uint8_t*)&myNodeID[0]);
-  node.nodeTypeMsg = IFACE_ARGB_MULTI_ID;
-  node.nodeTypeDLC = IFACE_ARGB_MULTI_DLC;
-  node_crc         = CRC_INVALID_CONFIG;
-
-  /* Configure via specialized helpers */
-  setupArgbStrip(0, M5STAMP_ARGB_PIN, M5STAMP_ARGB_COUNT);
-  setupDigitalInput(1, M5STAMP_BUTTON_PIN, INPUT_RES_PULLUP);
-
-  /* node.subModCnt will be calculated dynamically during intro */
-}
-
-/** * @brief Prints a hex dump of a memory block to the Serial console.
- * @param ptr Pointer to the memory block
- * @param size Size of the block in bytes
- */
-void printHexDump(const void* ptr, size_t size) {
-    const uint8_t* p = (const uint8_t*)ptr;
-    char buf[16]; /* Buffer for hex formatting */
-
-    Serial.println("\n--- nodeInfo_t Hex Dump ---");
-    for (size_t i = 0; i < size; i++) {
-        /* Print address offset every 16 bytes */
-        if (i % 16 == 0) {
-            if (i > 0) Serial.println();
-            Serial.printf("%04X: ", (uint16_t)i);
-        }
-
-        Serial.printf("%02X ", p[i]);
-    }
-    Serial.println("\n---------------------------");
-}
-
-void loadDefaults(uint16_t nodeType) {
-  switch (nodeType) {
-      case (IFACE_ARGB_MULTI_ID): /* ARGB multi */
-        nodeInfoARGB(); /* load node info */
-        break;
-      case (IFACE_TOUCHSCREEN_TYPE_A_ID): /* touchscreen type a */
-        nodeInfoCYD(); /* load node info */
-        break;
-
-      default:
-        nodeInfoARGB(); /* load node info */
-        break;
-  }
-  printHexDump(&node, sizeof(node));
 }
 
 /**
@@ -1905,6 +1836,59 @@ static void handleCanRX(twai_message_t &message) {
 } // end of void handleCanRX()
 
 
+static void handleProducerTick(uint32_t now)
+{
+    /** Check for producer event */
+    producer_event_t evt = producerTick(now); 
+
+    if (evt.error) {
+        Serial.println("[ERR] ProducerTick returned error, aborting producer processing");
+        return;
+    }
+    if (!evt.ready)
+        return;
+
+    if (evt.sub_idx >= node.subModCnt) {
+        Serial.printf("[ERR] ProducerTick: bad sub_idx %u (max %u)\n",
+                      evt.sub_idx, node.subModCnt - 1);
+        return;
+    }        
+
+    /** Lookup personality */
+    const subModule_t      &sub = node.subModule[evt.sub_idx];
+    const personalityDef_t *p   = getPersonality(sub.personalityId);
+    if (!p) {
+        Serial.printf("Producer: personality lookup failed for sub %u\n", evt.sub_idx);
+        return;
+    }
+
+    uint8_t dlc = p->dataMsgDlc;
+    if (dlc < CAN_DATAMSG_MIN_DLC) dlc = CAN_DATAMSG_MIN_DLC;  /**< enforce minimum DLC for producer messages 6-bytes */
+    if (dlc > CAN_MAX_DLC) dlc = CAN_MAX_DLC; /**< enforce maximum DLC */
+
+    uint8_t payload[CAN_MAX_DLC] = {0}; /**< zero-initialize */
+
+    /* Node ID (big-endian) */
+    payload[0] = (node.nodeID >> BYTE_SHIFT3) & BYTE_MASK;
+    payload[1] = (node.nodeID >> BYTE_SHIFT2) & BYTE_MASK;
+    payload[2] = (node.nodeID >> BYTE_SHIFT)  & BYTE_MASK;
+    payload[3] = (node.nodeID)                & BYTE_MASK;
+
+    /* Submodule index */
+    payload[4] = evt.sub_idx;
+
+    /* Scalar value (big-endian) */
+    if (dlc > 5) payload[5] = (evt.value >> BYTE_SHIFT2) & BYTE_MASK;
+    if (dlc > 6) payload[6] = (evt.value >> BYTE_SHIFT)  & BYTE_MASK;
+    if (dlc > 7) payload[7] = (evt.value)                & BYTE_MASK;
+
+    /* Send message */
+    send_message(p->dataMsgId, payload, dlc);
+
+    Serial.printf("ProducerTx: sub %u msg 0x%03X dlc %u val %u\n",
+                  evt.sub_idx, p->dataMsgId, dlc, evt.value);
+}
+
 
 /**
  * @brief Manages periodic transmissions in TaskTWAI
@@ -1930,15 +1914,15 @@ void managePeriodicMessages() {
         }
     }
 
-    // Producer broadcasts
-    
-    // TODO: implement sendProducerData(i) using subModule_t dataMsgId/dataMsgDLC
+  /** Call the producer tick */
+  handleProducerTick(currentMillis);
     
 }
 
 void TaskTWAI(void *pvParameters) {
   // give some time at boot for the cpu setup other parameters
   vTaskDelay(100 / portTICK_PERIOD_MS);
+  Serial.println("[RTOS] TWAI task started.");
 
   /* Initialize configuration structures using macro initializers */
   twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)TX_PIN, (gpio_num_t)RX_PIN, TWAI_MODE_NORMAL);
@@ -1947,26 +1931,26 @@ void TaskTWAI(void *pvParameters) {
 
   /* Install TWAI driver */
   if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
-    Serial.println("TWAI installed");
+    Serial.println("[TWAI] TWAI installed.");
   } else {
-    Serial.println("Failed to install TWAI");
+    Serial.println("[TWAI] Failed to install TWAI.");
     vTaskDelete(NULL); /* <--- Safety fix */
   }
 
   /* Start TWAI driver */
   if (twai_start() == ESP_OK) {
-    Serial.println("TWAI started");
+    Serial.println("[TWAI] TWAI started.");
   } else {
-    Serial.println("Failed to start TWAI");
+    Serial.println("[TWAI] Failed to start TWAI, reboot recommended.");
     vTaskDelete(NULL); /* <--- Safety fix */
   }
 
   /* Reconfigure alerts to detect frame receive, Bus-Off error and RX queue full states */
   uint32_t alerts_to_enable = TWAI_ALERT_RX_DATA | TWAI_ALERT_ERR_PASS | TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_TX_FAILED | TWAI_ALERT_BUS_ERROR;
   if (twai_reconfigure_alerts(alerts_to_enable, NULL) == ESP_OK) {
-    Serial.println("TWAI alerts reconfigured");
+    Serial.println("[TWAI] TWAI alerts reconfigured.");
   } else {
-    Serial.println("Failed to reconfigure alerts");
+    Serial.println("[TWAI] Failed to reconfigure alerts.");
     vTaskDelete(NULL); /* <--- Safety fix */
   }
 
@@ -2000,28 +1984,28 @@ void TaskTWAI(void *pvParameters) {
     /* Handle alerts */
     if (alerts_triggered & TWAI_ALERT_ERR_PASS) {
       if (millis() - lastErrPassLog > LOG_INTERVAL) {
-        Serial.println("Alert: TWAI controller has become error passive.");
+        Serial.println("[TWAI] Alert: Controller has become error passive.");
         lastErrPassLog = millis();
       }
     }
 
     if (alerts_triggered & TWAI_ALERT_BUS_ERROR) {
       if (millis() - lastBusErrLog > LOG_INTERVAL) {
-        Serial.printf("Alert: Bus Error. Count: %d\n", twaistatus.bus_error_count);
+        Serial.printf("[TWAI] Alert: Bus error. Count: %d\n", twaistatus.bus_error_count);
         lastBusErrLog = millis();
       }
     }
 
     if (alerts_triggered & TWAI_ALERT_TX_FAILED) {
       if (millis() - lastTxFailLog > LOG_INTERVAL) {
-        Serial.println("Alert: Transmission failed.");
+        Serial.println("[TWAI] Alert: Transmission failed.");
         lastTxFailLog = millis();
       }
     }
 
     if (alerts_triggered & TWAI_ALERT_RX_QUEUE_FULL) {
       if (millis() - lastRxFullLog > LOG_INTERVAL) {
-        Serial.println("Alert: RX queue full.");
+        Serial.println("[TWAI] Alert: RX queue full.");
         lastRxFullLog = millis();
       }
     }
@@ -2065,7 +2049,7 @@ void TaskTWAI(void *pvParameters) {
  */
 void TaskOutput(void *pvParameters)
 {
-    Serial.println("Output task started");
+    Serial.println("[RTOS] Output task started");
 
     for (;;)
     {
@@ -2155,7 +2139,7 @@ FLAG_VALID_CONFIG    = false;
   delay(2500); /* Provide time for the board's usb interface to change from flash to uart mode */
 
   /* Debug check for memory alignment */
-  Serial.printf("\nStruct Sizes - nodeInfo_t: %d, subModule_t: %d\n",
+  Serial.printf("\n[DEBUG] Struct Sizes - nodeInfo_t: %d, subModule_t: %d\n",
               sizeof(nodeInfo_t), sizeof(subModule_t));
 
   WiFi.onEvent(WiFiEvent);
@@ -2170,13 +2154,16 @@ FLAG_VALID_CONFIG    = false;
   readMacAddress(); /**< Read the ESP32 station MAC address and program myNodeID */
 
   /* Initialize memory */
-  Serial.println("Initializing memory...");
+  Serial.println("[INIT] Initializing memory...");
   memset(&node, 0, sizeof(nodeInfo_t));                            /* Clear nodeInfo struct */
   memset(&trackers, 0, sizeof(outputTracker_t) * MAX_SUB_MODULES); /* clear outputTracker struct */
   memset(&pwmPins, 0, sizeof(uint8_t) * LEDC_MAX_TIMERS);          /* clear the array of pwm pins */
 
   /* Node Setup Logic */
   handleReadCfgNVS();                                                 /* Read the NVS data from flash and init hardware */
+
+  /** Initialize producer library callbacks */
+  producerInit(&producerCB);
 
   #ifdef ESP32CYD
   initCYD();                                                       /* Initialize CYD interface */
@@ -2217,7 +2204,7 @@ FLAG_VALID_CONFIG    = false;
 
 void printWifi() {
   Serial.println("");
-  Serial.print("Connected to ");
+  Serial.print("[INIT] Connected to ");
   Serial.println(ssid);
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
