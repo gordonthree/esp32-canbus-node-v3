@@ -1840,14 +1840,45 @@ static void handleCanRX(twai_message_t &message) {
   }
 } // end of void handleCanRX()
 
+void updatePhysicalSubmodules()
+{
+    for (uint8_t i = 0; i < node.subModCnt; i++)
+    {
+        subModule_t sub = node.subModule[i];
+
+        // Skip virtual submodules and disabled submodules
+        if ((sub.submod_flags & SUBMOD_FLAG_VIRTUAL) ||
+           (sub.submod_flags & SUBMOD_FLAG_DISABLED))
+            continue;
+
+        switch (sub.personalityId)
+        {
+            /* Output personalities */
+            case PERS_GPIO_OUTPUT:
+            case PERS_ARGB_OUTPUT:
+            case PERS_RGBW_OUTPUT:
+            case PERS_ANA_OUTPUT:
+
+            /* Input personalities */
+            case PERS_GPIO_INPUT:
+            case PERS_ANALOG_INPUT:
+                // Handle physical submodule logic here
+                break;
+            default:
+                Serial.printf("Unknown physical submodule type 0x%02X at index %i\r\n", sub.personalityId, i);
+                break;
+        }
+    }
+}
 void updateVirtualSubmodules()
 {
     for (uint8_t i = 0; i < node.subModCnt; i++)
     {
         subModule_t sub = node.subModule[i];
 
-        // Skip non-virtual submodules
-        if (!(sub.submod_flags & SUBMOD_FLAG_VIRTUAL))
+        // Skip non-virtual submodules and disabled submodules
+        if ((sub.submod_flags & SUBMOD_FLAG_DISABLED) ||
+           !(sub.submod_flags & SUBMOD_FLAG_VIRTUAL))
             continue;
 
         uint32_t value = 0;
@@ -1965,6 +1996,9 @@ void managePeriodicMessages() {
         }
     }
 
+  /** Update physical submodules */
+  updatePhysicalSubmodules();
+  
   /** Update virtual submodules */
   updateVirtualSubmodules();
 
