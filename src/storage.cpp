@@ -1,4 +1,6 @@
 #include "storage.h"
+#include "personality_table.h"
+#include "can_producer.h"
 
 // Global mutex for NVS access (declared in main.cpp)
 extern SemaphoreHandle_t flashMutex;
@@ -163,12 +165,58 @@ void deleteProducerCfgFromNVS()
         return;
     }
 
-    /** Copy submodules from submod_setup array */
+    /** Set the node type from personality library */
+    node.nodeTypeDLC = g_personalityNode.nodeTypeDLC; 
+    node.nodeTypeMsg = g_personalityNode.nodeTypeMsg;
+    
+    /** Copy hardware submodules from submod_setup array */
     for (uint8_t i = 0; i < g_submodules_count; i++) {
         node.subModule[i] = submod_setup[i];
     }
 
+    /** Add virtual submodules from personality table */
+    for (uint8_t i = 0; i < g_personalityCount; i++) {
+
+        const personalityDef_t *p = &g_personalityTable[i];
+
+        if (!(p->flags & BUILDER_FLAG_IS_VIRTUAL))
+            continue; /* skip non-virtual personalities */
+
+        if (node.subModCnt >= MAX_SUB_MODULES)
+            break;    /* no more space for submodules */
+
+        Serial.printf("[INIT] Adding virtual sub-module: index %d, intro msg 0x%02X\n", i, p->introMsgId);
+
+        /** Create a virtual sub-module and zero it out */
+        subModule_t *sub = &node.subModule[node.subModCnt++];
+        memset(sub, 0, sizeof(*sub));
+
+        
+        sub->personalityId    = p->personalityId; /**< assign personality */
+        sub->personalityIndex = i;                /**< assign index */ 
+
+        /**  Virtual submodules usually have no user config */
+        memset(sub->config.rawConfig, 0, sizeof(sub->config.rawConfig));
+
+        // Use personality table for CAN reporting
+        sub->introMsgId          = p->introMsgId;
+        sub->introMsgDLC         = p->introMsgDlc;
+
+        // Mark as virtual + read-only
+        sub->submod_flags       |= SUBMOD_FLAG_VIRTUAL;
+        sub->producer_flags     |= PRODUCER_FLAG_ENABLED;
+
+        // Producer defaults
+        sub->runTime.kind        = PRODUCER_KIND_PERIODIC;
+        sub->runTime.valueSource = VALUE_SRC_NUMERIC;        /* numeric output */
+        sub->runTime.period_ms   = p->period_ms;             /* 10 seconds */
+    }
+
+
     Serial.printf("[INIT] Defaults loaded, submod count: %d\n", g_submodules_count);
+
+    printNodeInfo(&node);
+
     /** Print hex dump of nodeInfo_t */
     // printHexDump(&node, sizeof(node));
 }
@@ -328,7 +376,7 @@ ConfigStatus saveConfigNvs(const nodeInfo_t& node)
     }
 
     /** Calculate the CRC of the current RAM buffer before saving */
-    uint16_t currentCrc = getConfigurationCRC(node);
+    const uint16_t currentCrc = getConfigurationCRC(node);
 
     /** Write the configuration blob and the CRC key separately */
     prefs.putBytes(NODE_DATA_KEY, &node, sizeof(nodeInfo_t));
@@ -385,9 +433,50 @@ ConfigStatus loadConfigNvs(nodeInfo_t& node)
 
     // Validate
     if (getConfigurationCRC(node) != storedCrc) {
+        Serial.printf("[INIT] CRC mismatch: %d != %d\n", getConfigurationCRC(node), storedCrc);    
+
         return CFG_ERR_CRC;
     }
 
     return CFG_OK;
 }
 
+/**
+ * @brief Saves a subModule_t to NVS using the Preferences library.
+ * @param subModule Pointer to the subModule_t structure to save.
+ * @param index Index of the subModule_t in the array.
+ * @return CFG_OK on success, or CFG_ERR_MUTEX if flash is busy.
+ */
+ConfigStatus saveSubModuleNvs(const subModule_t& subModule, uint8_t index)
+{
+    char data_key[16];
+    char crc_key[16];
+
+    /** Calculate the CRC of the current RAM buffer before saving */
+    const uint16_t currentCrc = getSubModuleCRC(subModule); 
+
+    /** Attempt to acquire the flash mutex */
+    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return CFG_ERR_MUTEX;
+    }
+
+    Preferences prefs;
+    if (!prefs.begin(NODE_NS, false)) {
+        xSemaphoreGive(flashMutex);
+        return CFG_ERR_NVS_OPEN; /* Return error if NVS open fails */
+    }
+
+    /* Generate unique keys */
+    snprintf(data_key, sizeof(data_key), "subModule_%d", index);
+    snprintf(crc_key, sizeof(crc_key), "sub_%d_crc", index);
+
+    /** Write the configuration blob and the CRC key separately */
+    prefs.putBytes(data_key, &subModule, sizeof(subModule_t));
+    prefs.putUShort(crc_key, currentCrc);
+
+    /** Close NVS and release the mutex */
+    prefs.end();
+    xSemaphoreGive(flashMutex);
+
+    return CFG_OK;
+}
