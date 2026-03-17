@@ -64,25 +64,34 @@ void printNodeInfo(const nodeInfo_t* node)
   Serial.println("\n--------- nodeInfo_t ---------");
   Serial.printf("NodeInfo:\n");
   Serial.printf("  nodeID: 0x%08X\n", node->nodeID);
-  Serial.printf("  nodeTypeMsg: 0x%04X\n", node->nodeTypeMsg);
+  Serial.printf("  nodeTypeMsg: 0x%03X\n", node->nodeTypeMsg);
   Serial.printf("  nodeTypeDLC: %d\n", node->nodeTypeDLC);
   Serial.printf("  subModCnt: %d\n", node->subModCnt);
 
   Serial.printf("  subModule array:\n");
   for (uint8_t i = 0; i < node->subModCnt; i++) {
-    Serial.printf("    subModule[%d]:\n", i);
-    Serial.printf("      personalityId: %d\n", node->subModule[i].personalityId);
-    Serial.printf("      introMsgId: 0x%04X\n", node->subModule[i].introMsgId);
-    Serial.printf("      introMsgDLC: %d\n", node->subModule[i].introMsgDLC);
-    Serial.printf("      runTime:\n");
-    Serial.printf("        last_change_ms: %d\n", node->subModule[i].runTime.last_change_ms);
-    Serial.printf("        adc_value: %d\n", node->subModule[i].runTime.adc_value);
-    Serial.printf("        state: %d\n", node->subModule[i].runTime.state);
-    Serial.printf("        last_hardware_output: %d\n", node->subModule[i].runTime.last_hardware_output);
-    Serial.printf("        kind: %d\n", node->subModule[i].runTime.kind);
-    Serial.printf("        valueSource: %d\n", node->subModule[i].runTime.valueSource);
-    Serial.printf("        period_ms: %d\n", node->subModule[i].runTime.period_ms);
-    Serial.printf("        last_published_value: %d\n", node->subModule[i].runTime.last_published_value);
+    const personalityDef_t* p = getPersonality(node->subModule[i].personalityIndex);
+
+    Serial.printf("     subModule[%d]:\n", i);
+    Serial.printf("       personalityId: %d\n", node->subModule[i].personalityId);
+    Serial.printf("       personalityIndex: %d\n", node->subModule[i].personalityIndex);
+    Serial.printf("       introMsgId: 0x%03X\n", node->subModule[i].introMsgId);
+    Serial.printf("       introMsgDLC: %d\n", node->subModule[i].introMsgDLC);
+    Serial.printf("       dataMsgId: 0x%03X\n", p->dataMsgId);
+    Serial.printf("       dataMsgDlc: %d\n", p->dataMsgDlc);
+    Serial.printf("       config bytes 0x%02X 0x%02X 0x%02X\n", node->subModule[i].config.rawConfig[0], node->subModule[i].config.rawConfig[1], node->subModule[i].config.rawConfig[2]);
+    Serial.printf("       submod_flags: 0x%02X\n", node->subModule[i].submod_flags);
+    Serial.printf("       producer_flags: 0x%02X\n", node->subModule[i].producer_flags);
+    Serial.printf("       router_flags: 0x%02X\n", node->subModule[i].router_flags);
+    Serial.printf("       runTime:\n");
+    Serial.printf("         last_change_ms: %d\n", node->subModule[i].runTime.last_change_ms);
+    Serial.printf("         adc_value: %d\n", node->subModule[i].runTime.adc_value);
+    Serial.printf("         state: %d\n", node->subModule[i].runTime.state);
+    Serial.printf("         last_hardware_output: %d\n", node->subModule[i].runTime.last_hardware_output);
+    Serial.printf("         kind: %d\n", node->subModule[i].runTime.kind);
+    Serial.printf("         valueSource: %d\n", node->subModule[i].runTime.valueSource);
+    Serial.printf("         period_ms: %d\n", node->subModule[i].runTime.period_ms);
+    Serial.printf("         last_published_value: %d\n", node->subModule[i].runTime.last_published_value);
     // You can continue this pattern for each field in the subModule_t structure
   }
   Serial.println("--------- nodeInfo_t ---------\n");
