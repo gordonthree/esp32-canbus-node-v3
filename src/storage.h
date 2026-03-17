@@ -82,6 +82,11 @@ void saveProducerCfgToNVS(void);
 void loadNodeDefaults();
 void handleReadCfgNVS();
 void handleEraseCfgNVS();
+/** Erase the node configuration and CRC from NVS */
 ConfigStatus eraseConfigNvs();
+/** Save the node configuration and CRC to NVS */
 ConfigStatus saveConfigNvs(const nodeInfo_t& node);
+/** Load the node configuration and CRC from NVS */
 ConfigStatus loadConfigNvs(nodeInfo_t& node);
+/** Save a sub-module and CRC to NVS */
+ConfigStatus saveSubModuleNvs(const subModule_t& subModule, uint8_t index);
