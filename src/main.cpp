@@ -414,9 +414,14 @@ uint16_t crc16_ccitt(const uint8_t* data, size_t length) {
 /**
  * @brief Calculates a 16-bit CRC for the entire node configuration.
  */
-uint16_t getConfigurationCRC(const nodeInfo_t& node) {
+const uint16_t getConfigurationCRC(const nodeInfo_t& node) {
   /* Hash the entire struct without worrying about internal fields */
   return crc16_ccitt((const uint8_t*)&node, sizeof(nodeInfo_t));
+}
+
+const uint16_t getSubModuleCRC(const subModule_t& sub) {
+  /* Hash the submodule only */
+  return crc16_ccitt((const uint8_t*)&sub, sizeof(subModule_t));
 }
 
 void TaskOTA(void *pvParameters) {
@@ -1835,6 +1840,51 @@ static void handleCanRX(twai_message_t &message) {
   }
 } // end of void handleCanRX()
 
+void updateVirtualSubmodules()
+{
+    for (uint8_t i = 0; i < node.subModCnt; i++)
+    {
+        subModule_t sub = node.subModule[i];
+
+        // Skip non-virtual submodules
+        if (!(sub.submod_flags & SUBMOD_FLAG_VIRTUAL))
+            continue;
+
+        uint32_t value = 0;
+
+        switch (sub.personalityId)
+        {
+            case VIRT_FREE_HEAP:
+                value = (uint32_t)xPortGetFreeHeapSize();
+                break;
+
+            case VIRT_WIFI_RSSI:
+                value = (uint32_t)WiFi.RSSI();
+                break;
+
+            case VIRT_RTOS_HIGHWATERMARK:
+                value = (uint32_t)uxTaskGetStackHighWaterMark(NULL);
+                break;
+
+            case VIRT_INTERNAL_TEMPERATURE:
+                value = (uint32_t)temperatureRead();
+                break;
+
+            case VIRT_VREF_VOLTAGE:
+                // value = (uint32_t)readInternalVref();
+                value = 1024; // TODO: implement actual function
+                break;
+
+            default:
+                // Unknown virtual personality — ignore safely
+                continue;
+        }
+
+        sub.runTime.adc_value      = value;
+        sub.runTime.last_change_ms = millis();  // optional
+    }
+}
+
 
 static void handleProducerTick(uint32_t now)
 {
@@ -1856,7 +1906,8 @@ static void handleProducerTick(uint32_t now)
 
     /** Lookup personality */
     const subModule_t      &sub = node.subModule[evt.sub_idx];
-    const personalityDef_t *p   = getPersonality(sub.personalityId);
+    const personalityDef_t *p = &g_personalityTable[sub.personalityIndex];
+    // const personalityDef_t *p   = getPersonality(sub.personalityId);
     if (!p) {
         Serial.printf("Producer: personality lookup failed for sub %u\n", evt.sub_idx);
         return;
@@ -1913,6 +1964,9 @@ void managePeriodicMessages() {
             introMsgPtr = 0;
         }
     }
+
+  /** Update virtual submodules */
+  updateVirtualSubmodules();
 
   /** Call the producer tick */
   handleProducerTick(currentMillis);
@@ -2159,14 +2213,18 @@ FLAG_VALID_CONFIG    = false;
   memset(&trackers, 0, sizeof(outputTracker_t) * MAX_SUB_MODULES); /* clear outputTracker struct */
   memset(&pwmPins, 0, sizeof(uint8_t) * LEDC_MAX_TIMERS);          /* clear the array of pwm pins */
 
-  /* Node Setup Logic */
-  handleReadCfgNVS();                                                 /* Read the NVS data from flash and init hardware */
+  /* Load nodeID into the nodeInfo struct */
+  node.nodeID = unpackBytestoUint32((const uint8_t*)&myNodeID);
+
+  /* Read the NVS data from flash and init hardware */
+  handleReadCfgNVS();                                                 
+
 
   /** Initialize producer library callbacks */
   producerInit(&producerCB);
 
   /** Pretty print nodeInfo */
-  printNodeInfo(&node);
+  // printNodeInfo(&node);
   
   #ifdef ESP32CYD
   initCYD();                                                       /* Initialize CYD interface */
@@ -2177,7 +2235,7 @@ FLAG_VALID_CONFIG    = false;
   /* Start the CAN task */
   xTaskCreate(
     TaskTWAI,              /* Task function */
-    "Task TWAI",           /*  name of task */
+    "Task TWAI",           /* name of task */
     TASK_TWAI_STACK_SIZE,  /* Stack size of task */
     NULL,                  /* parameter of the task */
     tskNormalPriority,     /* priority of the task */
@@ -2213,18 +2271,29 @@ void printWifi() {
   Serial.println(WiFi.localIP());
 }
 
-
-
 void loop() {
+  /** Check for producer save request */
   if (g_routeSaveRequested) {
     g_routeSaveRequested = false;
     saveRoutesToNVS();
   }
 
+  /** Check for producer load request */
   if (g_routeLoadRequested) {
     g_routeLoadRequested = false;
     loadRoutesFromNVS();
   }
 
+  /** Check for submodule save request */
+  for (int i=0; i < MAX_SUB_MODULES; i++) {
+    if (node.subModule[i].submod_flags & SUBMOD_FLAG_DIRTY) {
+      /** Save the submodule */
+      const ConfigStatus sts = saveSubModuleNvs(node.subModule[i], i);
+      if (sts == CFG_OK) {
+        /** Clear the dirty flag after successful save */
+        node.subModule[i].submod_flags &= ~SUBMOD_FLAG_DIRTY;
+      }
+    }
+  }
   // NOP;
 }
