@@ -2,6 +2,7 @@
 
 #include "canbus_project.h"   // for node_t, subModule_t, etc.
 #include "submodule_types.h"   /**< Sub-module type definitions */
+#include "personality_table.h" /**< Node and sub-module personality table */
 
 /* ============================================================================
  *  GLOBAL VARIABLES
@@ -83,4 +84,5 @@ extern outputTracker_t trackers[MAX_SUB_MODULES]; /**< Global output trackers */
 
 void initHardware();
 void loadDefaults(uint16_t nodeType);
-uint16_t getConfigurationCRC(const nodeInfo_t& node);
+const uint16_t getConfigurationCRC(const nodeInfo_t& node);
+const uint16_t getSubModuleCRC(const subModule_t& submod);
