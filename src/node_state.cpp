@@ -85,11 +85,8 @@ void printNodeInfo(const nodeInfo_t* node)
     Serial.printf("       router_flags: 0x%02X\n", node->subModule[i].router_flags);
     Serial.printf("       runTime:\n");
     Serial.printf("         last_change_ms: %d\n", node->subModule[i].runTime.last_change_ms);
-    Serial.printf("         adc_value: %d\n", node->subModule[i].runTime.adc_value);
-    Serial.printf("         state: %d\n", node->subModule[i].runTime.state);
-    Serial.printf("         last_hardware_output: %d\n", node->subModule[i].runTime.last_hardware_output);
+    Serial.printf("         valueU32: %d\n", node->subModule[i].runTime.valueU32);
     Serial.printf("         kind: %d\n", node->subModule[i].runTime.kind);
-    Serial.printf("         valueSource: %d\n", node->subModule[i].runTime.valueSource);
     Serial.printf("         period_ms: %d\n", node->subModule[i].runTime.period_ms);
     Serial.printf("         last_published_value: %d\n", node->subModule[i].runTime.last_published_value);
     // You can continue this pattern for each field in the subModule_t structure
