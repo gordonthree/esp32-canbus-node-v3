@@ -1,6 +1,7 @@
-#include "storage.h"
-#include "personality_table.h"
-#include "can_producer.h"
+#include "storage.h"           /* NVS storage routines */
+#include "personality_table.h" /* Personality definitions */
+#include "can_producer.h"      /* CAN producer definitions */ 
+// #include "isr_gpio.h"          /* GPIO interrupt routines */
 
 // Global mutex for NVS access (declared in main.cpp)
 extern SemaphoreHandle_t flashMutex;
@@ -208,7 +209,6 @@ void deleteProducerCfgFromNVS()
 
         // Producer defaults
         sub->runTime.kind        = PRODUCER_KIND_PERIODIC;
-        sub->runTime.valueSource = VALUE_SRC_NUMERIC;        /* numeric output */
         sub->runTime.period_ms   = p->period_ms;             /* 10 seconds */
     }
 
