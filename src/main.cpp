@@ -47,6 +47,7 @@
 #include "node_state.h"        /**< Node and sub-module state table */
 #include "storage.h"           /**< NVS storage routines */
 #include "submodule_types.h"   /**< Sub-module type definitions */
+#include "isr_gpio.h"          /**< GPIO interrupt routines */
 
 /* my byte routines */
 #include "byte_conversion.h"
@@ -192,12 +193,14 @@ unsigned long ota_progress_millis = 0;
 volatile bool wifi_connected = false;
 volatile uint8_t myNodeID[NODE_ID_SIZE]; /**< node ID comprised of four bytes from MAC address */
 
+/** Interrupt service routine for timer 0 */
 void IRAM_ATTR Timer0_ISR()
 {
   isrFlag = true;
 }
 
-
+/** Inline function to validate sub-module index */
+inline bool isValudSubModuleIndex(uint8_t index) { return (index < MAX_SUB_MODULES); }
 
 /**
  * @brief Handles specialized FastLED initialization for ARGB sub-modules.
@@ -357,7 +360,8 @@ void initHardware() {
         break;
 
       case INPUT_DIGITAL_GPIO_ID:
-        initGPIOInput(i, sub);
+        initGPIOInput(i, sub);                      /* Configure the hardware */
+        registerDigitalInputPin(p->gpioPin, i);     /* Register the pin with the interrupt handler */
         break;
 
       case OUT_GPIO_DIGITAL_ID:
@@ -1051,90 +1055,11 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
   }
 }
 
-/**
- * @brief Helper to configure a standard digital output submodule
- * @param idx The submodule index (0-7)
- * @param pin The GPIO pin number
- * @param mode Initial output mode or state
- */
-void setupAnalogStripDigitalOut(uint8_t idx, uint8_t pin, uint8_t mode) {
-  if (idx >= MAX_SUB_MODULES) return; /* Safety check against array bounds */
 
-  subModule_t& sub           = node.subModule[idx];
-  sub.introMsgId             = OUT_GPIO_DIGITAL_ID;
-  sub.introMsgDLC            = OUT_GPIO_DIGITAL_DLC;
-  sub.submod_flags          |= SUBMOD_FLAG_SAVE_STATE;
-  sub.config.gpioOutput.mode = mode;
-  // sub.dataMsgId   = SET_ANALOG_STRIP_COLOR_ID; // no longer user configured
-  // sub.dataMsgDLC  = SET_ANALOG_STRIP_COLOR_DLC; // no longer user configured
-  // sub.config.digitalOutput.outputPin  = pin; // no longer user configured
-}
 
-/**
- * @brief Helper to configure a standard LCD Touchscreen submodule
- * @param idx The submodule index (0-7)
- */
-void setupLcdTouchscreen(uint8_t idx) {
-  if (idx >= MAX_SUB_MODULES) return;
 
-  subModule_t& sub = node.subModule[idx];
-  sub.introMsgId   = DISP_TOUCHSCREEN_LCD_ID;
-  sub.introMsgDLC  = DISP_TOUCHSCREEN_LCD_DLC;
-  sub.submod_flags|= SUBMOD_FLAG_SAVE_STATE;
-  // sub.dataMsgId   = DATA_TOUCHSCREEN_EVENT_ID;
-  // sub.dataMsgDLC  = DATA_TOUCHSCREEN_EVENT_DLC;
-}
 
-/**
- * @brief Helper to configure an Analog Backlight submodule
- * @param idx The submodule index (0-7)
- * @param pin The GPIO pin for PWM/Control
- */
-void setupAnalogBacklight(uint8_t idx, uint8_t pin) {
-  if (idx >= MAX_SUB_MODULES) return;
 
-  subModule_t& sub = node.subModule[idx];
-  sub.introMsgId    = DISP_ANALOG_BACKLIGHT_ID;
-  sub.introMsgDLC   = DISP_ANALOG_BACKLIGHT_DLC;
-  sub.submod_flags |= SUBMOD_FLAG_SAVE_STATE;
-  sub.config.gpioOutput.mode = OUT_MODE_TOGGLE;
-  // sub.dataMsgId   = DATA_DISPLAY_MODE_ID;
-  // sub.dataMsgDLC  = DATA_DISPLAY_MODE_DLC;
-  // sub.config.digitalOutput.outputPin  = pin;
-}
-
-/**
- * @brief Helper to configure an ARGB LED Strip submodule
- * @param idx The submodule index (0-7)
- * @param pin The GPIO pin for the data signal
- * @param count Number of LEDs in the strip
- */
-void setupArgbStrip(uint8_t idx, uint8_t pin, uint16_t count) {
-  if (idx >= MAX_SUB_MODULES) return;
-
-  subModule_t& sub = node.subModule[idx];
-  sub.introMsgId    = DISP_ARGB_LED_STRIP_ID;
-  sub.introMsgDLC   = DISP_ARGB_LED_STRIP_DLC;
-  sub.submod_flags |= SUBMOD_FLAG_SAVE_STATE;
-  // sub.config.argbLed.outputPin = pin;
-  // sub.config.argbLed.ledCount  = count;
-}
-
-/**
- * @brief Helper to configure a Digital Input submodule
- * @param idx The submodule index (0-7)
- * @param pin The GPIO pin for the input
- * @param res Internal resistor mode (PULLUP, PULLDOWN, etc.)
- */
-void setupDigitalInput(uint8_t idx, uint8_t pin, uint8_t res) {
-  if (idx >= MAX_SUB_MODULES) return;
-
-  subModule_t& sub = node.subModule[idx];
-  sub.introMsgId    = INPUT_DIGITAL_GPIO_ID;
-  sub.introMsgDLC   = INPUT_DIGITAL_GPIO_DLC;
-  sub.submod_flags |= SUBMOD_FLAG_SAVE_STATE;
-
-}
 
 /**
  * @brief Get the current epoch time from the system clock.
@@ -1589,60 +1514,178 @@ static void handleCanRX(twai_message_t &message) {
       msgToConsume = message;  // use original
   }
 
+  /** extract submodule index */
+  uint8_t modIdx = msgToConsume.data[4];                                                     /* byte 4 holds the sub module index */
+
+
   switch (msgToConsume.identifier) 
   {
     case ROUTE_TAKE_NO_ACTION:          // no action 0xFFFF
       break;
+
+    case (CFG_PRODUCER_CFG_ID): /**< Configure a single producer submodule */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      handleProducerCfg(&msgToConsume);
+      break;
+
+    case (CFG_PRODUCER_WRITE_NVS_ID): /**< Commit producer config to NVS. */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      requestProducerSave();
+      break;
+
+    case (CFG_PRODUCER_READ_NVS_ID): /**< Request producer config for all submodules */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      requestProducerLoad();
+      break;
+
+    case (REQ_PRODUCER_CFG_ID): /**< Request producer config  for idx */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      break;
+
+    case (RESP_PRODUCER_CFG_ID): /**< Node responds with requested data using this message id */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      break;
+
+    case (CFG_PRODUCER_PURGE_ID): /**< Purge the producer list */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+        producerPurgeSingle(modIdx);
+      }
+      break;
+
+    case (CFG_PRODUCER_DEFAULTS_ID): /**< Reset the producer at idx to defaults */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      producerDefaultSingle(modIdx);
+      break;
+
+    case (CFG_PRODUCER_APPLY_ID): /**< NO-OP Producer config is applied instantly */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      break;
+
+
+    case (CFG_PRODUCER_ENABLE_ID): /**< Enable the producer at idx */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      producerEnable(modIdx);
+      break;
+
+    case (CFG_PRODUCER_DISABLE_ID): /**< Disable the producer at idx */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      producerDisable(modIdx);
+      break;
+
+    case (CFG_PRODUCER_TOGGLE_ID): /**< Toggle operation of producer at idx */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      producerToggle(modIdx);
+      break;
+
+    case (REQ_PRODUCER_LIST_ID): /**< Ask the node to dump the entire producer cfg list */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      break;
+
+    case (PRODUCER_LIST_BEGIN_ID): /**< Node will announce the count of defined producers */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      break;
+
+    case (PRODUCER_LIST_DATA_ID): /**< Producer cfg data for index */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      break;
+
+    case (PRODUCER_LIST_END_ID): /**< Node will announce the end of the defined producers list */
+      if (isValidSubModuleIndex(modIdx) == false) {
+        Serial.printf("Invalid sub module index %d\n", modIdx);
+        break;
+      }
+      break;
+
     case SW_SET_PWM_DUTY_ID:      // set output switch pwm duty
-      setPWMDuty(message);
+      setPWMDuty(msgToConsume);
       break;
     case SW_SET_PWM_FREQ_ID:      // set output switch pwm frequency
-      setPWMFreq(message);
+      setPWMFreq(msgToConsume);
       break;
     case SW_SET_MODE_ID:           // setup output switch modes
-      setSwitchMode(message);
+      setSwitchMode(msgToConsume);
       break;
     case SW_SET_OFF_ID:            // set output switch off
-      setSwitchState(message, OUT_STATE_OFF);
+      setSwitchState(msgToConsume, OUT_STATE_OFF);
       break;
     case SW_SET_ON_ID:             // set output switch on
-      setSwitchState(message, OUT_STATE_ON);
+      setSwitchState(msgToConsume, OUT_STATE_ON);
       break;
     case SW_MOM_PRESS_ID:          // set output switch momentary press
-      setSwitchState(message, OUT_STATE_MOMENTARY);
+      setSwitchState(msgToConsume, OUT_STATE_MOMENTARY);
       break;
     case SW_SET_BLINK_DELAY_ID:          // set output switch blink delay
-      setSwBlinkDelay(message);
+      setSwBlinkDelay(msgToConsume);
       break;
     case SW_SET_STROBE_PAT_ID:          // set output switch strobe pattern
-      setSwStrobePat(message);
+      setSwStrobePat(msgToConsume);
       break;
     case SET_DISPLAY_OFF_ID:          // set display off
-      setDisplayMode(message, DISPLAY_MODE_OFF);
+      setDisplayMode(msgToConsume, DISPLAY_MODE_OFF);
       break;
     case SET_DISPLAY_ON_ID:          // set display on
-      setDisplayMode(message, DISPLAY_MODE_ON);
+      setDisplayMode(msgToConsume, DISPLAY_MODE_ON);
       break;
     case SET_DISPLAY_FLASH_ID:          // flash display backlight
-      setDisplayMode(message, DISPLAY_MODE_FLASH);
+      setDisplayMode(msgToConsume, DISPLAY_MODE_FLASH);
       break;
     case SET_ARGB_STRIP_COLOR_ID:          /* set ARGB color */
-      handleColorCommand(message); /* byte 4 is the sub module index, byte 5 is the color index */
+      handleColorCommand(msgToConsume); /* byte 4 is the sub module index, byte 5 is the color index */
       break;
     case CFG_SUB_DATA_MSG_ID:           /* setup sub module data message */
       /* no longer user configured */
       break;
     case CFG_SUB_INTRO_MSG_ID:          /* setup sub module intro message */
       {
-        uint8_t modIdx = message.data[4];                                                     /* byte 4 holds the sub module index */
-        if (modIdx >= MAX_SUB_MODULES) {
+        if (isValidSubModuleIndex(modIdx) == false) {
           Serial.printf("Invalid sub module index %d\n", modIdx);
-          return;
+          break;
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.introMsgId    = ((message.data[5] << 8) | (message.data[6] & 0xFF));    /* bytes 5:6 hold the intro message ID */
-        sub.introMsgDLC   = message.data[7];                               /* byte 7 holds the intro message DLC */
+        sub.introMsgId    = ((msgToConsume.data[5] << 8) | (msgToConsume.data[6] & 0xFF));    /* bytes 5:6 hold the intro message ID */
+        sub.introMsgDLC   = msgToConsume.data[7];                               /* byte 7 holds the intro message DLC */
         Serial.printf("Update Sub %d INTRO MSG: 0x%03X DLC: %d\n", modIdx, sub.introMsgId, sub.introMsgDLC);
       }
 
@@ -1650,45 +1693,42 @@ static void handleCanRX(twai_message_t &message) {
 
     case CFG_ARGB_STRIP_ID:                                                     /* setup ARGB channel */
       {
-        uint8_t modIdx = message.data[4];                                         /* byte 4 holds the sub module index */
-        if (modIdx >= MAX_SUB_MODULES) {
+        if (isValidSubModuleIndex(modIdx) == false) {
           Serial.printf("Invalid sub module index %d\n", modIdx);
-          return;
+          break;
         }
         subModule_t& sub = node.subModule[modIdx];
-        sub.config.argb.reserved   = message.data[5];       /* reserved, not used */
-        sub.config.argb.ledCount   = message.data[6];       /* byte 6 holds the number of LEDs (max 255)*/
-        sub.config.argb.colorOrder = message.data[7];       /* byte 7 holds the color order */
+        sub.config.argb.reserved   = msgToConsume.data[5];       /* reserved, not used */
+        sub.config.argb.ledCount   = msgToConsume.data[6];       /* byte 6 holds the number of LEDs (max 255)*/
+        sub.config.argb.colorOrder = msgToConsume.data[7];       /* byte 7 holds the color order */
       }
       break;
     case CFG_DIGITAL_INPUT_ID: /**< Setup digital input channel */
       {
-        uint8_t modIdx = message.data[4];
-        if (modIdx >= MAX_SUB_MODULES) {
+        if (isValidSubModuleIndex(modIdx) == false) {
           Serial.printf("Invalid sub module index %d\n", modIdx);
-          return;
+          break;
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.gpioInput.pull     = message.data[5];  /* Input resistor configuration */
-        sub.config.gpioInput.invert   = message.data[6];  /* logical inversion flag */
-        sub.config.gpioInput.reserved = message.data[7]; /* resesrved, not used */
+        sub.config.gpioInput.pull     = msgToConsume.data[5];  /* Input resistor configuration */
+        sub.config.gpioInput.invert   = msgToConsume.data[6];  /* logical inversion flag */
+        sub.config.gpioInput.reserved = msgToConsume.data[7]; /* resesrved, not used */
 
       }
       break;
 
     case CFG_ANALOG_INPUT_ID: /**< Setup analog ADC input channel */
       {
-        uint8_t modIdx = message.data[4];
-        if (modIdx >= MAX_SUB_MODULES) {
+        if (isValidSubModuleIndex(modIdx) == false) {
           Serial.printf("Invalid sub module index %d\n", modIdx);
-          return;
+          break;
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.analogInput.overSampleFlag = message.data[5];
-        sub.config.analogInput.reserved1      = message.data[6]; /* store reserved byte if sent */
-        sub.config.analogInput.reserved2      = message.data[7]; /* store reserved byte if sent */
+        sub.config.analogInput.overSampleFlag = msgToConsume.data[5];
+        sub.config.analogInput.reserved1      = msgToConsume.data[6]; /* store reserved byte if sent */
+        sub.config.analogInput.reserved2      = msgToConsume.data[7]; /* store reserved byte if sent */
       }
       break;
 
@@ -1696,48 +1736,45 @@ static void handleCanRX(twai_message_t &message) {
     case CFG_PWM_OUTPUT_ID: /**< Setup PWM output channel */
     case CFG_DIGITAL_OUTPUT_ID: /**< Setup digital output channel (relays/mosfets) */
       {
-        uint8_t modIdx = message.data[4];
-        if (modIdx >= MAX_SUB_MODULES) {
+        if (isValidSubModuleIndex(modIdx) == false) {
           Serial.printf("Invalid sub module index %d\n", modIdx);
-          return;
+          break;
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.gpioOutput.mode   = message.data[5]; /* output mode, see defines */
-        sub.config.gpioOutput.param1 = message.data[6]; /* paramater byte 0 (varies) */
-        sub.config.gpioOutput.param2 = message.data[7]; /* parameter byte 1 */
+        sub.config.gpioOutput.mode   = msgToConsume.data[5]; /* output mode, see defines */
+        sub.config.gpioOutput.param1 = msgToConsume.data[6]; /* paramater byte 0 (varies) */
+        sub.config.gpioOutput.param2 = msgToConsume.data[7]; /* parameter byte 1 */
       }
       break;
 
     case CFG_ANALOG_STRIP_ID: /**< Setup analog RGB/RGBW strip */
       {
-        uint8_t modIdx = message.data[4];
-        if (modIdx >= MAX_SUB_MODULES) {
+        if (isValidSubModuleIndex(modIdx) == false) {
           Serial.printf("Invalid sub module index %d\n", modIdx);
-          return;
+          break;
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.analogStrip.configIndex = message.data[5];
-        sub.config.analogStrip.reserved1   = message.data[6];
-        sub.config.analogStrip.reserved2   = message.data[7];
+        sub.config.analogStrip.configIndex = msgToConsume.data[5];
+        sub.config.analogStrip.reserved1   = msgToConsume.data[6];
+        sub.config.analogStrip.reserved2   = msgToConsume.data[7];
       }
       break;
 
     case CFG_ANALOG_OUTPUT_ID: /**< Setup analog DAC output channel */
       {
-        uint8_t modIdx = message.data[4];
-        if (modIdx >= MAX_SUB_MODULES) {
+        if (isValidSubModuleIndex(modIdx) == false) {
           Serial.printf("Invalid sub module index %d\n", modIdx);
-          return;
+          break;
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.analogOutput.outputMode  = message.data[5];
-        sub.config.analogOutput.param1      = message.data[6];
-        sub.config.analogOutput.param2      = message.data[7];
+        sub.config.analogOutput.outputMode  = msgToConsume.data[5];
+        sub.config.analogOutput.param1      = msgToConsume.data[6];
+        sub.config.analogOutput.param2      = msgToConsume.data[7];
 
-        /** message.data[7] is reserved/padding */
+        /** msgToConsume.data[7] is reserved/padding */
       }
       break;
     case CFG_ERASE_NVS_ID: /**< 0x41B: Master requesting NVS erase */
@@ -1756,7 +1793,7 @@ static void handleCanRX(twai_message_t &message) {
     case CFG_WRITE_NVS_ID: /**< 0x41D: Master requesting NVS commit */
       {
 
-        uint16_t masterCrc = (message.data[4] << 8) | message.data[5];
+        uint16_t masterCrc = (msgToConsume.data[4] << 8) | msgToConsume.data[5];
         uint16_t localCrc  = getConfigurationCRC(node);
 
         uint8_t responseData[6];
@@ -1815,10 +1852,10 @@ static void handleCanRX(twai_message_t &message) {
       {
       // Use explicit casting to prevent shift overflow
       uint32_t epochTime;
-      epochTime = ((uint32_t)message.data[4] << 24) |
-                  ((uint32_t)message.data[5] << 16) |
-                  ((uint32_t)message.data[6] << 8)  |
-                   (uint32_t)message.data[7];
+      epochTime = ((uint32_t)msgToConsume.data[4] << 24) |
+                  ((uint32_t)msgToConsume.data[5] << 16) |
+                  ((uint32_t)msgToConsume.data[6] << 8)  |
+                   (uint32_t)msgToConsume.data[7];
       setEpochTime((uint32_t)epochTime);
       Serial.println("Received epoch from master; updating clock");
       }
@@ -1830,90 +1867,99 @@ static void handleCanRX(twai_message_t &message) {
       case COLORPICKER_SEND_LIST_ID: /* 0x430: colorpicker send list */
       case COLORPICKER_WRITE_NVS_ID: /* 0x42F: colorpicker write nvs */
       case COLORPICKER_READ_NVS_ID: /* 0x42E: colorpicker read nvs */
-        manageColorPickerList(message);
+        manageColorPickerList(msgToConsume);
       break;
 
     default:
-      Serial.printf("Unknown message received 0x%x\n", message.identifier);
+      Serial.printf("Unknown message received 0x%x\n", msgToConsume.identifier);
       // sendIntroack();
       break;
   }
 } // end of void handleCanRX()
 
-void updatePhysicalSubmodules()
+void updateSubModules()
 {
-    for (uint8_t i = 0; i < node.subModCnt; i++)
-    {
-        subModule_t sub = node.subModule[i];
+  for (uint8_t i = 0; i < node.subModCnt; i++)
+  {
+    subModule_t          *sub = &node.subModule[i];
+    const personalityDef_t *p = &g_personalityTable[sub->personalityIndex];
 
-        // Skip virtual submodules and disabled submodules
-        if ((sub.submod_flags & SUBMOD_FLAG_VIRTUAL) ||
-           (sub.submod_flags & SUBMOD_FLAG_DISABLED))
-            continue;
-
-        switch (sub.personalityId)
-        {
-            /* Output personalities */
-            case PERS_GPIO_OUTPUT:
-            case PERS_ARGB_OUTPUT:
-            case PERS_RGBW_OUTPUT:
-            case PERS_ANA_OUTPUT:
-
-            /* Input personalities */
-            case PERS_GPIO_INPUT:
-            case PERS_ANALOG_INPUT:
-                // Handle physical submodule logic here
-                break;
-            default:
-                Serial.printf("Unknown physical submodule type 0x%02X at index %i\r\n", sub.personalityId, i);
-                break;
-        }
+    if (!p) {
+        Serial.printf("Producer: personality lookup failed for index %u\n", i);
+        return;
     }
-}
-void updateVirtualSubmodules()
-{
-    for (uint8_t i = 0; i < node.subModCnt; i++)
+
+    /* Lookup the pin */
+    uint8_t myPin = p->gpioPin;
+
+    /* generic storage for value */
+    uint32_t value = 0;
+
+    /* skip disabled submodules */
+    if (sub->submod_flags & SUBMOD_FLAG_DISABLED)
+      continue;
+
+    switch (sub->personalityId)
     {
-        subModule_t sub = node.subModule[i];
+      /* Addressable RGB output*/
+      case PERS_ARGB_OUTPUT:
+        // TODO: Figure out how to read NeoPixelBus status?
+        break;
 
-        // Skip non-virtual submodules and disabled submodules
-        if ((sub.submod_flags & SUBMOD_FLAG_DISABLED) ||
-           !(sub.submod_flags & SUBMOD_FLAG_VIRTUAL))
-            continue;
+      /* Analog RGBW output */
+      case PERS_RGBW_OUTPUT:
+        // TODO
+        break;
 
-        uint32_t value = 0;
+      /* Analog DAC output */
+      case PERS_ANA_OUTPUT:
+        // TODO: Read DAC output value?
+        break;
+      
+      /* Digital GPIO personalities */
+      case PERS_GPIO_OUTPUT:
+      case PERS_GPIO_INPUT:
+        sub->runTime.valueU32 = digitalRead(myPin); /**< Capture digital value */
+        break;
 
-        switch (sub.personalityId)
-        {
-            case VIRT_FREE_HEAP:
-                value = (uint32_t)xPortGetFreeHeapSize();
-                break;
+        /* Analog ADC input */
+      case PERS_ANALOG_INPUT:
+        sub->runTime.valueU32 = analogRead(myPin); /**< Capture analog value */
+        break;
 
-            case VIRT_WIFI_RSSI:
-                value = (uint32_t)WiFi.RSSI();
-                break;
+      case VIRT_FREE_HEAP:
+          value = (uint32_t)xPortGetFreeHeapSize();
+          break;
 
-            case VIRT_RTOS_HIGHWATERMARK:
-                value = (uint32_t)uxTaskGetStackHighWaterMark(NULL);
-                break;
+      case VIRT_WIFI_RSSI:
+      {
+        int rssi = WiFi.RSSI();
+        if (rssi < 0) rssi = -rssi;
+        value = (uint32_t)rssi;
+        break;              
+      }
 
-            case VIRT_INTERNAL_TEMPERATURE:
-                value = (uint32_t)temperatureRead();
-                break;
+      case VIRT_RTOS_HIGHWATERMARK:
+        value = (uint32_t)uxTaskGetStackHighWaterMark(NULL);
+        break;
 
-            case VIRT_VREF_VOLTAGE:
-                // value = (uint32_t)readInternalVref();
-                value = 1024; // TODO: implement actual function
-                break;
+      case VIRT_INTERNAL_TEMPERATURE:
+        value = (uint32_t)temperatureRead();
+        break;
 
-            default:
-                // Unknown virtual personality — ignore safely
-                continue;
-        }
+      case VIRT_VREF_VOLTAGE:
+        // value = (uint32_t)readInternalVref();
+        value = 1024; // TODO: implement actual function
+        break;
 
-        sub.runTime.adc_value      = value;
-        sub.runTime.last_change_ms = millis();  // optional
-    }
+      default:
+        // Unknown virtual personality — ignore safely
+        continue;
+      }
+
+      sub->runTime.valueU32       = value;     /* update value */
+      sub->runTime.last_change_ms = millis();  /* update timestamp */
+    } /* end of for loop */
 }
 
 
@@ -1936,9 +1982,8 @@ static void handleProducerTick(uint32_t now)
     }        
 
     /** Lookup personality */
-    const subModule_t      &sub = node.subModule[evt.sub_idx];
+    const subModule_t    &sub = node.subModule[evt.sub_idx];
     const personalityDef_t *p = &g_personalityTable[sub.personalityIndex];
-    // const personalityDef_t *p   = getPersonality(sub.personalityId);
     if (!p) {
         Serial.printf("Producer: personality lookup failed for sub %u\n", evt.sub_idx);
         return;
@@ -1997,10 +2042,7 @@ void managePeriodicMessages() {
     }
 
   /** Update physical submodules */
-  updatePhysicalSubmodules();
-  
-  /** Update virtual submodules */
-  updateVirtualSubmodules();
+  updateSubModules();
 
   /** Call the producer tick */
   handleProducerTick(currentMillis);
