@@ -1,46 +1,47 @@
-/**
- * @file isr_gpio.h
- * @brief Public API for runtime GPIO ISR management.
- */
-
 #pragma once
 #include <stdint.h>
-#include <stdbool.h>
 #include "driver/gpio.h"
-#include "esp_timer.h"
-
-#include "node_state.h"        /**< Provides nodeInfo_t and subModule_t */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* ============================================================================
- *  CONSTANTS
- * ========================================================================== */
+#define GPIO_PIN_MAX 39
+
+/* --------------------------------------------------------------------------
+ * Public API for GPIO ISR subsystem
+ * -------------------------------------------------------------------------- */
 
 /**
- * @brief Maximum GPIO pin index supported by ESP32 family.
- * @note  ESP32 classic supports 0–39.
+ * @brief Register a GPIO pin with the ISR system.
+ * @param pin     GPIO pin number
+ * @param subIdx  Submodule index
  */
-#define GPIO_PIN_MAX 40
+void registerDigitalInputPin(uint8_t pin, uint8_t subIdx);
 
-/* ============================================================================
- *  EXTERNAL TABLES
- * ========================================================================== */
+/**
+ * @brief Enable ISR for a given GPIO pin.
+ * @param pin GPIO pin number
+ */
+void enableDigitalInputISR(uint8_t pin);
 
-extern int8_t gpioToSubIdx[GPIO_PIN_MAX];     /**< Pin → submodule index */
-extern bool   gpioIsrEnabled[GPIO_PIN_MAX];   /**< Pin → ISR enabled flag */
+/**
+ * @brief Disable ISR for a given GPIO pin.
+ * @param pin GPIO pin number
+ */
+void disableDigitalInputISR(uint8_t pin);
 
-/* ============================================================================
- *  PUBLIC API
- * ========================================================================== */
+/**
+ * @brief Set edge filtering mode for a pin.
+ * @param pin  GPIO pin number
+ * @param mode One of: GPIO_INTR_POSEDGE, GPIO_INTR_NEGEDGE, GPIO_INTR_ANYEDGE
+ */
+void setDigitalInputEdgeMode(uint8_t pin, uint8_t mode);
 
-void initGpioIsrService(void);                /**< Install ISR service */
-void registerDigitalInputPin(uint8_t pin,
-                             uint8_t subIdx); /**< Configure pin + map */
-void enableDigitalInputISR(uint8_t pin);      /**< Attach ISR */
-void disableDigitalInputISR(uint8_t pin);     /**< Detach ISR */
+/**
+ * @brief Install the ISR service (must be called once at startup).
+ */
+void initGpioIsrService(void);
 
 #ifdef __cplusplus
 }
