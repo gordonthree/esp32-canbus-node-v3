@@ -28,6 +28,8 @@
 #include "driver/ledc.h" /* esp32 native LEDC PWM library */
 #include "esp_err.h"     /* esp32 error handler */
 
+
+
 /* === FreeRTOS includes === */
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -99,6 +101,12 @@
 
 /* WiFi Constants */
 #define AP_SSID  "canesp32"
+
+/* LEDC constants */
+#define LEDC_CHANNELS_PER_TIMER (8U)   /**< ESP32: 8 channels per timer */
+// #define LEDC_MAX_TIMERS         (8U)   /**< ESP32: 8 timers per channel */
+
+
 
 /* Connect node state functions to producer library callback table */
 static const producerCallbacks_t producerCB = {
@@ -200,7 +208,7 @@ void IRAM_ATTR Timer0_ISR()
 }
 
 /** Inline function to validate sub-module index */
-inline bool isValudSubModuleIndex(uint8_t index) { return (index < MAX_SUB_MODULES); }
+inline bool isValidSubModuleIndex(uint8_t index) { return (index < MAX_SUB_MODULES); }
 
 /**
  * @brief Handles specialized FastLED initialization for ARGB sub-modules.
@@ -247,20 +255,41 @@ void initArgbHardware(uint8_t index, subModule_t& sub)
  * @details Configure the pull-up/pull-down resistor and initialize the input pin.
  * @note This function is called by the initHardware() function during setup().
  */
-void initGPIOInput(uint8_t i, subModule_t& sub) {
-  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+void initGPIOInput(uint8_t i, subModule_t& sub)
+{
+    const personalityDef_t* p = getPersonality(sub.personalityId);  /**< Personality definition */
+    const gpio_num_t pin = (gpio_num_t)p->gpioPin;                  /**< ESP‑IDF pin enum */
 
-  if (sub.config.gpioInput.pull == INPUT_RES_PULLUP) { /* INPUT_RES_PULLUP */
-      pinMode(p->gpioPin, INPUT_PULLUP);
-      Serial.printf("Submod %d: Digital Input Init Pull-Up (Pin %d)\n", i, p->gpioPin);
-  } else if (sub.config.gpioInput.pull == INPUT_RES_PULLDOWN) { /* INPUT_RES_PULLDOWN */
-      pinMode(p->gpioPin, INPUT_PULLDOWN);
-      Serial.printf("Submod %d: Digital Input Init Pull-Down (Pin %d)\n", i, p->gpioPin);
-  } else { /* INPUT_RES_FLOATING */
-      pinMode(p->gpioPin, INPUT);
-      Serial.printf("Submod %d: Digital Input Init Floating (Pin %d)\n", i, p->gpioPin);
-  }
+    gpio_config_t cfg = {};                                         /**< GPIO config struct */
+    cfg.mode         = GPIO_MODE_INPUT;                             /**< Input mode */
+    cfg.intr_type    = GPIO_INTR_DISABLE;                           /**< ISR enabled later */
+    cfg.pin_bit_mask = (1ULL << pin);                               /**< Target pin mask */
+
+    /* Configure pull resistors */
+    switch (sub.config.gpioInput.pull) {
+        case INPUT_RES_PULLUP:
+            cfg.pull_up_en   = GPIO_PULLUP_ENABLE;                  /**< Enable pull‑up */
+            cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+            Serial.printf("Submod %d: Digital Input Init Pull-Up (Pin %d)\n", i, p->gpioPin);
+            break;
+
+        case INPUT_RES_PULLDOWN:
+            cfg.pull_up_en   = GPIO_PULLUP_DISABLE;
+            cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;                /**< Enable pull‑down */
+            Serial.printf("Submod %d: Digital Input Init Pull-Down (Pin %d)\n", i, p->gpioPin);
+            break;
+
+        case INPUT_RES_FLOATING:
+        default:
+            cfg.pull_up_en   = GPIO_PULLUP_DISABLE;
+            cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;               /**< Floating input */
+            Serial.printf("Submod %d: Digital Input Init Floating (Pin %d)\n", i, p->gpioPin);
+            break;
+    }
+
+    gpio_config(&cfg);                                              /**< Apply configuration */
 }
+
 
 /**
  * @brief Initializes a PWM output sub-module.
@@ -273,46 +302,59 @@ void initGPIOInput(uint8_t i, subModule_t& sub) {
  * @param i Index of the output switch / submodule.
  * @param sub Reference to the sub-module configuration.
  */
-void initPwmHardware(uint8_t i, subModule_t& sub) {
-  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+void initPwmHardware(uint8_t i, subModule_t& sub)
+{
+    const personalityDef_t* p = getPersonality(sub.personalityId);   /**< Personality definition */
+    const gpio_num_t pin = (gpio_num_t)p->gpioPin;                   /**< ESP‑IDF pin enum */
 
-  /* Handle the name change between IDF versions */
-    #if !defined(LEDC_USE_RC_FAST_CLK)
-        #define LEDC_USE_RC_FAST_CLK LEDC_USE_RTC8M_CLK
-    #endif
+    /* ------------------------------------------------------------------------
+     *  LEDC TIMER CONFIGURATION
+     * ---------------------------------------------------------------------- */
 
-  /* ESP32 LEDC setup: channel = i, frequency = config * 100, resolution = 8-bit */
-    uint32_t freq = (double)(sub.config.gpioOutput.param1 * PWM_SCALING_FACTOR);
-    uint8_t channel = i;
+    const uint32_t freq_hz =
+        (uint32_t)(sub.config.gpioOutput.param1 * PWM_SCALING_FACTOR); /**< Scaled frequency */
 
-    ledc_timer_config_t ledc_timer = {
-        .speed_mode       = LEDC_LOW_SPEED_MODE,
-        .duty_resolution  = LEDC_TIMER_8_BIT,
-        .timer_num        = (ledc_timer_t)(channel / 8), /**< 8 channels per group */
-        .freq_hz          = freq,
-        .clk_cfg          = LEDC_USE_RC_FAST_CLK, /**< Use 8MHz clock instead of 80MHz */
+    const ledc_timer_t timer =
+        (ledc_timer_t)(i / LEDC_CHANNELS_PER_TIMER);                   /**< Timer index */
+
+    ledc_timer_config_t tcfg = {
+        .speed_mode       = LEDC_LOW_SPEED_MODE,                       /**< Low‑speed group */
+        .duty_resolution  = LEDC_TIMER_8_BIT,                          /**< 8‑bit resolution */
+        .timer_num        = timer,                                     /**< Timer selection */
+        .freq_hz          = freq_hz,                                   /**< PWM frequency */
+        .clk_cfg          = LEDC_USE_RTC8M_CLK                        /**< 8 MHz clock */
     };
-    ledc_timer_config(&ledc_timer);
 
-    // ledcSetup(i, (uint32_t)sub.config.pwmOutput.pwmFreq * PWM_SCALING_FACTOR, PWM_RES_BITS);
-    // ledcAttachPin(sub.config.pwmOutput.outputPin, i);
+    ledc_timer_config(&tcfg);                                          /**< Apply timer config */
 
-    ledcAttachPin(p->gpioPin, channel);
-    ledc_channel_config_t ledc_ch = {
-        .gpio_num       = p->gpioPin,
-        .speed_mode     = LEDC_LOW_SPEED_MODE,
-        .channel        = (ledc_channel_t)channel,
-        .intr_type      = LEDC_INTR_DISABLE,
-        .timer_sel      = (ledc_timer_t)(channel / 8),
-        .duty           = 0,
-        .hpoint         = 0
+    /* ------------------------------------------------------------------------
+     *  LEDC CHANNEL CONFIGURATION
+     * ---------------------------------------------------------------------- */
+
+    const ledc_channel_t channel = (ledc_channel_t)i;                  /**< Channel index */
+
+    ledc_channel_config_t ccfg = {
+        .gpio_num       = pin,                                         /**< Output pin */
+        .speed_mode     = LEDC_LOW_SPEED_MODE,                         /**< Low‑speed group */
+        .channel        = channel,                                     /**< Channel selection */
+        .intr_type      = LEDC_INTR_DISABLE,                           /**< No interrupts */
+        .timer_sel      = timer,                                       /**< Timer binding */
+        .duty           = 0,                                           /**< Start at 0% */
+        .hpoint         = 0                                            /**< Default hpoint */
     };
-    ledc_channel_config(&ledc_ch);
 
+    ledc_channel_config(&ccfg);                                        /**< Apply channel config */
 
-    pwmPins[i] = p->gpioPin; /* Store the pin number in the pwmPins array */
-    Serial.printf("Submod %d: PWM Output Init (Pin %d, Freq %d)\n", i, p->gpioPin, (sub.config.gpioOutput.param1 * PWM_SCALING_FACTOR));
+    /* ------------------------------------------------------------------------
+     *  BOOKKEEPING
+     * ---------------------------------------------------------------------- */
+
+    pwmPins[i] = pin;                                                  /**< Track pin assignment */
+
+    Serial.printf("Submod %d: PWM Output Init (Pin %d, Freq %u Hz)\n",
+                  i, p->gpioPin, freq_hz);
 }
+
 
 /**
  * @brief Clears a PWM pin's configuration and detaches it from the LEDC driver.
@@ -344,9 +386,12 @@ void initAnalogInput(uint8_t i, subModule_t& sub) {
  * @note This function is called once by the main setup() function.
  */
 void initHardware() {
+  Serial.println("[HW] Initializing GPIO ISR");
+  initGpioIsrService();  /**< Install ISR service once */
+
   Serial.println("[HW] Initializing sub-modules...");
 
-  for (int i = 0; i < MAX_SUB_MODULES; i++) {
+  for (int i = 0; i < node.subModCnt; i++) {
     subModule_t& sub = node.subModule[i];
     const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
 
@@ -360,8 +405,10 @@ void initHardware() {
         break;
 
       case INPUT_DIGITAL_GPIO_ID:
-        initGPIOInput(i, sub);                      /* Configure the hardware */
-        registerDigitalInputPin(p->gpioPin, i);     /* Register the pin with the interrupt handler */
+        initGPIOInput(i, sub);                           /* Configure the hardware */
+        registerDigitalInputPin(p->gpioPin, i);          /* Register the pin with the interrupt handler */
+        if (sub.producer_flags & PRODUCER_FLAG_ENABLED)  /* If the producer is enabled */
+            enableDigitalInputISR(p->gpioPin);           /* Enable the interrupt handler */
         break;
 
       case OUT_GPIO_DIGITAL_ID:
@@ -1523,7 +1570,7 @@ static void handleCanRX(twai_message_t &message) {
     case ROUTE_TAKE_NO_ACTION:          // no action 0xFFFF
       break;
 
-    case (CFG_PRODUCER_CFG_ID): /**< Configure a single producer submodule */
+    case CFG_PRODUCER_CFG_ID: /**< Configure a single producer submodule */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
@@ -1531,7 +1578,7 @@ static void handleCanRX(twai_message_t &message) {
       handleProducerCfg(&msgToConsume);
       break;
 
-    case (CFG_PRODUCER_WRITE_NVS_ID): /**< Commit producer config to NVS. */
+    case CFG_PRODUCER_WRITE_NVS_ID: /**< Commit producer config to NVS. */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
@@ -1539,7 +1586,7 @@ static void handleCanRX(twai_message_t &message) {
       requestProducerSave();
       break;
 
-    case (CFG_PRODUCER_READ_NVS_ID): /**< Request producer config for all submodules */
+    case CFG_PRODUCER_READ_NVS_ID: /**< Request producer config for all submodules */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
@@ -1547,21 +1594,21 @@ static void handleCanRX(twai_message_t &message) {
       requestProducerLoad();
       break;
 
-    case (REQ_PRODUCER_CFG_ID): /**< Request producer config  for idx */
+    case REQ_PRODUCER_CFG_ID: /**< Request producer config  for idx */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
       }
       break;
 
-    case (RESP_PRODUCER_CFG_ID): /**< Node responds with requested data using this message id */
+    case RESP_PRODUCER_CFG_ID: /**< Node responds with requested data using this message id */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
       }
       break;
 
-    case (CFG_PRODUCER_PURGE_ID): /**< Purge the producer list */
+    case CFG_PRODUCER_PURGE_ID: /**< Purge the producer list */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
@@ -1569,7 +1616,7 @@ static void handleCanRX(twai_message_t &message) {
       }
       break;
 
-    case (CFG_PRODUCER_DEFAULTS_ID): /**< Reset the producer at idx to defaults */
+    case CFG_PRODUCER_DEFAULTS_ID: /**< Reset the producer at idx to defaults */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
@@ -1577,7 +1624,7 @@ static void handleCanRX(twai_message_t &message) {
       producerDefaultSingle(modIdx);
       break;
 
-    case (CFG_PRODUCER_APPLY_ID): /**< NO-OP Producer config is applied instantly */
+    case CFG_PRODUCER_APPLY_ID: /**< NO-OP Producer config is applied instantly */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
@@ -1585,52 +1632,68 @@ static void handleCanRX(twai_message_t &message) {
       break;
 
 
-    case (CFG_PRODUCER_ENABLE_ID): /**< Enable the producer at idx */
+    case CFG_PRODUCER_ENABLE_ID: /**< Enable the producer at idx */
+      {
+        if (isValidSubModuleIndex(modIdx) == false) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          break;
+        }
+        const personalityDef_t* p = &g_personalityTable[node.subModule[modIdx].personalityIndex];
+        if (!p) 
+        {
+          Serial.printf("Personality not found for index %d\n", modIdx);
+          break;
+        }
+        producerEnable(modIdx);            /* Enable the producer */
+        enableDigitalInputISR(p->gpioPin); /* Enable the digital input interrupt */
+
+        break;
+      }
+
+    case CFG_PRODUCER_DISABLE_ID: /**< Disable the producer at idx */
+      {
+        if (isValidSubModuleIndex(modIdx) == false) {
+          Serial.printf("Invalid sub module index %d\n", modIdx);
+          break;
+        }
+        const personalityDef_t* p = &g_personalityTable[node.subModule[modIdx].personalityIndex];
+        if (!p) 
+        {
+          Serial.printf("Personality not found for index %d\n", modIdx);
+          break;
+        }
+        producerDisable(modIdx);            /* Disable the producer */
+        disableDigitalInputISR(p->gpioPin); /* Disable the digital input interrupt */
+        break;
+      }
+
+    case CFG_PRODUCER_TOGGLE_ID:        /**< Toggle operation of producer at idx */
+      // Not implemented
+      break;
+
+    case REQ_PRODUCER_LIST_ID: /**< Ask the node to dump the entire producer cfg list */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
       }
-      producerEnable(modIdx);
       break;
+    
 
-    case (CFG_PRODUCER_DISABLE_ID): /**< Disable the producer at idx */
-      if (isValidSubModuleIndex(modIdx) == false) {
-        Serial.printf("Invalid sub module index %d\n", modIdx);
-        break;
-      }
-      producerDisable(modIdx);
-      break;
-
-    case (CFG_PRODUCER_TOGGLE_ID): /**< Toggle operation of producer at idx */
-      if (isValidSubModuleIndex(modIdx) == false) {
-        Serial.printf("Invalid sub module index %d\n", modIdx);
-        break;
-      }
-      producerToggle(modIdx);
-      break;
-
-    case (REQ_PRODUCER_LIST_ID): /**< Ask the node to dump the entire producer cfg list */
+    case PRODUCER_LIST_BEGIN_ID: /**< Node will announce the count of defined producers */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
       }
       break;
 
-    case (PRODUCER_LIST_BEGIN_ID): /**< Node will announce the count of defined producers */
+    case PRODUCER_LIST_DATA_ID: /**< Producer cfg data for index */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
       }
       break;
 
-    case (PRODUCER_LIST_DATA_ID): /**< Producer cfg data for index */
-      if (isValidSubModuleIndex(modIdx) == false) {
-        Serial.printf("Invalid sub module index %d\n", modIdx);
-        break;
-      }
-      break;
-
-    case (PRODUCER_LIST_END_ID): /**< Node will announce the end of the defined producers list */
+    case PRODUCER_LIST_END_ID: /**< Node will announce the end of the defined producers list */
       if (isValidSubModuleIndex(modIdx) == false) {
         Serial.printf("Invalid sub module index %d\n", modIdx);
         break;
@@ -1713,7 +1776,7 @@ static void handleCanRX(twai_message_t &message) {
 
         sub.config.gpioInput.pull     = msgToConsume.data[5];  /* Input resistor configuration */
         sub.config.gpioInput.invert   = msgToConsume.data[6];  /* logical inversion flag */
-        sub.config.gpioInput.reserved = msgToConsume.data[7]; /* resesrved, not used */
+        sub.config.gpioInput.debounce = msgToConsume.data[7];  /* input debounce time */
 
       }
       break;
