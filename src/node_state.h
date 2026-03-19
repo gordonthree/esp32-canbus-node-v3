@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Arduino.h>
+
 #include "canbus_project.h"   // for node_t, subModule_t, etc.
 #include "submodule_types.h"   /**< Sub-module type definitions */
 #include "personality_table.h" /**< Node and sub-module personality table */
