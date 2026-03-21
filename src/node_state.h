@@ -45,6 +45,9 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc );
 /** pretty print the in-memory node config database */
 void printNodeInfo(const nodeInfo_t* node);
 
+inline uint32_t packRgb(uint8_t r, uint8_t g, uint8_t b);
+inline void updateOutputRuntime(subModule_t& sub, const personalityDef_t* p);
+inline uint32_t packStrobeState(uint8_t patternId, uint8_t step, bool output);
 
 
 /* ============================================================================
