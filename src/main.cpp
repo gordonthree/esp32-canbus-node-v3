@@ -241,6 +241,50 @@ static inline void updateOutputRuntime(subModule_t& sub, const personalityDef_t*
     sub.runTime.valueU32 = gpio_get_level((gpio_num_t)p->gpioPin) ? 1 : 0;
 }
 
+static inline void setOutput(const subModule_t& sub,
+                             const personalityDef_t* p,
+                             bool desiredState)
+{
+    gpio_num_t pin = (gpio_num_t)p->gpioPin;
+
+    /* Apply inversion flag */
+    bool state = desiredState;
+    if (p->capabilities & CAP_OUTPUT_INVERTED) {
+        state = !state;
+    }
+
+    /* ON state */
+    if (state)
+    {
+        /* Hi‑Z ON (open‑drain release) */
+        if (p->capabilities & CAP_HIZ_ON)
+        {
+            gpio_reset_pin(pin);
+            gpio_set_direction(pin, GPIO_MODE_INPUT);   // float HIGH
+            return;
+        }
+
+        /* Normal push‑pull HIGH */
+        gpio_reset_pin(pin);
+        gpio_set_direction(pin, GPIO_MODE_OUTPUT);
+        gpio_set_level(pin, 1);
+        return;
+    }
+
+    /* OFF state */
+    if (p->capabilities & CAP_HIZ_OFF)
+    {
+        gpio_reset_pin(pin);
+        gpio_set_direction(pin, GPIO_MODE_INPUT);       // float LOW
+    }
+    else
+    {
+        gpio_reset_pin(pin);
+        gpio_set_direction(pin, GPIO_MODE_OUTPUT);
+        gpio_set_level(pin, 0);
+    }
+}
+
 
 /** Inline function to validate sub-module index */
 inline bool isValidSubModuleIndex(uint8_t index) { return (index < MAX_SUB_MODULES); }
