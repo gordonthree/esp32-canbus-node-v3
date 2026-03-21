@@ -70,7 +70,8 @@ void printNodeInfo(const nodeInfo_t* node)
 
   Serial.printf("  subModule array:\n");
   for (uint8_t i = 0; i < node->subModCnt; i++) {
-    const personalityDef_t* p = getPersonality(node->subModule[i].personalityIndex);
+    /** Pointer to the personality definition for this sub-module */
+    const personalityDef_t* p = &g_personalityTable[node->subModule[i].personalityIndex]; 
 
     Serial.printf("     subModule[%d]:\n", i);
     Serial.printf("       personalityId: %d\n", node->subModule[i].personalityId);
@@ -79,7 +80,15 @@ void printNodeInfo(const nodeInfo_t* node)
     Serial.printf("       introMsgDLC: %d\n", node->subModule[i].introMsgDLC);
     Serial.printf("       dataMsgId: 0x%03X\n", p->dataMsgId);
     Serial.printf("       dataMsgDlc: %d\n", p->dataMsgDlc);
-    Serial.printf("       config bytes 0x%02X 0x%02X 0x%02X\n", node->subModule[i].config.rawConfig[0], node->subModule[i].config.rawConfig[1], node->subModule[i].config.rawConfig[2]);
+    Serial.printf("       gpio Pin: %d\n", p->gpioPin);
+    if (node->subModule[i].personalityId == PERS_GPIO_INPUT) {
+        Serial.printf("         gpio_input flags: 0x%02X\n", node->subModule[i].config.gpioInput.flags); 
+        Serial.printf("         gpio_input debounce_ms: %d\n", node->subModule[i].config.gpioInput.debounce_ms); 
+        Serial.printf("         gpio_input reserved: 0x%02X\n", node->subModule[i].config.gpioInput.reserved); 
+    } else {
+        Serial.printf("       config bytes 0x%02X 0x%02X 0x%02X\n", node->subModule[i].config.rawConfig[0], node->subModule[i].config.rawConfig[1], node->subModule[i].config.rawConfig[2]);
+    }
+    // Serial.printf("       config bytes 0x%02X 0x%02X 0x%02X\n", node->subModule[i].config.rawConfig[0], node->subModule[i].config.rawConfig[1], node->subModule[i].config.rawConfig[2]);
     Serial.printf("       submod_flags: 0x%02X\n", node->subModule[i].submod_flags);
     Serial.printf("       producer_flags: 0x%02X\n", node->subModule[i].producer_flags);
     Serial.printf("       router_flags: 0x%02X\n", node->subModule[i].router_flags);
