@@ -239,9 +239,9 @@ void initArgbHardware(uint8_t index, subModule_t& sub)
 #ifdef ARGB_LED
 
     if (index >= MAX_SUB_MODULES) return;
+
     const personalityDef_t* p = &g_personalityTable[sub.personalityIndex];
     if (!p) return;
-
 
     uint8_t  dataPin    = p->gpioPin;
     uint16_t pixelCount = sub.config.argb.ledCount;
@@ -251,24 +251,125 @@ void initArgbHardware(uint8_t index, subModule_t& sub)
 
     /* Free old strip if reinitializing */
     if (g_argbStrips[index] != nullptr)
-        delete g_argbStrips[index];
+    {
+        free(g_argbStrips[index]);   // safe because we allocated with new
+        g_argbStrips[index] = nullptr;
+    }
 
-    /* Allocate new strip */
-    g_argbStrips[index] =
-        new NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0800KbpsMethod>(pixelCount, dataPin);
+    Serial.printf("ARGB using RMT channel %u\n", index);
 
+
+    /* Instantiate strip with unique RMT channel */
+    switch (index)
+    {
+        case 0:
+            Serial.printf("Constructed type: RmtMethod%d\n", index);
+
+            g_argbStrips[index] =
+                new NeoPixelBus<NeoGrbFeature, RmtMethod0>(pixelCount, dataPin);
+            break;
+
+        case 1:
+            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            g_argbStrips[index] =
+                new NeoPixelBus<NeoGrbFeature, RmtMethod1>(pixelCount, dataPin);
+            break;
+
+        case 2:
+            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            g_argbStrips[index] =
+                new NeoPixelBus<NeoGrbFeature, RmtMethod2>(pixelCount, dataPin);
+            break;
+
+        case 3:
+            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            g_argbStrips[index] =
+                new NeoPixelBus<NeoGrbFeature, RmtMethod3>(pixelCount, dataPin);
+            break;
+
+        case 4:
+            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            g_argbStrips[index] =
+                new NeoPixelBus<NeoGrbFeature, RmtMethod4>(pixelCount, dataPin);
+            break;
+
+        case 5:
+            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            g_argbStrips[index] =
+                new NeoPixelBus<NeoGrbFeature, RmtMethod5>(pixelCount, dataPin);
+            break;
+
+        case 6:
+            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            g_argbStrips[index] =
+                new NeoPixelBus<NeoGrbFeature, RmtMethod6>(pixelCount, dataPin);
+            break;
+
+        case 7:
+            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            g_argbStrips[index] =
+                new NeoPixelBus<NeoGrbFeature, RmtMethod7>(pixelCount, dataPin);
+            break;
+
+        default:
+            Serial.printf("ARGB Init ERROR: No RMT channel for submod %u\n", index);
+            return;
+    }
+
+    /* Initialize strip */
     if (g_argbStrips[index] != nullptr)
     {
-        g_argbStrips[index]->Begin();
-        g_argbStrips[index]->Show();
-        Serial.printf("ARGB Init: submod %d pin %d count %d\n", index, dataPin, pixelCount);
+        // Cast back to the correct type based on index
+        switch (index)
+        {
+            case 0:
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod0>*)g_argbStrips[index])->Begin();
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod0>*)g_argbStrips[index])->Show();
+                break;
+
+            case 1:
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod1>*)g_argbStrips[index])->Begin();
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod1>*)g_argbStrips[index])->Show();
+                break;
+
+            case 2:
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod2>*)g_argbStrips[index])->Begin();
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod2>*)g_argbStrips[index])->Show();
+                break;
+
+            case 3:
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod3>*)g_argbStrips[index])->Begin();
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod3>*)g_argbStrips[index])->Show();
+                break;
+
+            case 4:
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod4>*)g_argbStrips[index])->Begin();
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod4>*)g_argbStrips[index])->Show();
+                break;
+
+            case 5:
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod5>*)g_argbStrips[index])->Begin();
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod5>*)g_argbStrips[index])->Show();
+                break;
+
+            case 6:
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod6>*)g_argbStrips[index])->Begin();
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod6>*)g_argbStrips[index])->Show();
+                break;
+
+            case 7:
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod7>*)g_argbStrips[index])->Begin();
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod7>*)g_argbStrips[index])->Show();
+                break;
+        }
+
+        Serial.printf("ARGB Init: submod %u pin %u count %u (RMT channel %u)\n",
+                      index, dataPin, pixelCount, index);
     }
-    else
-    {
-        Serial.printf("ARGB Init FAILED: submod %d pin %d count %d\n", index, dataPin, pixelCount);
-    }
+
 #endif
 }
+
 
 
 /**
@@ -1274,20 +1375,74 @@ void handleColorCommand(twai_message_t& msg)
     uint8_t colorIndex = msg.data[5];
 
     if (subIdx >= MAX_SUB_MODULES) return;
-
-    auto* strip = g_argbStrips[subIdx];
-    if (!strip) return;
-
+    if (g_argbStrips[subIdx] == nullptr) return;
     if (colorIndex >= COLOR_PALETTE_SIZE) return;
 
     PaletteColor p = SystemPalette[colorIndex];
 
-    strip->ClearTo(RgbColor(p.R, p.G, p.B));
-    strip->Show();
+    switch (subIdx)
+    {
+        case 0:
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod0>*)g_argbStrips[subIdx])
+                ->ClearTo(RgbColor(p.R, p.G, p.B));
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod0>*)g_argbStrips[subIdx])
+                ->Show();
+            break;
+
+        case 1:
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod1>*)g_argbStrips[subIdx])
+                ->ClearTo(RgbColor(p.R, p.G, p.B));
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod1>*)g_argbStrips[subIdx])
+                ->Show();
+            break;
+
+        case 2:
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod2>*)g_argbStrips[subIdx])
+                ->ClearTo(RgbColor(p.R, p.G, p.B));
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod2>*)g_argbStrips[subIdx])
+                ->Show();
+            break;
+
+        case 3:
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod3>*)g_argbStrips[subIdx])
+                ->ClearTo(RgbColor(p.R, p.G, p.B));
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod3>*)g_argbStrips[subIdx])
+                ->Show();
+            break;
+
+        case 4:
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod4>*)g_argbStrips[subIdx])
+                ->ClearTo(RgbColor(p.R, p.G, p.B));
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod4>*)g_argbStrips[subIdx])
+                ->Show();
+            break;
+
+        case 5:
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod5>*)g_argbStrips[subIdx])
+                ->ClearTo(RgbColor(p.R, p.G, p.B));
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod5>*)g_argbStrips[subIdx])
+                ->Show();
+            break;
+
+        case 6:
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod6>*)g_argbStrips[subIdx])
+                ->ClearTo(RgbColor(p.R, p.G, p.B));
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod6>*)g_argbStrips[subIdx])
+                ->Show();
+            break;
+
+        case 7:
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod7>*)g_argbStrips[subIdx])
+                ->ClearTo(RgbColor(p.R, p.G, p.B));
+            ((NeoPixelBus<NeoGrbFeature, RmtMethod7>*)g_argbStrips[subIdx])
+                ->Show();
+            break;
+    }
 
     Serial.printf("ARGB[%d] = (%d,%d,%d)\n", subIdx, p.R, p.G, p.B);
 #endif
 }
+
 
 void manageColorPickerList(twai_message_t& msg) {
 #ifndef ESP32CYD  
