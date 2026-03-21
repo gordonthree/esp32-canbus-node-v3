@@ -172,7 +172,8 @@ void deleteProducerCfgFromNVS()
     
     /** Copy hardware submodules from submod_setup array */
     for (uint8_t i = 0; i < g_submodules_count; i++) {
-        node.subModule[i] = submod_setup[i];
+        node.subModule[i] = submod_setup[i];    /* copy user config from submod_setup */
+        node.subModule[i].personalityIndex = i; /* assign matching index */
     }
 
     /** Add virtual submodules from personality table */
@@ -245,7 +246,7 @@ void handleReadCfgNVS()
       if (loadCfgStatus == CFG_OK) {
           Serial.println("[INIT] Config loaded successfully.");
           FLAG_VALID_CONFIG = true;
-          initHardware(); /**< Initialize the hardware */
+        //   initHardware(); /**< Initialize the hardware */
           break;
       }
 
