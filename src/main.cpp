@@ -227,6 +227,21 @@ void IRAM_ATTR Timer0_ISR()
   isrFlag = true;
 }
 
+/**
+ * @brief Updates the runtime value of a digital output sub-module.
+ *
+ * @param sub Pointer to the subModule_t structure to update.
+ * @param p Pointer to the personality definition for the sub-module.
+ *
+ * Updates the valueU32 field of the subModule_t structure with the current state of the
+ * digital output (0 or 1).
+ */
+static inline void updateOutputRuntime(subModule_t& sub, const personalityDef_t* p)
+{
+    sub.runTime.valueU32 = gpio_get_level((gpio_num_t)p->gpioPin) ? 1 : 0;
+}
+
+
 /** Inline function to validate sub-module index */
 inline bool isValidSubModuleIndex(uint8_t index) { return (index < MAX_SUB_MODULES); }
 
@@ -1323,35 +1338,29 @@ void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk) {
   if (millis() < trk.nextActionTime)
       return;
 
-  /* Select the pattern based on configuration */
-  const uint16_t *pattern = nullptr;
-  uint8_t patternSteps = 0;
+  /* Select the pattern based on user configuration */
+  uint8_t patternId = sub.config.gpioOutput.param2;
 
-  switch (sub.config.gpioOutput.param2)
+  if (patternId >= (sizeof(STROBE_PATTERNS) / sizeof(STROBE_PATTERNS[0]))) /* Invalid pattern, turn off output and exit */
   {
-      case STROBE_PATTERN_1: {
-          /* Example: ON 50ms, OFF 50ms, ON 50ms, OFF 400ms */
-          static const uint16_t p1[] = {50, 50, 50, 400};
-          pattern = p1;
-          patternSteps = 4;
-          break;
-      }
-
-      case STROBE_PATTERN_2: {
-          /* Example: 3x flash, pause, 5x flash, pause */
-          static const uint16_t p2[] = {50,50,50,200, 50,50,50,50,50,400};
-          pattern = p2;
-          patternSteps = 10;
-          break;
-      }
-
-      /* Additional patterns can be added here */
-      default:
-          /* Unknown pattern → disable strobe */
-          trk.isActive = false;
-          digitalWrite(outPin, LOW);
-          return;
+      trk.isActive = false;
+      digitalWrite(outPin, LOW);
+      return;
   }
+
+  /** Get a pointer to the pattern */
+  const StrobePatternDef& def = STROBE_PATTERNS[patternId];
+
+  if (!def.steps || def.count == 0) /* Invalid pattern, turn off output and exit */
+  {
+      trk.isActive = false;
+      digitalWrite(outPin, LOW);
+      return;
+  }
+
+  /* Load the pattern specifics */
+  const uint16_t* pattern = def.steps;
+  uint8_t    patternSteps = def.count;
 
   /* Advance to the next step in the pattern */
   trk.currentStep = (trk.currentStep + 1) % patternSteps;
@@ -1359,11 +1368,13 @@ void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk) {
   /* Even steps = ON, Odd steps = OFF */
   bool state = (trk.currentStep % 2 == 0);
 
+  /* Set the GPIO output state */
   digitalWrite(outPin, state);
 
   /* Schedule the next step */
   trk.nextActionTime = millis() + pattern[trk.currentStep];
 
+  /* Record the GPIO state in runTime */
   sub.runTime.valueU32 = packStrobeState(
     sub.config.gpioOutput.param2,   // pattern ID
     trk.currentStep,                // step index
