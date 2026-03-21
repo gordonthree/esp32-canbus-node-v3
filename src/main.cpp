@@ -20,12 +20,16 @@
 #include <ESPmDNS.h>
 #include <esp_wifi.h>
 #include <time.h>
+
 /* === Standard library includes === */
 #include <stdio.h>
 #include <stddef.h>
+
 /* === ESP32 native IDF includes === */
 #include "driver/twai.h" /* esp32 native TWAI CAN library */
 #include "driver/ledc.h" /* esp32 native LEDC PWM library */
+#include "driver/gpio.h" /* esp32 native GPIO library */
+#include "driver/adc.h"  /* esp32 native ADC library */
 #include "esp_err.h"     /* esp32 error handler */
 
 
@@ -218,9 +222,13 @@ inline bool isValidSubModuleIndex(uint8_t index) { return (index < MAX_SUB_MODUL
 void initArgbHardware(uint8_t index, subModule_t& sub)
 {
 #ifdef ARGB_LED
-    if (index >= MAX_SUB_MODULES) return;
 
-    uint8_t  dataPin    = sub.config.argb.colorOrder; // or dedicated pin field
+    if (index >= MAX_SUB_MODULES) return;
+    const personalityDef_t* p = &g_personalityTable[sub.personalityIndex];
+    if (!p) return;
+
+
+    uint8_t  dataPin    = p->gpioPin;
     uint16_t pixelCount = sub.config.argb.ledCount;
 
     if (pixelCount > MAX_PIXEL_COUNT)
@@ -257,16 +265,17 @@ void initArgbHardware(uint8_t index, subModule_t& sub)
  */
 void initGPIOInput(uint8_t i, subModule_t& sub)
 {
-    const personalityDef_t* p = getPersonality(sub.personalityId);  /**< Personality definition */
-    const gpio_num_t pin = (gpio_num_t)p->gpioPin;                  /**< ESP‑IDF pin enum */
-
-    gpio_config_t cfg = {};                                         /**< GPIO config struct */
-    cfg.mode         = GPIO_MODE_INPUT;                             /**< Input mode */
-    cfg.intr_type    = GPIO_INTR_DISABLE;                           /**< ISR enabled later */
-    cfg.pin_bit_mask = (1ULL << pin);                               /**< Target pin mask */
+    const personalityDef_t* p = &g_personalityTable[sub.personalityIndex];  /**< Personality definition */
+    const gpio_num_t pin = (gpio_num_t)p->gpioPin;                          /**< ESP‑IDF pin enum */
+        
+    gpio_config_t cfg = {};                                                 /**< GPIO config struct */
+    cfg.mode         = GPIO_MODE_INPUT;                                     /**< Input mode */
+    cfg.intr_type    = GPIO_INTR_DISABLE;                                   /**< ISR enabled later */
+    cfg.pin_bit_mask = (1ULL << pin);                                       /**< Target pin mask */
 
     /* Configure pull resistors */
-    switch (sub.config.gpioInput.pull) {
+    const uint8_t pull = INPUT_FLAG_GET_PULL(sub.config.gpioInput.flags);
+    switch (pull) {
         case INPUT_RES_PULLUP:
             cfg.pull_up_en   = GPIO_PULLUP_ENABLE;                  /**< Enable pull‑up */
             cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
@@ -304,7 +313,7 @@ void initGPIOInput(uint8_t i, subModule_t& sub)
  */
 void initPwmHardware(uint8_t i, subModule_t& sub)
 {
-    const personalityDef_t* p = getPersonality(sub.personalityId);   /**< Personality definition */
+    const personalityDef_t* p = &g_personalityTable[sub.personalityIndex];   /**< Personality definition */
     const gpio_num_t pin = (gpio_num_t)p->gpioPin;                   /**< ESP‑IDF pin enum */
 
     /* ------------------------------------------------------------------------
@@ -367,14 +376,14 @@ void clearPwmHardware(uint8_t i) {
 }
 
 void initGpioOutput(uint8_t i, subModule_t& sub) {
-  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
   pinMode(p->gpioPin, OUTPUT);
   Serial.printf("Submod %d: Digital Output Init (Pin %d)\n", i, p->gpioPin);
 } 
 
 void initAnalogInput(uint8_t i, subModule_t& sub) {
-  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
   pinMode(p->gpioPin, ANALOG);
   Serial.printf("Submod %d: Analog Input Init (Pin %d)\n", i, p->gpioPin);
@@ -393,7 +402,7 @@ void initHardware() {
 
   for (int i = 0; i < node.subModCnt; i++) {
     subModule_t& sub = node.subModule[i];
-    const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+    const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
     if (sub.introMsgId == 0) continue;
 
@@ -406,9 +415,11 @@ void initHardware() {
 
       case INPUT_DIGITAL_GPIO_ID:
         initGPIOInput(i, sub);                           /* Configure the hardware */
-        registerDigitalInputPin(p->gpioPin, i);          /* Register the pin with the interrupt handler */
-        if (sub.producer_flags & PRODUCER_FLAG_ENABLED)  /* If the producer is enabled */
-            enableDigitalInputISR(p->gpioPin);           /* Enable the interrupt handler */
+        attachDigitalInputISR(p->gpioPin, i);            /* Register and attach the interrupt handler to the pin */
+        if (sub.producer_flags & PRODUCER_FLAG_ENABLED){ /* If the producer is enabled */
+          enableDigitalInputISR(p->gpioPin);             /* Enable the interrupt handler */
+          Serial.printf("[HW] Submod %d: ISR Enabled (Pin %d)\n", i, p->gpioPin);
+        }
         break;
 
       case OUT_GPIO_DIGITAL_ID:
@@ -775,7 +786,7 @@ void stopHardwarePwm(uint8_t submodIdx) {
  *   - After duration expires, output returns LOW
  */
 void handleMomentaryLogic(subModule_t &sub, outputTracker_t &trk) {
-  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
   uint8_t pin = p->gpioPin;
 
@@ -831,7 +842,7 @@ static void setDisplayMode(twai_message_t& msg, uint8_t displayMode = DISPLAY_MO
 
   if (displayID >= MAX_SUB_MODULES) return; /* invalid display ID */
   subModule_t& sub = node.subModule[displayID]; /* get submodule reference */
-  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
   uint8_t displayPin = p->gpioPin; /* get output pin */
 
@@ -880,7 +891,7 @@ static void setSwBlinkDelay(twai_message_t& msg) {
   uint8_t freq     = msg.data[5];                      /* blink delay */
   if (switchID >= MAX_SUB_MODULES) return;             /* invalid switch ID */
   subModule_t& sub = node.subModule[switchID];         /* get submodule reference */
-  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
   uint8_t pin = p->gpioPin; /* get output pin */
   sub.config.gpioOutput.param1 = freq;            /* update blink delay */
   handleHardwarePwm(switchID, pin, freq);       /* update hardware blinker */
@@ -906,7 +917,7 @@ static void setPWMDuty(twai_message_t& msg) { /* 0x117 */
   pwmDuty = (double)(pwmDuty * LEDC_13BIT_100PCT); /* convert to LEDC duty cycle */
   if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
   subModule_t& sub     = node.subModule[switchID];  /* get submodule reference */
-  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
   uint8_t pin = p->gpioPin; /* get output pin */
   uint32_t workingFreq = (uint32_t)(sub.config.gpioOutput.param1 * PWM_SCALING_FACTOR);    /* get pwm frequency */
   handleHardwarePwm(switchID, pin, workingFreq, pwmDuty);     /* update hardware */
@@ -918,7 +929,7 @@ static void setPWMFreq(twai_message_t& msg) { /* 0x118 */
   uint8_t pwmFreq  = msg.data[5];  /* pwm frequency */
   if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
   subModule_t& sub = node.subModule[switchID];  /* get submodule reference */
-  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
   uint8_t pin = p->gpioPin; /* get output pin */
   sub.config.gpioOutput.param1 = pwmFreq;       /* update pwm frequency in config */
   uint32_t workingFreq = (uint32_t)(pwmFreq * PWM_SCALING_FACTOR);
@@ -1032,7 +1043,7 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
   if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID, exit function */
 
   subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
-  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
   const uint8_t outPin = p->gpioPin;
 
@@ -1184,7 +1195,7 @@ static void setEpochTime(uint32_t epochTime) {
  * Each pattern is an array of ON/OFF durations.
  */
 void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk) {
-  const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
   const uint8_t outPin = p->gpioPin;
 
   /* If the strobe is not active, do nothing */
@@ -1457,7 +1468,7 @@ void sendIntroduction(int msgPtr = 0) {
     
     if (modIdx >= node.subModCnt) return;
     subModule_t& sub = node.subModule[modIdx];
-    const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+    const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
     const uint16_t dataMsgId  = p->dataMsgId;
     const uint8_t  dataMsgDlc = p->dataMsgDlc; 
@@ -1774,9 +1785,9 @@ static void handleCanRX(twai_message_t &message) {
         }
         subModule_t& sub = node.subModule[modIdx];
 
-        sub.config.gpioInput.pull     = msgToConsume.data[5];  /* Input resistor configuration */
-        sub.config.gpioInput.invert   = msgToConsume.data[6];  /* logical inversion flag */
-        sub.config.gpioInput.debounce = msgToConsume.data[7];  /* input debounce time */
+        sub.config.gpioInput.flags       = msgToConsume.data[5];  /* Input resistor configuration */
+        sub.config.gpioInput.debounce_ms = msgToConsume.data[6];  /* input debounce time */
+        sub.config.gpioInput.reserved    = msgToConsume.data[6];  /* reserved byte */
 
       }
       break;
@@ -1982,7 +1993,7 @@ void updateSubModules()
       /* Digital GPIO personalities */
       case PERS_GPIO_OUTPUT:
       case PERS_GPIO_INPUT:
-        sub->runTime.valueU32 = digitalRead(myPin); /**< Capture digital value */
+        // sub->runTime.valueU32 = digitalRead(myPin); /**< Capture digital value */
         break;
 
         /* Analog ADC input */
@@ -2020,8 +2031,8 @@ void updateSubModules()
         continue;
       }
 
-      sub->runTime.valueU32       = value;     /* update value */
-      sub->runTime.last_change_ms = millis();  /* update timestamp */
+      // sub->runTime.valueU32       = value;     /* update value */
+      // sub->runTime.last_change_ms = millis();  /* update timestamp */
     } /* end of for loop */
 }
 
@@ -2149,6 +2160,8 @@ void TaskTWAI(void *pvParameters) {
 
   /* TWAI driver is now successfully installed and started */
   can_driver_installed = true;
+
+
   // FLAG_SEND_INTRODUCTION = true; /* send an introduction message */
   introMsgPtr = 0;  /* reset the intro message pointer */
   sendIntroduction(0); /* send the first introduction message */
@@ -2249,7 +2262,7 @@ void TaskOutput(void *pvParameters)
         for (int i = 0; i < MAX_SUB_MODULES; i++)
         {
           subModule_t &sub = node.subModule[i];
-          const personalityDef_t* p = getPersonality(sub.personalityId); /**< Pointer to the personality definition for this sub-module */
+          const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
           outputTracker_t &trk = trackers[i];
 
@@ -2312,10 +2325,26 @@ void TaskOutput(void *pvParameters)
     }
 }
 
+#include "driver/timer.h"
+
+volatile bool g_timerIsrFired = false;
+
+extern "C" void IRAM_ATTR timer_test_isr(void* arg)
+{
+    g_timerIsrFired = true;
+
+    // Clear the interrupt
+    TIMERG0.int_clr_timers.t0 = 1;
+
+    // Re-enable alarm
+    TIMERG0.hw_timer[0].config.alarm_en = TIMER_ALARM_EN;
+}
 
 void setup() {
-/** clear config valid flag */ 
-FLAG_VALID_CONFIG    = false;
+  /** clear config valid flag */ 
+  FLAG_VALID_CONFIG    = false;
+
+  adc_power_acquire();
 
 #ifdef ESP32CYD
   pinMode(LED_BLUE, OUTPUT);
@@ -2338,6 +2367,7 @@ FLAG_VALID_CONFIG    = false;
   WiFi.onEvent(WiFiEvent);
   WiFi.mode(WIFI_MODE_APSTA);
   WiFi.softAP(AP_SSID);
+  WiFi.setSleep(false);
   WiFi.begin(ssid, password);
 
   /* set up some clock parameters */
@@ -2355,16 +2385,19 @@ FLAG_VALID_CONFIG    = false;
   /* Load nodeID into the nodeInfo struct */
   node.nodeID = unpackBytestoUint32((const uint8_t*)&myNodeID);
 
-  /* Read the NVS data from flash and init hardware */
+  /* Read the NVS data from flash */
   handleReadCfgNVS();                                                 
 
+  /* Install ISR service */
+  initGpioIsrService();  
+
+  /* Initialize the hardware, attach ISR handlers as needed */
+  initHardware();
 
   /** Initialize producer library callbacks */
   producerInit(&producerCB);
 
-  /** Pretty print nodeInfo */
-  // printNodeInfo(&node);
-  
+
   #ifdef ESP32CYD
   initCYD();                                                       /* Initialize CYD interface */
   analogSetAttenuation(ADC_11db);
@@ -2434,5 +2467,29 @@ void loop() {
       }
     }
   }
+
+  // if (gpioIsrFired) {
+  //   gpioIsrFired = false;
+  //   Serial.println("[TEST] GPIO ISR FIRED");
+  // }
+  // Serial.printf("PIN39=%d ", gpio_get_level(GPIO_NUM_39));
+  // if (isr_debug_val != 0) {
+  if (gpioIsrFired) {
+
+    // Serial.printf("ISR  idx=%u node=%p sub=%p val=%u\n",
+    //               isr_debug_idx,
+    //               (void*)isr_debug_node,
+    //               (void*)isr_debug_sub,
+    //               isr_debug_val);
+
+    printf("ISR val=%u last=%u\n", isr_debug_val, isr_debug_node);
+
+    // Clear after printing
+    isr_debug_val = 0;
+    gpioIsrFired = false;
+}
+
+  vTaskDelay(200 / portTICK_PERIOD_MS);
+
   // NOP;
 }
