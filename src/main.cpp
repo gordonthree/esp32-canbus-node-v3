@@ -200,7 +200,19 @@ unsigned long time_now = 0;
 #ifdef ARGB_LED
 /* Global strip pointers to allow for dynamic initialization */
 // NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0800KbpsMethod>* strip = NULL;
-NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0800KbpsMethod>* g_argbStrips[MAX_SUB_MODULES] = { nullptr };
+// NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0800KbpsMethod>* g_argbStrips[MAX_SUB_MODULES] = { nullptr };
+/**  store raw pointers because NeoPixelBus does not provide a polymorphic base class. */
+void* g_argbStrips[MAX_SUB_MODULES] = { nullptr };
+
+using RmtMethod0 = NeoEsp32RmtMethodBase<NeoEsp32RmtSpeed800Kbps, NeoEsp32RmtChannel0>;
+using RmtMethod1 = NeoEsp32RmtMethodBase<NeoEsp32RmtSpeed800Kbps, NeoEsp32RmtChannel1>;
+using RmtMethod2 = NeoEsp32RmtMethodBase<NeoEsp32RmtSpeed800Kbps, NeoEsp32RmtChannel2>;
+using RmtMethod3 = NeoEsp32RmtMethodBase<NeoEsp32RmtSpeed800Kbps, NeoEsp32RmtChannel3>;
+using RmtMethod4 = NeoEsp32RmtMethodBase<NeoEsp32RmtSpeed800Kbps, NeoEsp32RmtChannel4>;
+using RmtMethod5 = NeoEsp32RmtMethodBase<NeoEsp32RmtSpeed800Kbps, NeoEsp32RmtChannel5>;
+using RmtMethod6 = NeoEsp32RmtMethodBase<NeoEsp32RmtSpeed800Kbps, NeoEsp32RmtChannel6>;
+using RmtMethod7 = NeoEsp32RmtMethodBase<NeoEsp32RmtSpeed800Kbps, NeoEsp32RmtChannel7>;
+
 #endif
 
 unsigned long ota_progress_millis = 0;
@@ -2124,26 +2136,39 @@ void managePeriodicMessages() {
     
 }
 
+/**
+ * @brief Process a GPIO event and convert it into value for the producer
+ *
+ * @param subIdx The submodule index of the GPIO event
+ * @param raw The raw value of the GPIO event (0 or 1)
+ *
+ * This function processes a GPIO event and converts it into a producer subsystem.
+ * It first checks if the submodule index is valid and if the pin is enabled.
+ * Then it applies the inversion, debouncing and stable state detection according to the mode of the GPIO event.
+ * Finally, it updates the runTime struct of the submodule.
+ */
 static void processGpioEvent(uint8_t subIdx, uint8_t raw)
 {
   if (subIdx < 0 || subIdx >= MAX_SUB_MODULES)
       return;
 
-  subModule_t* sub          = &node.subModule[subIdx];
-  const personalityDef_t* p = &g_personalityTable[sub->personalityIndex];
-  const uint8_t pinNum      = p->gpioPin;
+  subModule_t* sub          = &node.subModule[subIdx]; /**< pointer to the submodule */
+  const personalityDef_t* p = &g_personalityTable[sub->personalityIndex]; /**< pointer to the personality definition */
+  const uint8_t pinNum      = p->gpioPin; /**< GPIO pin number */
 
+  /** Test for invalid pin number */
   if (pinNum >= GPIO_NUM_MAX)
     return;
 
+  /** Test if ISR is enabled for this pin */
   if (!isrGpio.enabled[pinNum])
     return;
 
   Serial.printf("[INPUT] sub=%u pin=%u raw=%u\n",
             subIdx, pinNum, raw);
 
-  const gpio_num_t pin         = (gpio_num_t)pinNum;
-  const uint32_t   now         = millis();  /* timestamp */
+  const gpio_num_t pin         = (gpio_num_t)pinNum; /**< GPIO pin */
+  const uint32_t   now         = millis();  /**< timestamp in ms */
 
   const uint8_t    debounceMs  = sub->config.gpioInput.debounce_ms;
   const uint8_t    flags       = sub->config.gpioInput.flags;
@@ -2153,7 +2178,7 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
 
 
   /* Apply inversion */
-  const uint8_t value = inv ? !raw : raw;
+  const uint8_t value = inv ? !raw : raw; /**< Invert raw value if requested, store as output value */
 
   /* Raw change detection */
   if (value != isrGpio.lastRawState[pinNum]) {
@@ -2196,7 +2221,7 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
     *  MODE: MOMENTARY
     * ============================ */
   if (mode == INPUT_MODE_MOMENTARY) {
-      sub->runTime.valueU32       = value ? MOMENTARY_PRESS_VALUE
+      sub->runTime.valueU32       = value ? MOMENTARY_ACTIVE_VALUE
                                           : MOMENTARY_RELEASE_VALUE;
       sub->runTime.last_change_ms = now;
       // Serial.printf("[MOMENTARY] sub=%u valueU32=%u\n",
