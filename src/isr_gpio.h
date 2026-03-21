@@ -1,6 +1,8 @@
 #pragma once
 #include <stdint.h>
 #include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,15 +34,44 @@ extern "C" {
 #define GPIO_DOUBLE_CLICK           (3U)
 #define GPIO_SINGLE_CLICK           (1U)
 
-static const uint32_t LONG_PRESS_MS   = 600;   // hold > 600ms
-static const uint32_t DOUBLE_CLICK_MS = 300;   // second click within 300ms
+/* Event Queue constants */
+#define GPIO_EVENT_QUEUE_LEN        (32U)
+typedef struct {
+    uint8_t  subIdx;
+    uint8_t  raw;
+} gpio_event_t;
 
-extern bool gpioIsrFired;
 
-extern volatile uint32_t isr_debug_node;
-extern volatile uint32_t isr_debug_sub;
-extern volatile uint32_t isr_debug_val;
-extern volatile uint32_t isr_debug_idx;
+
+/* --------------------------------------------------------------------------
+ * Public ISR state structure (previously private)
+ * -------------------------------------------------------------------------- */
+struct IsrGpioState
+{
+    int8_t  subIdx[GPIO_NUM_MAX];
+    bool    enabled[GPIO_NUM_MAX];
+
+    uint32_t lastChangeMs[GPIO_NUM_MAX];
+    uint32_t lastStableMs[GPIO_NUM_MAX];
+
+    uint8_t lastRawState[GPIO_NUM_MAX];
+    uint8_t stableState[GPIO_NUM_MAX];
+
+    uint8_t edgeMode[GPIO_NUM_MAX];
+
+    uint32_t pressStartMs[GPIO_NUM_MAX];
+    uint32_t lastClickMs[GPIO_NUM_MAX];
+    uint8_t  clickCount[GPIO_NUM_MAX];
+
+    IsrGpioState();
+};
+
+/* --------------------------------------------------------------------------
+ * Expose the globals
+ * -------------------------------------------------------------------------- */
+
+extern QueueHandle_t gpioEventQueue;
+extern IsrGpioState isrGpio;
 
 
 /* --------------------------------------------------------------------------

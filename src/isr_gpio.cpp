@@ -8,53 +8,29 @@
 
 /* Get this out of the way early */
 extern "C" void IRAM_ATTR gpio_isr_handler(void* arg);
-bool gpioIsrFired  = false;
-
-volatile uint32_t isr_debug_node = 0;
-volatile uint32_t isr_debug_sub  = 0;
-volatile uint32_t isr_debug_val  = 0;
-volatile uint32_t isr_debug_idx  = 0;
 
 /* --------------------------------------------------------------------------
- * Internal ISR state (private to this file)
+ * Global state
  * -------------------------------------------------------------------------- */
+QueueHandle_t gpioEventQueue = NULL; /* GPIO event queue */
+IsrGpioState isrGpio;                /* ISR state */
 
-struct IsrGpioState
+IsrGpioState::IsrGpioState() /* Constructor */
 {
-    int8_t  subIdx[GPIO_NUM_MAX];          /**< Pin → submodule index (-1 = unused) */
-    bool    enabled[GPIO_NUM_MAX];         /**< Pin → ISR enabled flag */
+    for (int i = 0; i < GPIO_NUM_MAX; ++i) {
+        subIdx[i]       = -1;
+        enabled[i]      = false;
+        lastChangeMs[i] = 0;
+        lastStableMs[i] = 0;
+        lastRawState[i] = 0;
+        stableState[i]  = 0;
+        edgeMode[i]     = GPIO_INTR_ANYEDGE;
 
-    uint32_t lastChangeMs[GPIO_NUM_MAX];   /**< Last raw change timestamp */
-    uint32_t lastStableMs[GPIO_NUM_MAX];   /**< Last debounced change timestamp */
-
-    uint8_t lastRawState[GPIO_NUM_MAX];    /**< Last raw read */
-    uint8_t stableState[GPIO_NUM_MAX];     /**< Last debounced stable state */
-
-    uint8_t edgeMode[GPIO_NUM_MAX];        /**< Edge filter mode */
-
-    uint32_t pressStartMs[GPIO_NUM_MAX];   /**< When the button was pressed */
-    uint32_t lastClickMs[GPIO_NUM_MAX];    /**< Last completed click */
-    uint8_t  clickCount[GPIO_NUM_MAX];     /**< Click counter for multi-click */
-
-    IsrGpioState()
-    {
-        for (int i = 0; i < GPIO_NUM_MAX; ++i) {
-            subIdx[i]       = -1;
-            enabled[i]      = false;
-            lastChangeMs[i] = 0;
-            lastStableMs[i] = 0;
-            lastRawState[i] = 0;
-            stableState[i]  = 0;
-            edgeMode[i]     = GPIO_INTR_ANYEDGE;
-
-            pressStartMs[i] = 0;
-            lastClickMs[i]  = 0;
-            clickCount[i]   = 0;
-        }
+        pressStartMs[i] = 0;
+        lastClickMs[i]  = 0;
+        clickCount[i]   = 0;
     }
-};
-
-static IsrGpioState isrGpio;    /**< Private ISR state */
+}
 
 /* --------------------------------------------------------------------------
  * ISR service initialization
@@ -62,12 +38,22 @@ static IsrGpioState isrGpio;    /**< Private ISR state */
 
 void initGpioIsrService(void)
 {
-    static bool installed = false;
+    static bool installed = false; /* Only install the ISR service once */
     if (!installed) {
         esp_err_t err = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
-        Serial.printf("ISR service install: %s\n", esp_err_to_name(err));
+        Serial.printf("[ISR] ISR service install: %s\n", esp_err_to_name(err));
         installed = true;
     }
+
+    /* Create GPIO ISR event queue if it doesn't already exist */
+    if (gpioEventQueue == NULL) {
+        gpioEventQueue = xQueueCreate(GPIO_EVENT_QUEUE_LEN, sizeof(gpio_event_t));
+    }
+
+    if (gpioEventQueue == NULL) {
+        Serial.println("[ISR] ERROR: Failed to create GPIO event queue!");
+    }
+
 }
 
 /* --------------------------------------------------------------------------
@@ -138,116 +124,24 @@ extern "C" void IRAM_ATTR gpio_isr_handler(void* arg)
     if (subIdx < 0 || subIdx >= MAX_SUB_MODULES)
         return;
 
-    subModule_t* sub          = &node.subModule[subIdx];
-    const personalityDef_t* p = &g_personalityTable[sub->personalityIndex];
+    const subModule_t* sub    = nodeGetSubModule(subIdx); /* retrieve submodule */
+    const personalityDef_t* p = &g_personalityTable[sub->personalityIndex]; /* retrieve personality */
     const uint8_t pinNum      = p->gpioPin;
-
-    // sub->runTime.valueU32 = 99;   // impossible value
-    // sub->runTime.last_published_value = 123456789;  // impossible value
-    // sub->runTime.last_change_ms = xTaskGetTickCountFromISR();
-
-    // Export debug info safely
-    // isr_debug_idx  = subIdx;
-    // isr_debug_node = sub->runTime.last_published_value;
-    // isr_debug_sub  = (uint32_t)sub;
-    // isr_debug_val  = sub->runTime.valueU32;
-    
-    
-
-    // return; // early return
 
     if (pinNum >= GPIO_NUM_MAX)
         return;
 
-    if (!isrGpio.enabled[pinNum])
-        return;
+    const uint8_t  raw   = gpio_get_level((gpio_num_t)pinNum);
+    const uint32_t now   = xTaskGetTickCountFromISR();
 
-    const gpio_num_t pin         = (gpio_num_t)pinNum;
-    // const uint32_t now           = esp_timer_get_time() / 1000;
-    const uint32_t now           = xTaskGetTickCountFromISR();
-    const uint8_t raw            = gpio_get_level(pin);
+    gpio_event_t evt = {   // uses NEW IDENTIFIER #1
+        .subIdx    = (uint8_t)subIdx,
+        .raw       = raw
+    };
 
-    const uint8_t debounceMs     = sub->config.gpioInput.debounce_ms;
-    const uint8_t flags          = sub->config.gpioInput.flags;
-
-    const inputModeType_t mode   = (inputModeType_t)INPUT_FLAG_GET_MODE(flags);
-    const inputInvert_t   inv    = (inputInvert_t)INPUT_FLAG_GET_INV(flags);
-
-
-    /* Apply inversion */
-    const uint8_t value = inv ? !raw : raw;
-
-    /* Raw change detection */
-    if (value != isrGpio.lastRawState[pinNum]) {
-        isrGpio.lastRawState[pinNum] = value;
-        isrGpio.lastChangeMs[pinNum] = now;
-    }
-
-    /* Debounce window */
-    if ((now - isrGpio.lastChangeMs[pinNum]) < debounceMs)
-        return;
-
-    /* Stable state detection */
-    if (value != isrGpio.stableState[pinNum]) {
-
-        isrGpio.stableState[pinNum]  = value;
-        isrGpio.lastStableMs[pinNum] = now;
-
-        /* ============================
-         *  MODE: MOMENTARY
-         * ============================ */
-        if (mode == INPUT_MODE_MOMENTARY) {
-            sub->runTime.valueU32       = value ? MOMENTARY_PRESS_VALUE 
-                                                : MOMENTARY_RELEASE_VALUE;
-            sub->runTime.last_change_ms = now;
-            return;
-        }
-
-        /* ============================
-         *  MODE: TOGGLE
-         * ============================ */
-        if (mode == INPUT_MODE_TOGGLE && value == GPIO_STATE_HIGH) {
-            sub->runTime.valueU32 ^= TOGGLE_BIT_MASK;   // toggle bit 0
-            sub->runTime.last_change_ms = now;
-            return;
-        }
-
-        /* ============================
-         *  MODE: LATCH
-         * ============================ */
-        if (mode == INPUT_MODE_LATCH) {
-            sub->runTime.valueU32       = value ? GPIO_LATCH_ON : GPIO_LATCH_OFF;
-            sub->runTime.last_change_ms = now;
-            return;
-        }
-
-        /* ============================
-         *  MODE: NORMAL BUTTON
-         *  (click, double-click, long press)
-         * ============================ */
-        if (mode == INPUT_MODE_NORMAL) {
-
-            if (value == GPIO_STATE_HIGH) {
-                isrGpio.pressStartMs[pinNum] = now;
-            } else {
-                uint32_t pressDuration = now - isrGpio.pressStartMs[pinNum];
-
-                if (pressDuration >= LONG_PRESS_MS) {
-                    sub->runTime.valueU32 = GPIO_LONG_PRESS;   // long press
-                } else {
-                    if ((now - isrGpio.lastClickMs[pinNum]) < DOUBLE_CLICK_MS) {
-                        sub->runTime.valueU32 = GPIO_DOUBLE_CLICK;   // double click
-                        isrGpio.clickCount[pinNum] = 0;
-                    } else {
-                        sub->runTime.valueU32 = GPIO_SINGLE_CLICK;   // single click
-                        isrGpio.clickCount[pinNum] = 1;
-                    }
-                    isrGpio.lastClickMs[pinNum] = now;
-                }
-
-                sub->runTime.last_change_ms = now;
-            }
-        }
-    }
+    BaseType_t hpTaskWoken = pdFALSE;
+    xQueueSendFromISR(gpioEventQueue, &evt, &hpTaskWoken);  // NEW IDENTIFIER #2
+    portYIELD_FROM_ISR(hpTaskWoken);
 } /* gpio_isr_handler() */
+
 

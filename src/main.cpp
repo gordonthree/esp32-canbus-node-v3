@@ -73,7 +73,9 @@
 /* memory allocation for main tasks */
 #define TASK_TWAI_STACK_SIZE   (4096U)
 #define TASK_OTA_STACK_SIZE    (4096U)
-#define TASK_SWITCH_STACK_SIZE (4096U)
+#define TASK_OUTPUT_STACK_SIZE (4096U)
+#define TASK_INPUT_STACK_SIZE  (4096U)
+
 #define tskLowPriority         (tskIDLE_PRIORITY + 1)
 #define tskNormalPriority      (tskIDLE_PRIORITY + 2)
 #define tskHighPriority        (tskIDLE_PRIORITY + 4)
@@ -135,7 +137,8 @@ SemaphoreHandle_t flashMutex = xSemaphoreCreateMutex(); /**< mutex for flash saf
 
 /* Task handles */
 TaskHandle_t xTWAIHandle   = NULL; /* declared and defined */
-TaskHandle_t xSwitchHandle = NULL; /**< Handle for the output switch logic task */
+TaskHandle_t xOutputHandle = NULL; /**< Handle for the output switch logic task */
+TaskHandle_t xInputHandle  = NULL; /**< Handle for the input event logic task */
 
 /* definitions from external libraries */
 #ifdef ESP32CYD
@@ -395,9 +398,6 @@ void initAnalogInput(uint8_t i, subModule_t& sub) {
  * @note This function is called once by the main setup() function.
  */
 void initHardware() {
-  Serial.println("[HW] Initializing GPIO ISR");
-  initGpioIsrService();  /**< Install ISR service once */
-
   Serial.println("[HW] Initializing sub-modules...");
 
   for (int i = 0; i < node.subModCnt; i++) {
@@ -507,9 +507,10 @@ void TaskOTA(void *pvParameters) {
       timerDetachInterrupt(Timer0_Cfg);
     }
 
-    /* 1. Kill the tasks using hardware first */
-    if (xTWAIHandle != NULL) vTaskSuspend(xTWAIHandle); /* suspend the TWAI task */
-    if (xSwitchHandle != NULL) vTaskSuspend(xSwitchHandle); /* suspend the output switch task */
+    /* Suspend tasks that might be using hardware */
+    if (xTWAIHandle != NULL)   vTaskSuspend(xTWAIHandle);   /* suspend the TWAI task */
+    if (xOutputHandle != NULL) vTaskSuspend(xOutputHandle); /* suspend the output switch task */
+    if (xInputHandle != NULL)  vTaskSuspend(xInputHandle);  /* suspend the input event task */
 #ifdef ESP32CYD
     if (xDisplayHandle != NULL) vTaskSuspend(xDisplayHandle); /* suspend the display task */
     if (xTouchHandle != NULL) vTaskSuspend(xTouchHandle); /* suspend the touch task */
@@ -2123,6 +2124,123 @@ void managePeriodicMessages() {
     
 }
 
+static void processGpioEvent(uint8_t subIdx, uint8_t raw)
+{
+  if (subIdx < 0 || subIdx >= MAX_SUB_MODULES)
+      return;
+
+  subModule_t* sub          = &node.subModule[subIdx];
+  const personalityDef_t* p = &g_personalityTable[sub->personalityIndex];
+  const uint8_t pinNum      = p->gpioPin;
+
+  // sub->runTime.valueU32 = 99;   // impossible value
+  // sub->runTime.last_published_value = 123456789;  // impossible value
+  // sub->runTime.last_change_ms = xTaskGetTickCountFromISR();
+
+  // Export debug info safely
+  // isr_debug_idx  = subIdx;
+  // isr_debug_node = sub->runTime.last_published_value;
+  // isr_debug_sub  = (uint32_t)sub;
+  // isr_debug_val  = sub->runTime.valueU32;
+  
+  
+
+  // return; // early return
+
+  if (pinNum >= GPIO_NUM_MAX)
+    return;
+
+  if (!isrGpio.enabled[pinNum])
+    return;
+
+  const gpio_num_t pin         = (gpio_num_t)pinNum;
+  const uint32_t   now         = millis();  /* timestamp */
+
+  const uint8_t    debounceMs  = sub->config.gpioInput.debounce_ms;
+  const uint8_t    flags       = sub->config.gpioInput.flags;
+
+  const inputModeType_t mode   = (inputModeType_t)INPUT_FLAG_GET_MODE(flags);
+  const inputInvert_t   inv    = (inputInvert_t)INPUT_FLAG_GET_INV(flags);
+
+
+  /* Apply inversion */
+  const uint8_t value = inv ? !raw : raw;
+
+  /* Raw change detection */
+  if (value != isrGpio.lastRawState[pinNum]) {
+      isrGpio.lastRawState[pinNum] = value;
+      isrGpio.lastChangeMs[pinNum] = now;
+  }
+
+  /* Debounce window */
+  if ((now - isrGpio.lastChangeMs[pinNum]) < debounceMs)
+      return;
+
+  /* Stable state detection */
+  if (value != isrGpio.stableState[pinNum]) {
+
+      isrGpio.stableState[pinNum]  = value;
+      isrGpio.lastStableMs[pinNum] = now;
+
+      /* ============================
+        *  MODE: MOMENTARY
+        * ============================ */
+      if (mode == INPUT_MODE_MOMENTARY) {
+          sub->runTime.valueU32       = value ? MOMENTARY_PRESS_VALUE 
+                                              : MOMENTARY_RELEASE_VALUE;
+          sub->runTime.last_change_ms = now;
+          return;
+      }
+
+      /* ============================
+        *  MODE: TOGGLE
+        * ============================ */
+      if (mode == INPUT_MODE_TOGGLE && value == GPIO_STATE_HIGH) {
+          sub->runTime.valueU32 ^= TOGGLE_BIT_MASK;   // toggle bit 0
+          sub->runTime.last_change_ms = now;
+          return;
+      }
+
+      /* ============================
+        *  MODE: LATCH
+        * ============================ */
+      if (mode == INPUT_MODE_LATCH) {
+          sub->runTime.valueU32       = value ? GPIO_LATCH_ON : GPIO_LATCH_OFF;
+          sub->runTime.last_change_ms = now;
+          return;
+      }
+
+      /* ============================
+        *  MODE: NORMAL BUTTON
+        *  (click, double-click, long press)
+        * ============================ */
+      if (mode == INPUT_MODE_NORMAL) {
+
+          if (value == GPIO_STATE_HIGH) {
+              isrGpio.pressStartMs[pinNum] = now;
+          } else {
+              uint32_t pressDuration = now - isrGpio.pressStartMs[pinNum];
+
+              if (pressDuration >= NORMAL_LONG_PRESS_MS) {
+                  sub->runTime.valueU32 = GPIO_LONG_PRESS;   // long press
+              } else {
+                  if ((now - isrGpio.lastClickMs[pinNum]) < NORMAL_DOUBLE_CLICK_MS) {
+                      sub->runTime.valueU32 = GPIO_DOUBLE_CLICK;   // double click
+                      isrGpio.clickCount[pinNum] = 0;
+                  } else {
+                      sub->runTime.valueU32 = GPIO_SINGLE_CLICK;   // single click
+                      isrGpio.clickCount[pinNum] = 1;
+                  }
+                  isrGpio.lastClickMs[pinNum] = now;
+              }
+
+              sub->runTime.last_change_ms = now;
+          }
+      }
+  }
+}
+
+
 void TaskTWAI(void *pvParameters) {
   // give some time at boot for the cpu setup other parameters
   vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -2325,19 +2443,19 @@ void TaskOutput(void *pvParameters)
     }
 }
 
-#include "driver/timer.h"
 
-volatile bool g_timerIsrFired = false;
+void TaskInput(void *pvParameters) {
+  Serial.println("[RTOS] GPIO event task started");
+  gpio_event_t evt;
 
-extern "C" void IRAM_ATTR timer_test_isr(void* arg)
-{
-    g_timerIsrFired = true;
-
-    // Clear the interrupt
-    TIMERG0.int_clr_timers.t0 = 1;
-
-    // Re-enable alarm
-    TIMERG0.hw_timer[0].config.alarm_en = TIMER_ALARM_EN;
+    for (;;) {
+      /* Handle GPIO events */
+      if (xQueueReceive(gpioEventQueue, &evt, portMAX_DELAY)) {
+        processGpioEvent(evt.subIdx, evt.raw);
+      }
+      vTaskDelay(pdMS_TO_TICKS(5));
+    }
+    
 }
 
 void setup() {
@@ -2428,10 +2546,20 @@ void setup() {
   xTaskCreate(
     TaskOutput,
     "Task Output Switch",
-    TASK_SWITCH_STACK_SIZE,
+    TASK_OUTPUT_STACK_SIZE,
     NULL,
     tskLowPriority, /* lowest priority plus one */
-    &xSwitchHandle
+    &xOutputHandle
+  );
+
+  /* Start the input event task*/
+  xTaskCreate(
+    TaskInput,
+    "Task Input Events",
+    TASK_INPUT_STACK_SIZE, /* 4096 bytes */
+    NULL,
+    tskNormalPriority, /* normal priority */
+    &xInputHandle
   );
 }
 
@@ -2468,28 +2596,8 @@ void loop() {
     }
   }
 
-  // if (gpioIsrFired) {
-  //   gpioIsrFired = false;
-  //   Serial.println("[TEST] GPIO ISR FIRED");
-  // }
-  // Serial.printf("PIN39=%d ", gpio_get_level(GPIO_NUM_39));
-  // if (isr_debug_val != 0) {
-  if (gpioIsrFired) {
-
-    // Serial.printf("ISR  idx=%u node=%p sub=%p val=%u\n",
-    //               isr_debug_idx,
-    //               (void*)isr_debug_node,
-    //               (void*)isr_debug_sub,
-    //               isr_debug_val);
-
-    printf("ISR val=%u last=%u\n", isr_debug_val, isr_debug_node);
-
-    // Clear after printing
-    isr_debug_val = 0;
-    gpioIsrFired = false;
-}
-
-  vTaskDelay(200 / portTICK_PERIOD_MS);
+ 
+  vTaskDelay(20 / portTICK_PERIOD_MS);
 
   // NOP;
 }
