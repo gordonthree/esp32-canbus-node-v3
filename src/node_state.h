@@ -45,9 +45,39 @@ void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc );
 /** pretty print the in-memory node config database */
 void printNodeInfo(const nodeInfo_t* node);
 
-inline uint32_t packRgb(uint8_t r, uint8_t g, uint8_t b);
-inline void updateOutputRuntime(subModule_t& sub, const personalityDef_t* p);
-inline uint32_t packStrobeState(uint8_t patternId, uint8_t step, bool output);
+/**
+ * @brief Packs three uint8_t values representing red, green, and blue into a single uint32_t.
+ *
+ * The resulting uint32_t has the following format: 0xRRGGBB.
+ *
+ * @param r uint8_t value representing red (0-255)
+ * @param g uint8_t value representing green (0-255)
+ * @param b uint8_t value representing blue (0-255)
+ * @return uint32_t containing the packed values
+ */
+static inline uint32_t packRgb(uint8_t r, uint8_t g, uint8_t b)
+{
+    return ((uint32_t)r << 16) |
+           ((uint32_t)g << 8)  |
+           (uint32_t)b;
+}
+
+/**
+ * @brief Packs three values representing a strobe pattern into a single uint32_t.
+ *
+ * The resulting uint32_t has the following format: 0xPPSSO.
+ *
+ * @param patternId uint8_t value representing the strobe pattern ID (0-255)
+ * @param step uint8_t value representing the current step in the pattern (0-255)
+ * @param output bool value representing the current state of the strobe pattern (true/false)
+ * @return uint32_t containing the packed values
+ */
+static inline uint32_t packStrobeState(uint8_t patternId, uint8_t step, bool output)
+{
+    return  ((uint32_t)patternId << 8) |
+            ((uint32_t)step      << 1) |
+            (output ? 1 : 0);
+}
 
 
 /* ============================================================================
