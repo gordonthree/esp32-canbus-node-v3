@@ -6,18 +6,57 @@
 extern "C" {
 #endif
 
-#define GPIO_PIN_MAX 39
+/* Debounce + timing */
+#define INPUT_DEBOUNCE_MIN_MS      (1u)
+#define INPUT_DEBOUNCE_MAX_MS      (250u)
+
+/* GPIO output values */
+#define GPIO_STATE_LOW             (0u)
+#define GPIO_STATE_HIGH            (1u)
+
+/* Momentary mode output values */
+#define MOMENTARY_PRESS_VALUE       (10u)
+#define MOMENTARY_RELEASE_VALUE     (11u)
+
+/* Normal button timing */
+#define NORMAL_LONG_PRESS_MS        (800u)
+#define NORMAL_DOUBLE_CLICK_MS      (300u)
+
+/* Toggle and latch mode */
+#define TOGGLE_BIT_MASK             (0x01u)
+#define GPIO_LATCH_ON               (1U)
+#define GPIO_LATCH_OFF              (0U)
+
+/* Normal mode */
+#define GPIO_LONG_PRESS             (2U)
+#define GPIO_DOUBLE_CLICK           (3U)
+#define GPIO_SINGLE_CLICK           (1U)
+
+static const uint32_t LONG_PRESS_MS   = 600;   // hold > 600ms
+static const uint32_t DOUBLE_CLICK_MS = 300;   // second click within 300ms
+
+extern bool gpioIsrFired;
+
+extern volatile uint32_t isr_debug_node;
+extern volatile uint32_t isr_debug_sub;
+extern volatile uint32_t isr_debug_val;
+extern volatile uint32_t isr_debug_idx;
+
 
 /* --------------------------------------------------------------------------
  * Public API for GPIO ISR subsystem
  * -------------------------------------------------------------------------- */
 
+
 /**
- * @brief Register a GPIO pin with the ISR system.
- * @param pin     GPIO pin number
- * @param subIdx  Submodule index
+ * @brief Attach an ISR handler to a GPIO pin.
+ * @details This function installs the ISR handler for the given GPIO pin.
+ * The handler is responsible for calling the sub-module's runtime function
+ * when a digital input change is detected.
+ * @param pin GPIO pin number
+ * @param subIdx Submodule index
  */
-void registerDigitalInputPin(uint8_t pin, uint8_t subIdx);
+void attachDigitalInputISR(uint8_t pin, uint8_t subIdx);
 
 /**
  * @brief Enable ISR for a given GPIO pin.
