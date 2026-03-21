@@ -54,6 +54,7 @@
 #include "storage.h"           /**< NVS storage routines */
 #include "submodule_types.h"   /**< Sub-module type definitions */
 #include "isr_gpio.h"          /**< GPIO interrupt routines */
+#include "strobe_patterns.h"   /**< Strobe pattern definitions from can_personality */
 
 /* my byte routines */
 #include "byte_conversion.h"
@@ -910,11 +911,13 @@ void handleMomentaryLogic(subModule_t &sub, outputTracker_t &trk) {
   /* If timer still running → keep output HIGH */
   if (millis() < trk.nextActionTime) {
     digitalWrite(pin, HIGH);
+    updateOutputRuntime(sub, p);
     return;
   }
 
   /* Timer expired → turn output OFF */
   digitalWrite(pin, LOW);
+  updateOutputRuntime(sub, p);
   trk.isActive = false;
 }
 
@@ -1360,6 +1363,13 @@ void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk) {
 
   /* Schedule the next step */
   trk.nextActionTime = millis() + pattern[trk.currentStep];
+
+  sub.runTime.valueU32 = packStrobeState(
+    sub.config.gpioOutput.param2,   // pattern ID
+    trk.currentStep,                // step index
+    state                           // GPIO state
+  );
+
 }
 
 /**
@@ -1378,7 +1388,12 @@ void handleColorCommand(twai_message_t& msg)
     if (g_argbStrips[subIdx] == nullptr) return;
     if (colorIndex >= COLOR_PALETTE_SIZE) return;
 
+    subModule_t& sub = node.subModule[subIdx];
     PaletteColor p = SystemPalette[colorIndex];
+
+    /* Update the color value in runTime */
+    sub.runTime.valueU32       = packRgb(p.R, p.G, p.B);
+    sub.runTime.last_change_ms = millis();
 
     switch (subIdx)
     {
@@ -2569,15 +2584,19 @@ void TaskTWAI(void *pvParameters) {
  */
 void TaskOutput(void *pvParameters)
 {
-    Serial.println("[RTOS] Output task started\n");
+    Serial.println("[RTOS] Output task running... ");
 
     for (;;)
     {
         for (int i = 0; i < MAX_SUB_MODULES; i++)
         {
+          /** Reference to the current sub-module */
           subModule_t &sub = node.subModule[i];
-          const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
+          /** Pointer to the personality definition for this sub-module */
+          const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; 
+
+          /** Reference to the output tracker for this sub-module */
           outputTracker_t &trk = trackers[i];
 
           /* Skip submodules that are not configured for output behavior */
@@ -2597,6 +2616,7 @@ void TaskOutput(void *pvParameters)
             case OUT_MODE_STROBE:
               handleStrobeLogic(sub, trk);
               break;
+              
             case OUT_MODE_BLINK:
             case OUT_MODE_PWM:
               /** 
@@ -2608,6 +2628,7 @@ void TaskOutput(void *pvParameters)
             case OUT_MODE_ALWAYS_ON:
               if (!trk.hasBeenSet) {
                 digitalWrite(p->gpioPin, HIGH);
+                updateOutputRuntime(sub, p);
                 trk.hasBeenSet = true;
               }
               break;
@@ -2615,6 +2636,7 @@ void TaskOutput(void *pvParameters)
             case OUT_MODE_ALWAYS_OFF:
               if (!trk.hasBeenSet) {
                 digitalWrite(p->gpioPin, LOW);
+                updateOutputRuntime(sub, p);
                 trk.hasBeenSet = true;
               }
               break;
