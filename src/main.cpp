@@ -2133,25 +2133,14 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
   const personalityDef_t* p = &g_personalityTable[sub->personalityIndex];
   const uint8_t pinNum      = p->gpioPin;
 
-  // sub->runTime.valueU32 = 99;   // impossible value
-  // sub->runTime.last_published_value = 123456789;  // impossible value
-  // sub->runTime.last_change_ms = xTaskGetTickCountFromISR();
-
-  // Export debug info safely
-  // isr_debug_idx  = subIdx;
-  // isr_debug_node = sub->runTime.last_published_value;
-  // isr_debug_sub  = (uint32_t)sub;
-  // isr_debug_val  = sub->runTime.valueU32;
-  
-  
-
-  // return; // early return
-
   if (pinNum >= GPIO_NUM_MAX)
     return;
 
   if (!isrGpio.enabled[pinNum])
     return;
+
+  Serial.printf("[INPUT] sub=%u pin=%u raw=%u\n",
+            subIdx, pinNum, raw);
 
   const gpio_num_t pin         = (gpio_num_t)pinNum;
   const uint32_t   now         = millis();  /* timestamp */
@@ -2171,73 +2160,100 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
       isrGpio.lastRawState[pinNum] = value;
       isrGpio.lastChangeMs[pinNum] = now;
   }
+  // Serial.printf("[RAW] pin=%u value=%u lastRaw=%u lastChange=%u\n",
+  //             pinNum,
+  //             value,
+  //             isrGpio.lastRawState[pinNum],
+  //             isrGpio.lastChangeMs[pinNum]);
 
-  /* Debounce window */
-  if ((now - isrGpio.lastChangeMs[pinNum]) < debounceMs)
+              
+
+  // Serial.printf("[DEBOUNCE] now=%u lastChange=%u diff=%u debounceMs=%u\n",
+  //             now,
+  //             isrGpio.lastChangeMs[pinNum],
+  //             now - isrGpio.lastChangeMs[pinNum],
+  //             debounceMs);
+
+  /* Debounce window, skip it if debounce is disabled */
+  if (debounceMs != INPUT_DEBOUNCE_DISABLED && 
+      ((now - isrGpio.lastChangeMs[pinNum]) < debounceMs))
       return;
 
   /* Stable state detection */
-  if (value != isrGpio.stableState[pinNum]) {
-
-      isrGpio.stableState[pinNum]  = value;
-      isrGpio.lastStableMs[pinNum] = now;
-
-      /* ============================
-        *  MODE: MOMENTARY
-        * ============================ */
-      if (mode == INPUT_MODE_MOMENTARY) {
-          sub->runTime.valueU32       = value ? MOMENTARY_PRESS_VALUE 
-                                              : MOMENTARY_RELEASE_VALUE;
-          sub->runTime.last_change_ms = now;
-          return;
-      }
-
-      /* ============================
-        *  MODE: TOGGLE
-        * ============================ */
-      if (mode == INPUT_MODE_TOGGLE && value == GPIO_STATE_HIGH) {
-          sub->runTime.valueU32 ^= TOGGLE_BIT_MASK;   // toggle bit 0
-          sub->runTime.last_change_ms = now;
-          return;
-      }
-
-      /* ============================
-        *  MODE: LATCH
-        * ============================ */
-      if (mode == INPUT_MODE_LATCH) {
-          sub->runTime.valueU32       = value ? GPIO_LATCH_ON : GPIO_LATCH_OFF;
-          sub->runTime.last_change_ms = now;
-          return;
-      }
-
-      /* ============================
-        *  MODE: NORMAL BUTTON
-        *  (click, double-click, long press)
-        * ============================ */
-      if (mode == INPUT_MODE_NORMAL) {
-
-          if (value == GPIO_STATE_HIGH) {
-              isrGpio.pressStartMs[pinNum] = now;
-          } else {
-              uint32_t pressDuration = now - isrGpio.pressStartMs[pinNum];
-
-              if (pressDuration >= NORMAL_LONG_PRESS_MS) {
-                  sub->runTime.valueU32 = GPIO_LONG_PRESS;   // long press
-              } else {
-                  if ((now - isrGpio.lastClickMs[pinNum]) < NORMAL_DOUBLE_CLICK_MS) {
-                      sub->runTime.valueU32 = GPIO_DOUBLE_CLICK;   // double click
-                      isrGpio.clickCount[pinNum] = 0;
-                  } else {
-                      sub->runTime.valueU32 = GPIO_SINGLE_CLICK;   // single click
-                      isrGpio.clickCount[pinNum] = 1;
-                  }
-                  isrGpio.lastClickMs[pinNum] = now;
-              }
-
-              sub->runTime.last_change_ms = now;
-          }
-      }
+  if (value == isrGpio.stableState[pinNum]) {
+      return;  // no stable change, nothing to do
   }
+
+  isrGpio.stableState[pinNum]  = value;
+  isrGpio.lastStableMs[pinNum] = now;
+
+  // Serial.printf("[STABLE] sub=%u value=%u mode=%u now=%u\n",
+  //             subIdx, value, mode, now);
+
+
+
+  /* ============================
+    *  MODE: MOMENTARY
+    * ============================ */
+  if (mode == INPUT_MODE_MOMENTARY) {
+      sub->runTime.valueU32       = value ? MOMENTARY_PRESS_VALUE
+                                          : MOMENTARY_RELEASE_VALUE;
+      sub->runTime.last_change_ms = now;
+      // Serial.printf("[MOMENTARY] sub=%u valueU32=%u\n",
+      //         subIdx, sub->runTime.valueU32);
+  }
+  /* ============================
+    *  MODE: TOGGLE
+    * ============================ */
+  else if (mode == INPUT_MODE_TOGGLE && value == GPIO_STATE_HIGH) {
+      sub->runTime.valueU32      ^= TOGGLE_BIT_MASK;   // toggle bit 0
+      sub->runTime.last_change_ms = now;
+      // Serial.printf("[TOGGLE] sub=%u valueU32=%u\n",
+      //         subIdx, sub->runTime.valueU32);
+  }
+  /* ============================
+    *  MODE: LATCH
+    * ============================ */
+  else if (mode == INPUT_MODE_LATCH) {
+      sub->runTime.valueU32       = value ? GPIO_LATCH_ON : GPIO_LATCH_OFF;
+      sub->runTime.last_change_ms = now;
+      // Serial.printf("[LATCH] sub=%u valueU32=%u\n",
+      //         subIdx, sub->runTime.valueU32);
+  }
+  /* ============================
+    *  MODE: NORMAL BUTTON
+    *  (click, double-click, long press)
+    * ============================ */
+  else if (mode == INPUT_MODE_NORMAL) {
+
+      if (value == GPIO_STATE_HIGH) {
+          isrGpio.pressStartMs[pinNum] = now;
+      } else {
+          uint32_t pressDuration = now - isrGpio.pressStartMs[pinNum];
+
+          if (pressDuration >= NORMAL_LONG_PRESS_MS) {
+              sub->runTime.valueU32 = GPIO_LONG_PRESS;   // long press
+          } else {
+              if ((now - isrGpio.lastClickMs[pinNum]) < NORMAL_DOUBLE_CLICK_MS) {
+                  sub->runTime.valueU32      = GPIO_DOUBLE_CLICK;   // double click
+                  isrGpio.clickCount[pinNum] = 0;
+              } else {
+                  sub->runTime.valueU32      = GPIO_SINGLE_CLICK;   // single click
+                  isrGpio.clickCount[pinNum] = 1;
+              }
+              isrGpio.lastClickMs[pinNum] = now;
+          }
+
+          sub->runTime.last_change_ms = now;
+      }
+    // Serial.printf("[NORMAL] sub=%u valueU32=%u\n",
+    //         subIdx, sub->runTime.valueU32);
+  } else
+  {
+    /* fall-through: if mode doesn't match, we just leave runTime unchanged */
+    Serial.printf("[UNKNOWN] sub=%u valueU32=%u\n",
+          subIdx, sub->runTime.valueU32);
+  } /* end of mode switch */
 }
 
 
@@ -2373,7 +2389,7 @@ void TaskTWAI(void *pvParameters) {
  */
 void TaskOutput(void *pvParameters)
 {
-    Serial.println("[RTOS] Output task started");
+    Serial.println("[RTOS] Output task started\n");
 
     for (;;)
     {
@@ -2445,7 +2461,7 @@ void TaskOutput(void *pvParameters)
 
 
 void TaskInput(void *pvParameters) {
-  Serial.println("[RTOS] GPIO event task started");
+  Serial.println("[RTOS] GPIO event task started\n");
   gpio_event_t evt;
 
     for (;;) {

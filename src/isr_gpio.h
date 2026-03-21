@@ -16,9 +16,6 @@ extern "C" {
 #define GPIO_STATE_LOW             (0u)
 #define GPIO_STATE_HIGH            (1u)
 
-/* Momentary mode output values */
-#define MOMENTARY_PRESS_VALUE       (10u)
-#define MOMENTARY_RELEASE_VALUE     (11u)
 
 /* Normal button timing */
 #define NORMAL_LONG_PRESS_MS        (800u)
@@ -29,10 +26,7 @@ extern "C" {
 #define GPIO_LATCH_ON               (1U)
 #define GPIO_LATCH_OFF              (0U)
 
-/* Normal mode */
-#define GPIO_LONG_PRESS             (2U)
-#define GPIO_DOUBLE_CLICK           (3U)
-#define GPIO_SINGLE_CLICK           (1U)
+
 
 /* Event Queue constants */
 #define GPIO_EVENT_QUEUE_LEN        (32U)
@@ -41,6 +35,10 @@ typedef struct {
     uint8_t  raw;
 } gpio_event_t;
 
+/* --------------------------------------------------------------------------
+ * Private API for GPIO ISR subsystem
+ * -------------------------------------------------------------------------- */
+ static inline IRAM_ATTR uint8_t sample_pin_filtered(gpio_num_t pin);
 
 
 /* --------------------------------------------------------------------------

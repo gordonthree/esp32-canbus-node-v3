@@ -113,6 +113,20 @@ void setDigitalInputEdgeMode(uint8_t pin, uint8_t mode)
     gpio_set_intr_type((gpio_num_t)pin, (gpio_int_type_t)mode);
 }
 
+/* -------------------------------------------------------------------------- 
+ * Private static helper functions
+ * -------------------------------------------------------------------------- */
+
+ static inline IRAM_ATTR uint8_t sample_pin_filtered(gpio_num_t pin)
+{
+    uint8_t a = gpio_get_level(pin);
+    uint8_t b = gpio_get_level(pin);
+    uint8_t c = gpio_get_level(pin);
+
+    // Majority vote: 2 out of 3
+    return (a & b) | (b & c) | (a & c);
+}
+
 /* --------------------------------------------------------------------------
  * Shared ISR handler
  * -------------------------------------------------------------------------- */
@@ -131,7 +145,7 @@ extern "C" void IRAM_ATTR gpio_isr_handler(void* arg)
     if (pinNum >= GPIO_NUM_MAX)
         return;
 
-    const uint8_t  raw   = gpio_get_level((gpio_num_t)pinNum);
+    const uint8_t  raw   = sample_pin_filtered((gpio_num_t)pinNum);
     const uint32_t now   = xTaskGetTickCountFromISR();
 
     gpio_event_t evt = {   // uses NEW IDENTIFIER #1
