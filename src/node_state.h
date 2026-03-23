@@ -121,3 +121,4 @@ void initHardware();
 void loadDefaults(uint16_t nodeType);
 const uint16_t getConfigurationCRC(const nodeInfo_t& node);
 const uint16_t getSubModuleCRC(const subModule_t& submod);
+uint32_t getEpochTime();

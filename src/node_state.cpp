@@ -105,3 +105,23 @@ void printNodeInfo(const nodeInfo_t* node)
 }
 
 
+
+/**
+ * @brief Get the current epoch time from the system clock.
+ *
+ * This function reads the current time from the ESP32 system clock
+ * and returns it as a uint32_t representing the number of seconds
+ * since the epoch (January 1, 1970, 00:00:00 UTC).
+ *
+ * @return uint32_t The current epoch time in seconds.
+ */
+
+uint32_t getEpochTime() 
+{
+  /* Get time from the system clock and return it as a uint32_t */
+  struct timespec newTime;
+
+  clock_gettime(CLOCK_REALTIME, &newTime); /* Read time from ESP32 clock*/
+
+  return (uint32_t)newTime.tv_sec;
+}
