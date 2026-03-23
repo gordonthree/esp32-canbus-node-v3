@@ -81,6 +81,30 @@ void saveProducerCfgToNVS(void);
 
 
 /* ============================================================================
+ *  SUBMODULE MANAGEMENT API
+ * ========================================================================== */
+
+/** 
+ * @brief Add a new sub-module to the node configuration.
+ * 
+ * @param personalityId The index of the personality template.
+ * @param config The configuration data for the sub-module.
+ * 
+ * @return The index of the new sub-module in the node configuration, -1 indicates failure.
+ */
+int addSubmodule(const uint8_t personalityId, const uint8_t* configBytes, size_t configLength);
+
+/** 
+ * @brief Remove a sub-module from the node configuration.
+ * 
+ * @param index The index of the sub-module to remove.
+ * 
+ * @return True if the sub-module was removed successfully, false otherwise.
+ */
+bool removeSubmodule(const uint8_t index);
+
+
+/* ============================================================================
  *  NODE CONFIG STORAGE API
  * ========================================================================== */
 void loadNodeDefaults();
@@ -94,6 +118,8 @@ ConfigStatus saveConfigNvs(const nodeInfo_t& node);
 ConfigStatus loadConfigNvs(nodeInfo_t& node);
 /** Save a sub-module and CRC to NVS */
 ConfigStatus saveSubModuleNvs(const subModule_t& subModule, uint8_t index);
+
+
 
 /* =========================================================================== 
  * HELPER FUNCTIONS 

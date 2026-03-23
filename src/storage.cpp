@@ -537,3 +537,105 @@ ConfigStatus saveSubModuleNvs(const subModule_t& subModule, uint8_t index)
 
     return CFG_OK;
 }
+
+/* ============================================================================
+ *  SUBMODULE MANAGEMENT API
+ * ========================================================================== */
+
+ int addSubmodule(const uint8_t personalityId,
+                 const uint8_t* configBytes,
+                 size_t configLength)
+{
+    /* Bounds check: personalityId must exist */
+    if (personalityId >= PERSONALITY_MAX) {
+        return -1;
+    }
+
+    /* Bounds check: no room left */
+    if (node.subModCnt >= MAX_SUB_MODULES) {
+        return -1;
+    }
+
+    /* Find the first empty slot */
+    int index = -1;
+    for (int i = 0; i < MAX_SUB_MODULES; i++) {
+        if (node.subModule[i].personalityIndex == 0xFF) {  // or however "empty" is defined
+            index = i;
+            break;
+        }
+    }
+
+    if (index < 0) {
+        return -1;  // no free slot
+    }
+
+    /* Retrieve the personality template */
+    const personalityDef_t* p = &templateTable[personalityId];
+
+    /* Initialize the new submodule */
+    subModule_t* sub = &node.subModule[index];
+    memset(sub, 0, sizeof(subModule_t));
+
+    /* Set the personality index equal to the template id */
+    sub->personalityIndex = personalityId;
+
+    /* Copy rawConfig (3 bytes max) */
+    size_t copyLen = (configLength > 3) ? 3 : configLength;
+    memcpy(sub->config.rawConfig, configBytes, copyLen);
+
+    /* Initialize network fields if CAP_NETWORK is set */
+    if (p->capabilities & CAP_NETWORK) {
+        /* Expecting configBytes to contain a 32-bit nodeID */
+        if (configLength >= 4) {
+            sub->networkNodeId =
+                ((uint32_t)configBytes[0] << 24) |
+                ((uint32_t)configBytes[1] << 16) |
+                ((uint32_t)configBytes[2] << 8)  |
+                ((uint32_t)configBytes[3]);
+        }
+
+        sub->lastSeen = 0; /* zero timestamp */
+        memset(sub->netConfig, 0, sizeof(sub->netConfig)); /* clear network config */
+    }
+
+    /* Mark runtime flags */
+    sub->submod_flags = SUBMOD_FLAG_DIRTY;
+
+    /* Increment count */
+    node.subModCnt++;
+
+    /* Persist to NVS (optional here, or caller can do it) */
+    // saveSubmodulesToNVS();
+
+    return index;
+}
+
+
+bool removeSubmodule(const uint8_t index)
+{
+    if (index >= MAX_SUB_MODULES) {
+        return false;
+    }
+
+    /* If the slot is already empty, nothing to do */
+    if (node.subModule[index].personalityIndex == 0xFF) {
+        return false;
+    }
+
+    /* Shift remaining submodules down to keep table contiguous */
+    for (int i = index; i < (node.subModCnt - 1); i++) {
+        node.subModule[i] = node.subModule[i + 1];
+    }
+
+    /* Clear the last entry */
+    memset(&node.subModule[node.subModCnt - 1], 0xFF, sizeof(subModule_t));
+
+    /* Decrement count */
+    node.subModCnt--;
+
+    /* Persist to NVS */
+    // saveSubmodulesToNVS();
+
+    return true;
+}
+
