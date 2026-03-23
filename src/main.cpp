@@ -675,7 +675,7 @@ const uint16_t getSubModuleCRC(const subModule_t& sub) {
 void TaskOTA(void *pvParameters) {
   /* Wait until WiFi is connected */
   while (!wifi_connected) {
-    vTaskDelay(200 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(200));
   }
 
   Serial.println("[RTOS] OTA task started.");
@@ -1559,12 +1559,12 @@ void manageColorPickerList(twai_message_t& msg) {
             size_t bytesAvailable = prefs.getBytesLength(NVS_KEY);
             
             /* Calculate capacity of our existing array in bytes */
-            size_t maxArrayBytes = sizeof(ARGBNode) * MAX_ARGB_NODES;
+            size_t maxArrayBytes = sizeof(argbNode_t) * MAX_ARGB_NODES;
 
             if (bytesAvailable > 0 && bytesAvailable <= maxArrayBytes) 
             {
                 prefs.getBytes(NVS_KEY, (void*)discoveredNodes, bytesAvailable);
-                discoveredNodeCount = bytesAvailable / sizeof(ARGBNode);
+                discoveredNodeCount = bytesAvailable / sizeof(argbNode_t);
                 Serial.printf("ARGB: Loaded %d nodes from NVS\n", discoveredNodeCount);
             }
             prefs.end();
@@ -1577,7 +1577,7 @@ void manageColorPickerList(twai_message_t& msg) {
             prefs.begin(NVS_NAMESPACE, false); /* Read-write mode */
             
             /* Save only the active portion of the array */
-            size_t bytesToWrite = sizeof(ARGBNode) * discoveredNodeCount;
+            size_t bytesToWrite = sizeof(argbNode_t) * discoveredNodeCount;
             prefs.putBytes(NVS_KEY, (const void*)discoveredNodes, bytesToWrite);
             
             prefs.end();
@@ -2637,7 +2637,7 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
 
 void TaskTWAI(void *pvParameters) {
   // give some time at boot for the cpu setup other parameters
-  vTaskDelay(100 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(100));
   Serial.println("[RTOS] TWAI task started.");
 
   /* Initialize configuration structures using macro initializers */
@@ -2647,15 +2647,15 @@ void TaskTWAI(void *pvParameters) {
 
   /* Install TWAI driver */
   if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
-    Serial.println("[TWAI] TWAI installed.");
+    Serial.println("[TWAI] TWAI driver installed.");
   } else {
-    Serial.println("[TWAI] Failed to install TWAI.");
+    Serial.println("[TWAI] Failed to install TWAI driver.");
     vTaskDelete(NULL); /* <--- Safety fix */
   }
 
   /* Start TWAI driver */
   if (twai_start() == ESP_OK) {
-    Serial.println("[TWAI] TWAI started.");
+    Serial.println("[TWAI] TWAI driver started.");
   } else {
     Serial.println("[TWAI] Failed to start TWAI, reboot recommended.");
     vTaskDelete(NULL); /* <--- Safety fix */
@@ -2673,13 +2673,12 @@ void TaskTWAI(void *pvParameters) {
   /* TWAI driver is now successfully installed and started */
   can_driver_installed = true;
 
-
-  // FLAG_SEND_INTRODUCTION = true; /* send an introduction message */
+  /* send an introduction message */
   introMsgPtr = 0;  /* reset the intro message pointer */
   sendIntroduction(0); /* send the first introduction message */
   int loopCount = 0;
 
-  /** Begin main can bus RX/TX loop */
+  /* Begin main can bus RX/TX loop */
   for (;;) {
     if (!can_driver_installed || can_suspended) {
       /* Driver not installed or bus suspended */
@@ -2746,7 +2745,7 @@ void TaskTWAI(void *pvParameters) {
     /* Send periodic messages */
     managePeriodicMessages();
 
-    vTaskDelay(10);
+    vTaskDelay(pdMS_TO_TICKS(10));
 #ifdef ESP32CYD
     digitalWrite(LED_BLUE, HIGH); /* Turn blue LED off (inverse logic) */
 #endif
@@ -3014,7 +3013,7 @@ void loop() {
     loadRoutesFromNVS();
   }
   
-  vTaskDelay(20 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(20));
 
   // NOP;
 }
