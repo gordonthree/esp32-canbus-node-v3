@@ -122,6 +122,9 @@ static const producerCallbacks_t producerCB = {
     .getRuntime        = nodeGetRuntime
 };
 
+// extern uint16_t crc16_ccitt(const uint8_t* data, uint16_t length);
+
+
 outputTracker_t trackers[MAX_SUB_MODULES];
 
 struct blinkerTracker_t {
@@ -227,67 +230,96 @@ void IRAM_ATTR Timer0_ISR()
   isrFlag = true;
 }
 
-/**
- * @brief Updates the runtime value of a digital output sub-module.
- *
- * @param sub Pointer to the subModule_t structure to update.
- * @param p Pointer to the personality definition for the sub-module.
- *
- * Updates the valueU32 field of the subModule_t structure with the current state of the
- * digital output (0 or 1).
- */
-static inline void updateOutputRuntime(subModule_t& sub, const personalityDef_t* p)
-{
-    sub.runTime.valueU32 = gpio_get_level((gpio_num_t)p->gpioPin) ? 1 : 0;
-}
-
-static inline void setOutput(const subModule_t& sub,
+static inline void setOutput(subModule_t& sub,
                              const personalityDef_t* p,
                              bool desiredState)
 {
     gpio_num_t pin = (gpio_num_t)p->gpioPin;
 
-    /* Apply inversion flag */
-    bool state = desiredState;
+    /* Apply logical inversion if required */
+    bool electricalState = desiredState;
     if (p->capabilities & CAP_OUTPUT_INVERTED) {
-        state = !state;
+        electricalState = !electricalState;
     }
 
-    /* ON state */
-    if (state)
+    /* --------------------------------------------------------------------
+     * Runtime reporting:
+     * - Simple push‑pull GPIO → report 0/1 only
+     * - Complex electrical modes → pack extended runtime bits
+     * ------------------------------------------------------------------ */
+    if (!(p->capabilities & (CAP_HIZ_OFF | CAP_HIZ_ON | CAP_OUTPUT_INVERTED)))
     {
-        /* Hi‑Z ON (open‑drain release) */
-        if (p->capabilities & CAP_HIZ_ON)
-        {
-            gpio_reset_pin(pin);
-            gpio_set_direction(pin, GPIO_MODE_INPUT);   // float HIGH
-            return;
-        }
-
-        /* Normal push‑pull HIGH */
-        gpio_reset_pin(pin);
-        gpio_set_direction(pin, GPIO_MODE_OUTPUT);
-        gpio_set_level(pin, 1);
-        return;
-    }
-
-    /* OFF state */
-    if (p->capabilities & CAP_HIZ_OFF)
-    {
-        gpio_reset_pin(pin);
-        gpio_set_direction(pin, GPIO_MODE_INPUT);       // float LOW
+        /* Simple push‑pull output: ON = 1, OFF = 0 */
+        sub.runTime.valueU32 = electricalState ? GPIO_LEVEL_HIGH : GPIO_LEVEL_LOW;
     }
     else
     {
+        /* Extended runtime encoding for Hi‑Z, open‑drain, inverted logic */
+        gpioExtendedRuntime_t rt = { .value = 0 };
+        rt.bits.logicalState    = desiredState;
+        rt.bits.electricalState = electricalState;
+        rt.bits.hizOff          = (p->capabilities & CAP_HIZ_OFF)         ? 1U : 0U;
+        rt.bits.hizOn           = (p->capabilities & CAP_HIZ_ON)          ? 1U : 0U;
+        rt.bits.inverted        = (p->capabilities & CAP_OUTPUT_INVERTED) ? 1U : 0U;
+        rt.bits.openDrain       = (p->capabilities & CAP_OPEN_DRAIN)      ? 1U : 0U;
+
+        sub.runTime.valueU32 = rt.value;
+    }
+
+    /* --------------------------------------------------------------------
+     * Electrical output behavior:
+     * - If electricalState == true → ON behavior
+     * - If electricalState == false → OFF behavior
+     * - Hi‑Z flags override push‑pull drive
+     * ------------------------------------------------------------------ */
+
+    if (electricalState)
+    {
+        /* ON state: Hi‑Z ON (open‑drain release) */
+        if (p->capabilities & CAP_HIZ_ON) {
+            gpio_reset_pin(pin);
+            gpio_set_direction(pin, GPIO_MODE_INPUT);   /* float HIGH */
+            return;
+        }
+
+        /* ON state: push‑pull HIGH */
         gpio_reset_pin(pin);
         gpio_set_direction(pin, GPIO_MODE_OUTPUT);
-        gpio_set_level(pin, 0);
+        gpio_set_level(pin, GPIO_LEVEL_HIGH);
+        return;
+    }
+
+    /* OFF state: Hi‑Z OFF (float LOW) */
+    if (p->capabilities & CAP_HIZ_OFF) {
+        gpio_reset_pin(pin);
+        gpio_set_direction(pin, GPIO_MODE_INPUT);       /* float LOW */
+    }
+    else {
+        /* OFF state: push‑pull LOW */
+        gpio_reset_pin(pin);
+        gpio_set_direction(pin, GPIO_MODE_OUTPUT);
+        gpio_set_level(pin, GPIO_LEVEL_LOW);
     }
 }
 
+static inline void subOutHelper(const uint8_t index, const bool state)
+{
+    if (index < MAX_SUB_MODULES)
+    {
+        subModule_t& sub = node.subModule[index];
+        const personalityDef_t* p = &g_personalityTable[sub.personalityIndex];
+        if (p)
+        {
+            setOutput(sub, p, state);
+        }
+    }
+}
 
 /** Inline function to validate sub-module index */
-inline bool isValidSubModuleIndex(uint8_t index) { return (index < MAX_SUB_MODULES); }
+inline bool isValidSubModuleIndex(uint8_t index) 
+{ 
+  return (index < MAX_SUB_MODULES); 
+}
 
 /**
  * @brief Handles specialized FastLED initialization for ARGB sub-modules.
@@ -625,26 +657,7 @@ void initHardware() {
   } /* for (int i = 0; i < MAX_SUB_MODULES; i++) */
 } /* initHardware() */
 
-/**
- * @brief Calculates a 16-bit CRC for the node configuration.
- * @details Uses the ESP32 ROM CRC16 implementation (CCITT).
- * @param node Reference to the canNodeInfo struct.
- * @return uint16_t The calculated checksum.
- */
-uint16_t crc16_ccitt(const uint8_t* data, size_t length) {
-  uint16_t crc = 0xFFFF; // Initial value
-  while (length--) {
-    crc ^= (uint16_t)*data++ << 8;
-    for (int i = 0; i < 8; i++) {
-      if (crc & 0x8000) {
-        crc = (crc << 1) ^ 0x1021; // Polynomial
-      } else {
-        crc <<= 1;
-      }
-    }
-  }
-  return crc;
-}
+
 
 /**
  * @brief Calculates a 16-bit CRC for the entire node configuration.
@@ -812,21 +825,26 @@ extern "C" {
     twai_message_t message;
     static int failCount = 0; /* tx fail counter */
 
-    #define CAN_STD_FRAME 0      /**< 0 = standard frame, 1 = extended frame */
-    #define CAN_DATA_FRAME 0     /**< 0 = data frame, 1 = remote frame */
-    #define CAN_NORMAL_TX 0      /**< 0 = normal transmission, 1 = SELF_RECEPTION 0 */
+    #define CAN_STD_FRAME    0   /**< 0 = standard frame, 1 = extended frame */
+    #define CAN_DATA_FRAME   0   /**< 0 = data frame, 1 = remote frame */
+    #define CAN_NORMAL_TX    0   /**< 0 = normal transmission, 1 = SELF_RECEPTION 0 */
     #define CAN_NON_COMP_DLC 0   /**< non-compliant DLC (0-8 bytes) */
     
-    /* Format message */
-    message.identifier = msgid;       /**< set message ID */
-    message.extd = CAN_STD_FRAME;                 /**< 0 = standard frame, 1 = extended frame */
-    message.rtr = CAN_DATA_FRAME;                  /**< 0 = data frame, 1 = remote frame */
-    message.self = CAN_NORMAL_TX;                 /**< 0 = normal transmission, 1 = self reception request */
-    message.dlc_non_comp = CAN_NON_COMP_DLC;         /**< non-compliant DLC (0-8 bytes) */
-    message.data_length_code = dlc;   /**< data length code (0-8 bytes) */
+    if (dlc > CAN_MAX_DLC) dlc = CAN_MAX_DLC;    /* Safety check */
 
-    if (dlc > CAN_MAX_DLC) dlc = CAN_MAX_DLC; /* Safety check */
-    memcpy(message.data, data, dlc);  /**< copy data to message data field */
+    /* Format message */
+    message.identifier       = msgid;            /**< set message ID */
+    message.extd             = CAN_STD_FRAME;    /**< 0 = standard frame, 1 = extended frame */
+    message.rtr              = CAN_DATA_FRAME;   /**< 0 = data frame, 1 = remote frame */
+    message.self             = CAN_NORMAL_TX;    /**< 0 = normal transmission, 1 = self reception request */
+    message.dlc_non_comp     = CAN_NON_COMP_DLC; /**< non-compliant DLC (0-8 bytes) */
+    message.data_length_code = dlc;              /**< data length code (0-8 bytes) */
+
+    memcpy(message.data, data, dlc);             /**< copy data to message data field */
+
+    const size_t dataSize = sizeof(message.data) / sizeof(message.data[0]);
+
+    Serial.printf("[TWAI] Sending ID: 0x%03X DLC: %d DATA SIZE: %d\n", msgid, dlc, dataSize);
 
     /* Attempt transmission with a 10ms timeout */
     if (twai_transmit(&message, pdMS_TO_TICKS(10)) == ESP_OK) {
@@ -942,8 +960,9 @@ void stopHardwarePwm(uint8_t submodIdx) {
         ledc_stop(LEDC_LOW_SPEED_MODE, static_cast<ledc_channel_t>(idx), 0); /* 0 sets the idle level to low */
 
         /** Explicitly set the pin to LOW to ensure a clean off-state  */
-        pinMode(pin, OUTPUT);
-        digitalWrite(pin, LOW);
+        // pinMode(pin, OUTPUT);
+        // digitalWrite(pin, LOW);
+        subOutHelper(submodIdx, false);
 
         /** Update tracker state */
         blinkers[idx].isActive = false;
@@ -969,14 +988,14 @@ void handleMomentaryLogic(subModule_t &sub, outputTracker_t &trk) {
 
   /* If timer still running → keep output HIGH */
   if (millis() < trk.nextActionTime) {
-    digitalWrite(pin, HIGH);
-    updateOutputRuntime(sub, p);
+    // digitalWrite(pin, HIGH);
+    setOutput(sub, p, true);
     return;
   }
 
   /* Timer expired → turn output OFF */
-  digitalWrite(pin, LOW);
-  updateOutputRuntime(sub, p);
+  // digitalWrite(pin, LOW);
+  setOutput(sub, p, false);
   trk.isActive = false;
 }
 
@@ -1024,22 +1043,28 @@ static void setDisplayMode(twai_message_t& msg, uint8_t displayMode = DISPLAY_MO
 
   switch (displayMode) {
     case DISPLAY_MODE_OFF: // display off
-      stopHardwarePwm(displayID);
-      digitalWrite(displayPin, LOW);
+      // TODO: Add function to control backlight that handles multiple backlight types (analog, pwm, argb, etc)
+      // stopHardwarePwm(displayID);
+      // digitalWrite(displayPin, LOW);
+      // setOutput(sub, p, false);
       Serial.printf("Display %d OFF\n", displayID);
       break;
     case DISPLAY_MODE_ON: // display on
-      stopHardwarePwm(displayID);
-      digitalWrite(displayPin, HIGH);
+      // stopHardwarePwm(displayID);
+      // digitalWrite(displayPin, HIGH);
+      // TODO: Add function to control backlight that handles multiple backlight types (analog, pwm, argb, etc)
+
       Serial.printf("Display %d ON\n", displayID);
       break;
     case DISPLAY_MODE_CLEAR: // clear display
-      stopHardwarePwm(displayID);
+      // stopHardwarePwm(displayID);
+      // TODO: Not sure what "clear" means here
       Serial.printf("Display %d CLEAR\n", displayID);
       break;
     case DISPLAY_MODE_FLASH: // flash display
     {
       uint8_t flashRate = msg.data[5];
+      // TODO: Need to support multiple backlight types
       handleHardwarePwm(displayID, displayPin, flashRate);
       Serial.printf("Display %d FLASH AT %d rate\n", displayID, flashRate);
     }
@@ -1238,7 +1263,8 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
           clearPwmHardware(switchID);
           break;
         default:
-          digitalWrite(outPin, LOW); /* set output driver low */
+          // digitalWrite(outPin, LOW); /* set output driver low */
+          setOutput(sub, p, false);
           Serial.printf("Switch %d (pin %d) OFF\n", switchID, outPin);
           break;
       }
@@ -1249,13 +1275,14 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
         case OUT_MODE_MOMENTARY: /* If we are in momentary mode, 'ON' should behave like a trigger */
           trackers[switchID].nextActionTime = millis() + 
             (MOM_SW_SCALING_FACTOR * sub.config.gpioOutput.param1);
-          digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
+          // digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
+          setOutput(sub, p, true);
           trackers[switchID].isActive = true;
           break;
         case OUT_MODE_BLINK: /* If we are in blink mode, 'ON' should behave like a trigger */
         case OUT_MODE_PWM: /* Use LEDC hardware for blinking and pwm*/
         {
-          //TODO: blinkOutput is going away, need to refactor to a more generic pwmOutput instead
+          //TODO: optimize this
           uint32_t freq = (uint32_t)(sub.config.gpioOutput.param1 * BLINK_SCALING_FACTOR);
           uint8_t  pin  = outPin;
           if (freq == 0) { /* for debugging don't let the blink rate equal 0*/
@@ -1267,7 +1294,8 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
         }
 
         default:
-          digitalWrite(outPin, HIGH); /* set output driver high */
+          // digitalWrite(outPin, HIGH); /* set output driver high */
+          setOutput(sub, p, true);
           Serial.printf("Switch %d (pin %d) ON\n", switchID, outPin);
           break;
       }
@@ -1278,7 +1306,8 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
       Serial.printf("Output Task Switch %d (pin %d) MOMENTARY (%dms)\n", switchID, outPin, (MOM_SW_SCALING_FACTOR * sub.config.gpioOutput.param1));
 
       trackers[switchID].nextActionTime = millis() + (MOM_SW_SCALING_FACTOR * sub.config.gpioOutput.param1);
-      digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
+      // digitalWrite(outPin, HIGH); /* Ensure it starts HIGH */
+      setOutput(sub, p, true);
       trackers[switchID].isActive = true; /* enable momentary timer */
       trackers[switchID].isConfigured = true; /* enable this output for nonblocking control*/
       break;
@@ -1295,24 +1324,6 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
 
 
 
-/**
- * @brief Get the current epoch time from the system clock.
- *
- * This function reads the current time from the ESP32 system clock
- * and returns it as a uint32_t representing the number of seconds
- * since the epoch (January 1, 1970, 00:00:00 UTC).
- *
- * @return uint32_t The current epoch time in seconds.
- */
-
-static uint32_t getEpochTime() {
-  /* Get time from the system clock and return it as a uint32_t */
-  struct timespec newTime;
-
-  clock_gettime(CLOCK_REALTIME, &newTime); /* Read time from ESP32 clock*/
-
-  return (uint32_t)newTime.tv_sec;
-}
 
 /**
  * @brief Send a uint32_t on the CAN bus
@@ -1388,7 +1399,8 @@ void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk) {
   if (patternId >= (sizeof(STROBE_PATTERNS) / sizeof(STROBE_PATTERNS[0]))) /* Invalid pattern, turn off output and exit */
   {
       trk.isActive = false;
-      digitalWrite(outPin, LOW);
+      // digitalWrite(outPin, LOW);
+      setOutput(sub, p, false);
       return;
   }
 
@@ -1398,7 +1410,8 @@ void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk) {
   if (!def.steps || def.count == 0) /* Invalid pattern, turn off output and exit */
   {
       trk.isActive = false;
-      digitalWrite(outPin, LOW);
+      // digitalWrite(outPin, LOW);
+      setOutput(sub, p, false);
       return;
   }
 
@@ -1413,7 +1426,8 @@ void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk) {
   bool state = (trk.currentStep % 2 == 0);
 
   /* Set the GPIO output state */
-  digitalWrite(outPin, state);
+  // digitalWrite(outPin, state);
+  setOutput(sub, p, state);
 
   /* Schedule the next step */
   trk.nextActionTime = millis() + pattern[trk.currentStep];
@@ -1426,6 +1440,7 @@ void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk) {
   );
 
 }
+
 
 /**
  * @brief Handles color commands from the gateway node.
@@ -1661,6 +1676,94 @@ uint8_t countActiveSubModules() {
     return count;
 }
 
+/* send the router table to the master node */
+void sendRouteList()
+{
+  uint8_t       msgData[CAN_MAX_DLC] = {0};           /* wipe the buffer before using it */
+  uint16_t      txMsgID              = 0;             /* Init to 0 */
+  uint32_t      txMsgDLC             = CAN_MAX_DLC;   /* Init to 8 bytes */
+  const uint8_t msgDataOffset        = 5;             /* skip the four bytes for node id and one byte for chunk id */
+  uint8_t       routeCount           = 0;             /* Init to 0 */
+  uint16_t      crc                  = 0xFFFF;        /* Initial value */
+
+  // Count active routes
+  for (int i = 0; i < MAX_ROUTES; i++) {
+    if (g_routesCrc[i].in_use)
+        routeCount++;
+  }
+
+  // Compute total chunks
+  const uint8_t chunksPerRoute = ROUTE_CHUNKS_PER_ROUTE;
+  const uint8_t totalChunks = routeCount * chunksPerRoute;
+
+  /* compute route table crc16 */
+  crc = crc16_ccitt((const uint8_t*)g_routes, sizeof(g_routes));
+
+  /* Consistent 32-bit Node ID across all route frames */
+  packUint32ToBytes(node.nodeID, &msgData[MSG_DATA_0]);
+
+  /* Step 1: Send route list header */
+  txMsgID  = ROUTE_LIST_BEGIN_ID;
+  txMsgDLC = ROUTE_LIST_BEGIN_DLC;
+
+  msgData[MSG_DATA_4] = routeCount;  /* set route count */
+  msgData[MSG_DATA_5] = totalChunks; /* set total chunks */
+
+  /* Send the message */
+  send_message(txMsgID, msgData, txMsgDLC);
+
+  /* Step 2: Send route list data */
+  txMsgID  = ROUTE_LIST_DATA_ID;
+  txMsgDLC = ROUTE_LIST_DATA_DLC;
+
+  /* Reset the buffer, reload the node id */
+  memset(msgData, 0, CAN_MAX_DLC);
+  packUint32ToBytes(node.nodeID, &msgData[MSG_DATA_0]);
+
+  uint8_t chunkIdx = 0;
+  for (int idx = 0; idx < MAX_ROUTES; idx++) {
+    if (g_routesCrc[idx].in_use) {
+
+      /* Update CRC value with the CRC for this route entry */
+      crc = crc16_ccitt_update(crc,
+                                 (const uint8_t*)&g_routes[idx],
+                                 sizeof(route_entry_t));
+
+      /* Copy the route entry to the message buffer, 3 bytes at a time */
+      const uint8_t *raw = (const uint8_t*)&g_routes[idx]; /* pointer to route data*/
+
+      for (uint8_t chunk = 0; chunk < chunksPerRoute; chunk++) {
+        msgData[MSG_DATA_4] = chunkIdx;         /* chunk index */
+        msgData[MSG_DATA_5] = raw[chunk*3 + 0]; /* payload byte 0 */
+        msgData[MSG_DATA_6] = raw[chunk*3 + 1]; /* payload byte 1 */
+        msgData[MSG_DATA_7] = raw[chunk*3 + 2]; /* payload byte 2 */
+
+        /* Send the message */
+        send_message(txMsgID, msgData, txMsgDLC);
+
+        chunkIdx++; /* increment chunk index */
+      }
+    }
+  }
+
+  /* Step 3: send end of route list message, include total routes, total chunks and crc16 */
+  txMsgID  = ROUTE_LIST_END_ID;
+  txMsgDLC = ROUTE_LIST_END_DLC;
+
+  /* Reset the buffer, reload the node id */
+  memset(msgData, 0, CAN_MAX_DLC);
+  packUint32ToBytes(node.nodeID, &msgData[MSG_DATA_0]);
+
+  msgData[MSG_DATA_4] = routeCount;           /* total route count      */
+  msgData[MSG_DATA_5] = chunkIdx;             /* counter of chunks sent */
+  msgData[MSG_DATA_6] = ((crc >> 8) & 0xFF);  /* set crc16 high byte    */
+  msgData[MSG_DATA_7] = (crc & 0xFF);         /* set crc16 low byte     */
+  
+  /* Send the message */
+  send_message(txMsgID, msgData, txMsgDLC);
+
+} /* end sendRouteList() */
+
 /**
  * @brief Send an introduction message about the node
  *
@@ -1747,7 +1850,11 @@ static void buildSyntheticMessage(const router_action_t &action,
     memset(&outMsg, 0, sizeof(outMsg));
 
     outMsg.identifier = action.actionMsgId;
-    outMsg.data_length_code = 8;   // Always 8 for consumer actions
+    if (action.actionMsgDlc > 0) {
+      outMsg.data_length_code = action.actionMsgDlc;
+    } else {
+      outMsg.data_length_code = CAN_MAX_DLC;   // Always 8 for consumer actions
+    }
 
     // Bytes 0–3 = NodeID (same as incoming messages)
     packUint32ToBytes(node.nodeID, &outMsg.data[0]);
@@ -1789,25 +1896,29 @@ static void handleCanRX(twai_message_t &message) {
     return; // message is not for us
   }
 
-  /* debug: dump message data */
-  Serial.printf("RX MSG: 0x%03X DATA: ", message.identifier);
-  for (int i = 0; i < message.data_length_code; i++) {
-    Serial.printf("0x%02X ", message.data[i]);
-  }
-  Serial.println();
-
-  // Run consumer routing logic for every valid message
+  /* prepare router library action buffer */
   router_action_t action = {0};
-  /** recast message so it matches the checkRoutes() signature */
+  /* prepare synthetic message buffer */
+  twai_message_t msgToConsume = {0};
+
+  /* recast message as can_msg_t so it matches the checkRoutes() signature */
   const can_msg_t newMsg = toCanMsg(&message);
+
+  /* hand off message to the router library */
   bool takeAction = checkRoutes(&newMsg, &action);
 
-  twai_message_t msgToConsume;
-
-  if (takeAction) {
+  /* decide if we generate a synthetic message or use the original */
+  if (takeAction) { /* message router indicates we need to generate a synthetic message */
+      Serial.printf("[ROUTER] ACTION: 0x%03X\n", action.actionMsgId);
       buildSyntheticMessage(action, msgToConsume);
   } else {
       msgToConsume = message;  // use original
+      /* debug: dump message data */
+      Serial.printf("[ROUTER] RX MSG: 0x%03X DATA: ", message.identifier);
+      for (int i = 0; i < message.data_length_code; i++) {
+        Serial.printf("0x%02X ", message.data[i]);
+      }
+      Serial.println();
   }
 
   /** extract submodule index */
@@ -1817,6 +1928,14 @@ static void handleCanRX(twai_message_t &message) {
   switch (msgToConsume.identifier) 
   {
     case ROUTE_TAKE_NO_ACTION:          // no action 0xFFFF
+      break;
+
+    case DATA_ROUTE_ACK_ID:
+      send_message(DATA_ROUTE_ACK_ID, msgToConsume.data, DATA_ROUTE_ACK_DLC);
+      break;
+
+    case REQ_ROUTE_LIST_ID:
+      sendRouteList();
       break;
 
     case CFG_PRODUCER_CFG_ID: /**< Configure a single producer submodule */
@@ -2316,10 +2435,19 @@ static void handleProducerTick(uint32_t now)
     /* Submodule index */
     payload[4] = evt.sub_idx;
 
-    /* Scalar value (big-endian) */
-    if (dlc > 5) payload[5] = (evt.value >> BYTE_SHIFT2) & BYTE_MASK;
-    if (dlc > 6) payload[6] = (evt.value >> BYTE_SHIFT)  & BYTE_MASK;
-    if (dlc > 7) payload[7] = (evt.value)                & BYTE_MASK;
+    const uint32_t valueU32 = evt.value;
+
+    if (valueU32 <= 0xFF) {                 /* Single byte value, send it in position 5 */
+        payload[5] = valueU32 & BYTE_MASK;        
+    } else if (valueU32 <= 0xFFFF) {        /* Two-byte value */
+        payload[5] = (valueU32 >> BYTE_SHIFT) & BYTE_MASK;
+        payload[6] = (valueU32)               & BYTE_MASK;
+
+    } else {                                /* Three-byte value */
+        payload[5] = (valueU32 >> BYTE_SHIFT2) & BYTE_MASK;
+        payload[6] = (valueU32 >> BYTE_SHIFT)  & BYTE_MASK;
+        payload[7] = (valueU32)                & BYTE_MASK;
+    }
 
     /* Send message */
     send_message(p->dataMsgId, payload, dlc);
@@ -2682,16 +2810,16 @@ void TaskOutput(void *pvParameters)
 
             case OUT_MODE_ALWAYS_ON:
               if (!trk.hasBeenSet) {
-                digitalWrite(p->gpioPin, HIGH);
-                updateOutputRuntime(sub, p);
+                // digitalWrite(p->gpioPin, HIGH);
+                setOutput(sub, p, true);
                 trk.hasBeenSet = true;
               }
               break;
 
             case OUT_MODE_ALWAYS_OFF:
               if (!trk.hasBeenSet) {
-                digitalWrite(p->gpioPin, LOW);
-                updateOutputRuntime(sub, p);
+                // digitalWrite(p->gpioPin, LOW);
+                setOutput(sub, p, false);
                 trk.hasBeenSet = true;
               }
               break;
@@ -2749,7 +2877,7 @@ void setup() {
 
   Serial.begin(115200);
   Serial.setDebugOutput(true);
-  delay(2500); /* Provide time for the board's usb interface to change from flash to uart mode */
+  delay(2500); /* Provide time for the CPU to settle after reboot */
 
   /* Debug check for memory alignment */
   Serial.printf("\n[DEBUG] Struct Sizes - nodeInfo_t: %d, subModule_t: %d\n",
@@ -2788,6 +2916,8 @@ void setup() {
   /** Initialize producer library callbacks */
   producerInit(&producerCB);
 
+  /* Initialize router CRC16 callback */
+  router_set_crc_callback(crc16_ccitt);
 
   #ifdef ESP32CYD
   initCYD();                                                       /* Initialize CYD interface */
@@ -2869,7 +2999,16 @@ void loop() {
     }
   }
 
- 
+  if (g_routeSaveRequested) { /* Check for router save request */
+    g_routeSaveRequested = false;
+    saveRoutesToNVS();
+  }
+
+  if (g_routeLoadRequested) { /* Check for router load request */
+    g_routeLoadRequested = false;
+    loadRoutesFromNVS();
+  }
+  
   vTaskDelay(20 / portTICK_PERIOD_MS);
 
   // NOP;
