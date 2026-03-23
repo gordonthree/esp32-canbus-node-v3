@@ -31,7 +31,44 @@ void printHexDump(const void* ptr, size_t size) {
     Serial.println("\n---------------------------");
 }
 
+/**
+ * @brief Calculates a 16-bit CRC for the node configuration.
+ * @details Uses the ESP32 ROM CRC16 implementation (CCITT).
+ * @param node Reference to the canNodeInfo struct.
+ * @return uint16_t The calculated checksum.
+ */
+uint16_t crc16_ccitt(const uint8_t* data, uint16_t length) 
+{
+  uint16_t crc = 0xFFFF; // Initial value
+  while (length--) {
+    crc ^= (uint16_t)*data++ << 8;
+    for (int i = 0; i < 8; i++) {
+      if (crc & 0x8000) {
+        crc = (crc << 1) ^ 0x1021; // Polynomial
+      } else {
+        crc <<= 1;
+      }
+    }
+  }
+  return crc;
+}
 
+uint16_t crc16_ccitt_update(uint16_t crc, 
+                            const uint8_t *data, 
+                            uint16_t length)
+{
+    while (length--) {
+        crc ^= (uint16_t)(*data++ << 8);
+        for (int i = 0; i < 8; i++) {
+            if (crc & 0x8000) {
+                crc = (crc << 1) ^ 0x1021;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    return crc;
+}
 /* ============================================================================
  *  ROUTE TABLE LOAD/SAVE
  * ========================================================================== */
@@ -45,6 +82,7 @@ void loadRoutesFromNVS()
     if (prefs.begin(ROUTE_NS, true)) {
         if (prefs.isKey(ROUTE_KEY))
             prefs.getBytes(ROUTE_KEY, g_routes, sizeof(g_routes));
+            prefs.getBytes(ROUTE_CRC_KEY, &g_routesCrc, sizeof(g_routesCrc));
         prefs.end();
     }
 
@@ -53,12 +91,30 @@ void loadRoutesFromNVS()
 
 void saveRoutesToNVS()
 {
+
+    /* First loop through the array and calculate the CRC 
+       and update the timestamp for each route entry */
+
+    for (uint8_t i = 0; i < MAX_ROUTES; i++) {
+        /* Pointer to CRC data struct */
+        route_entry_crc_t *crc = &g_routesCrc[i]; 
+        
+        if (!crc->in_use) continue; /* skip unused entries */
+        
+        crc->ts  = getEpochTime();
+
+        printf("[CRC] route %d CRC=0x%04X TS=%d in_use=%d\n",
+           i, crc->crc, crc->ts, crc->in_use);
+
+    }
+
     if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
         return;
 
     Preferences prefs;
     if (prefs.begin(ROUTE_NS, false)) {
         prefs.putBytes(ROUTE_KEY, g_routes, sizeof(g_routes));
+        prefs.putBytes(ROUTE_CRC_KEY, g_routesCrc, sizeof(g_routesCrc));
         prefs.end();
     }
 

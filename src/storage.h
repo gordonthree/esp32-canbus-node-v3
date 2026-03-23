@@ -26,10 +26,14 @@ enum ConfigStatus {
 
 // NVS namespaces
 static constexpr const char* ROUTE_NS        = "route_table";
-static constexpr const char* ROUTE_KEY       = "routes";
+static constexpr const char* ROUTE_KEY       = "route_data";
+static constexpr const char* ROUTE_CRC_KEY   = "route_crc";
 
-static constexpr const char* PROD_NS         = "producer_cfg";
-static constexpr const char* PROD_KEY        = "cfg";
+
+static constexpr const char* PROD_NS         = "producer_table";
+static constexpr const char* PROD_KEY        = "producer_data";
+static constexpr const char* PROD_CRC_KEY    = "producer_crc";
+
 
 static constexpr const char* NODE_NS         = "node_cfg";
 static constexpr const char* NODE_CRC_KEY    = "node_crc";
@@ -90,3 +94,22 @@ ConfigStatus saveConfigNvs(const nodeInfo_t& node);
 ConfigStatus loadConfigNvs(nodeInfo_t& node);
 /** Save a sub-module and CRC to NVS */
 ConfigStatus saveSubModuleNvs(const subModule_t& subModule, uint8_t index);
+
+/* =========================================================================== 
+ * HELPER FUNCTIONS 
+ * ========================================================================= */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+uint16_t crc16_ccitt(const uint8_t *data, 
+                     uint16_t length);
+
+uint16_t crc16_ccitt_update(uint16_t crc, 
+                            const uint8_t *data, 
+                            uint16_t length);
+
+#ifdef __cplusplus
+}
+#endif
