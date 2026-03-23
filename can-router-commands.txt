@@ -1,0 +1,57 @@
+# BEGIN
+cansend can0 300#2597511C0008
+
+# DATA chunks
+cansend can0 301#2597511C00001800   # idx 0
+cansend can0 301#2597511C01000000   # idx 1
+cansend can0 301#2597511C02000025   # idx 2
+cansend can0 301#2597511C0396511C   # idx 3
+cansend can0 301#2597511C04000510   # idx 4
+cansend can0 301#2597511C05020808   # idx 5
+cansend can0 301#2597511C06020001   # idx 6 (SS=02)
+cansend can0 301#2597511C07000201   # idx 7
+
+# END
+cansend can0 302#2597511C0001
+
+# BEGIN
+cansend can0 300#2597571C0008
+
+# DATA chunks
+cansend can0 301#2597571C00001800   # idx 0
+cansend can0 301#2597571C01000000   # idx 1
+cansend can0 301#2597571C02000025   # idx 2
+cansend can0 301#2597571C0397571C   # idx 3
+cansend can0 301#2597571C04000510   # idx 4
+cansend can0 301#2597571C05020808   # idx 5
+cansend can0 301#2597571C06010001   # idx 6 (SS=01)
+cansend can0 301#2597571C07000201   # idx 7
+
+# END
+cansend can0 302#2597571C0001
+
+# BEGIN
+cansend can0 300#25A56D840008
+
+# DATA chunks
+cansend can0 301#25A56D8400001800   # idx 0, 00 18 00
+cansend can0 301#25A56D8401000000   # idx 1, 00 00 00
+cansend can0 301#25A56D8402000025   # idx 2, 00 00 25
+cansend can0 301#25A56D8403A56D84   # idx 3, A5 6D 84
+cansend can0 301#25A56D8404000510   # idx 4, 00 05 10
+cansend can0 301#25A56D8405020808   # idx 5, 02 08 08
+cansend can0 301#25A56D8406010001   # idx 6, 01 00 01
+cansend can0 301#25A56D8407000201   # idx 7, 00 02 01
+
+# END
+cansend can0 302#25A56D840001
+
+# request routes
+cansend can0 308#2597511C0000
+cansend can0 308#25A56D840000
+cansend can0 308#2597571C0000
+
+# load routes nvs
+cansend can0 313#2597511C0000
+cansend can0 313#25A56D840000
+cansend can0 313#2597571C0000
