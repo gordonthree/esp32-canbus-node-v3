@@ -2873,6 +2873,11 @@ void setup() {
   digitalWrite(LED_BLUE, HIGH); /* reverse logic, high equals off */
   digitalWrite(LED_RED, HIGH);
   digitalWrite(LED_GREEN, HIGH);
+
+  /* register callbacks */
+  espcyd_set_send_message_callback(send_message);
+  espcyd_set_backlight_callback(handleHardwarePwm);
+
 #endif
 
   Serial.begin(115200);
