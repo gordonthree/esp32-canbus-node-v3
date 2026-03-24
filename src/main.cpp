@@ -307,7 +307,7 @@ static inline void subOutHelper(const uint8_t index, const bool state)
     if (index < MAX_SUB_MODULES)
     {
         subModule_t& sub = node.subModule[index];
-        const personalityDef_t* p = &g_personalityTable[sub.personalityIndex];
+        const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex];
         if (p)
         {
             setOutput(sub, p, state);
@@ -332,7 +332,7 @@ void initArgbHardware(uint8_t index, subModule_t& sub)
 
     if (index >= MAX_SUB_MODULES) return;
 
-    const personalityDef_t* p = &g_personalityTable[sub.personalityIndex];
+    const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex];
     if (!p) return;
 
     uint8_t  dataPin    = p->gpioPin;
@@ -473,7 +473,7 @@ void initArgbHardware(uint8_t index, subModule_t& sub)
  */
 void initGPIOInput(uint8_t i, subModule_t& sub)
 {
-    const personalityDef_t* p = &g_personalityTable[sub.personalityIndex];  /**< Personality definition */
+    const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex];  /**< Personality definition */
     const gpio_num_t pin = (gpio_num_t)p->gpioPin;                          /**< ESP‑IDF pin enum */
         
     gpio_config_t cfg = {};                                                 /**< GPIO config struct */
@@ -521,7 +521,7 @@ void initGPIOInput(uint8_t i, subModule_t& sub)
  */
 void initPwmHardware(uint8_t i, subModule_t& sub)
 {
-    const personalityDef_t* p = &g_personalityTable[sub.personalityIndex];   /**< Personality definition */
+    const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex];   /**< Personality definition */
     const gpio_num_t pin = (gpio_num_t)p->gpioPin;                   /**< ESP‑IDF pin enum */
 
     /* ------------------------------------------------------------------------
@@ -584,18 +584,38 @@ void clearPwmHardware(uint8_t i) {
 }
 
 void initGpioOutput(uint8_t i, subModule_t& sub) {
-  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
   pinMode(p->gpioPin, OUTPUT);
   Serial.printf("Submod %d: Digital Output Init (Pin %d)\n", i, p->gpioPin);
 } 
 
 void initAnalogInput(uint8_t i, subModule_t& sub) {
-  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
   pinMode(p->gpioPin, ANALOG);
   Serial.printf("Submod %d: Analog Input Init (Pin %d)\n", i, p->gpioPin);
 }
+
+static int initRuntimePersonalityTable(void)
+{
+    uint8_t count = 0;
+    /** Clear runtimePersonalityTable array */
+    memset(&runtimePersonalityTable, 0, sizeof(personalityDef_t) * MAX_RUNTIME_PERSONALITIES);  
+
+    if (g_personalityCount == 0) {
+      return -1; /* No personalities defined */
+    }
+
+    /* Copy built-in personalities into runtime table */
+    for (uint8_t i = 0; i < g_personalityCount; i++) {
+        runtimePersonalityTable[i] = g_personalityTable[i];
+        count++;
+    }
+
+    return count;
+}
+
 
 /**
  * @brief Initializes all sub-modules based on their intro message IDs.
@@ -607,7 +627,7 @@ void initHardware() {
 
   for (int i = 0; i < node.subModCnt; i++) {
     subModule_t& sub = node.subModule[i];
-    const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+    const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
     if (sub.introMsgId == 0) continue;
 
@@ -979,7 +999,7 @@ void stopHardwarePwm(uint8_t submodIdx) {
  *   - After duration expires, output returns LOW
  */
 void handleMomentaryLogic(subModule_t &sub, outputTracker_t &trk) {
-  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
   uint8_t pin = p->gpioPin;
 
@@ -1037,7 +1057,7 @@ static void setDisplayMode(twai_message_t& msg, uint8_t displayMode = DISPLAY_MO
 
   if (displayID >= MAX_SUB_MODULES) return; /* invalid display ID */
   subModule_t& sub = node.subModule[displayID]; /* get submodule reference */
-  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
   uint8_t displayPin = p->gpioPin; /* get output pin */
 
@@ -1092,7 +1112,7 @@ static void setSwBlinkDelay(twai_message_t& msg) {
   uint8_t freq     = msg.data[5];                      /* blink delay */
   if (switchID >= MAX_SUB_MODULES) return;             /* invalid switch ID */
   subModule_t& sub = node.subModule[switchID];         /* get submodule reference */
-  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
   uint8_t pin = p->gpioPin; /* get output pin */
   sub.config.gpioOutput.param1 = freq;            /* update blink delay */
   handleHardwarePwm(switchID, pin, freq);       /* update hardware blinker */
@@ -1118,7 +1138,7 @@ static void setPWMDuty(twai_message_t& msg) { /* 0x117 */
   pwmDuty = (double)(pwmDuty * LEDC_13BIT_100PCT); /* convert to LEDC duty cycle */
   if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
   subModule_t& sub     = node.subModule[switchID];  /* get submodule reference */
-  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
   uint8_t pin = p->gpioPin; /* get output pin */
   uint32_t workingFreq = (uint32_t)(sub.config.gpioOutput.param1 * PWM_SCALING_FACTOR);    /* get pwm frequency */
   handleHardwarePwm(switchID, pin, workingFreq, pwmDuty);     /* update hardware */
@@ -1130,7 +1150,7 @@ static void setPWMFreq(twai_message_t& msg) { /* 0x118 */
   uint8_t pwmFreq  = msg.data[5];  /* pwm frequency */
   if (switchID >= MAX_SUB_MODULES) return;      /* invalid switch ID */
   subModule_t& sub = node.subModule[switchID];  /* get submodule reference */
-  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
   uint8_t pin = p->gpioPin; /* get output pin */
   sub.config.gpioOutput.param1 = pwmFreq;       /* update pwm frequency in config */
   uint32_t workingFreq = (uint32_t)(pwmFreq * PWM_SCALING_FACTOR);
@@ -1244,7 +1264,7 @@ static void setSwitchState(twai_message_t& msg, uint8_t swState = OUT_STATE_OFF)
   if (switchID >= MAX_SUB_MODULES) return; /* invalid switch ID, exit function */
 
   subModule_t& sub = node.subModule[switchID]; /* get submodule reference */
-  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
   const uint8_t outPin = p->gpioPin;
 
@@ -1382,7 +1402,7 @@ static void setEpochTime(uint32_t epochTime) {
  * Each pattern is an array of ON/OFF durations.
  */
 void handleStrobeLogic(subModule_t &sub, outputTracker_t &trk) {
-  const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+  const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
   const uint8_t outPin = p->gpioPin;
 
   /* If the strobe is not active, do nothing */
@@ -1809,7 +1829,7 @@ void sendIntroduction(int msgPtr = 0) {
     
     if (modIdx >= node.subModCnt) return;
     subModule_t& sub = node.subModule[modIdx];
-    const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+    const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
 
     const uint16_t dataMsgId  = p->dataMsgId;
     const uint8_t  dataMsgDlc = p->dataMsgDlc; 
@@ -2006,7 +2026,7 @@ static void handleCanRX(twai_message_t &message) {
           Serial.printf("Invalid sub module index %d\n", modIdx);
           break;
         }
-        const personalityDef_t* p = &g_personalityTable[node.subModule[modIdx].personalityIndex];
+        const personalityDef_t* p = &runtimePersonalityTable[node.subModule[modIdx].personalityIndex];
         if (!p) 
         {
           Serial.printf("Personality not found for index %d\n", modIdx);
@@ -2024,7 +2044,7 @@ static void handleCanRX(twai_message_t &message) {
           Serial.printf("Invalid sub module index %d\n", modIdx);
           break;
         }
-        const personalityDef_t* p = &g_personalityTable[node.subModule[modIdx].personalityIndex];
+        const personalityDef_t* p = &runtimePersonalityTable[node.subModule[modIdx].personalityIndex];
         if (!p) 
         {
           Serial.printf("Personality not found for index %d\n", modIdx);
@@ -2313,7 +2333,7 @@ void updateSubModules()
   for (uint8_t i = 0; i < node.subModCnt; i++)
   {
     subModule_t          *sub = &node.subModule[i];
-    const personalityDef_t *p = &g_personalityTable[sub->personalityIndex];
+    const personalityDef_t *p = &runtimePersonalityTable[sub->personalityIndex];
 
     if (!p) {
         Serial.printf("Producer: personality lookup failed for index %u\n", i);
@@ -2414,7 +2434,7 @@ static void handleProducerTick(uint32_t now)
 
     /** Lookup personality */
     const subModule_t    &sub = node.subModule[evt.sub_idx];
-    const personalityDef_t *p = &g_personalityTable[sub.personalityIndex];
+    const personalityDef_t *p = &runtimePersonalityTable[sub.personalityIndex];
     if (!p) {
         Serial.printf("Producer: personality lookup failed for sub %u\n", evt.sub_idx);
         return;
@@ -2506,7 +2526,7 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
       return;
 
   subModule_t* sub          = &node.subModule[subIdx]; /**< pointer to the submodule */
-  const personalityDef_t* p = &g_personalityTable[sub->personalityIndex]; /**< pointer to the personality definition */
+  const personalityDef_t* p = &runtimePersonalityTable[sub->personalityIndex]; /**< pointer to the personality definition */
   const uint8_t pinNum      = p->gpioPin; /**< GPIO pin number */
 
   /** Test for invalid pin number */
@@ -2776,7 +2796,7 @@ void TaskOutput(void *pvParameters)
           subModule_t &sub = node.subModule[i];
 
           /** Pointer to the personality definition for this sub-module */
-          const personalityDef_t* p = &g_personalityTable[sub.personalityIndex]; 
+          const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; 
 
           /** Reference to the output tracker for this sub-module */
           outputTracker_t &trk = trackers[i];
@@ -2907,6 +2927,19 @@ void setup() {
 
   /* Load nodeID into the nodeInfo struct */
   node.nodeID = unpackBytestoUint32((const uint8_t*)&myNodeID);
+
+  /* Initialize runtime personality table (built-ins only) */
+  int rc = initRuntimePersonalityTable();
+  if (rc > 0) {
+      runtimePersonalityCount = rc;
+      Serial.printf("[INIT] Initialized runtime personality table with %d personalities\n", rc);
+  } else {
+      Serial.println("[ERR] Failed to initialize runtime personality table!");
+      // TODO: recovery state
+  }
+
+  /* Build physical submodules */
+  loadNodeDefaults();
 
   /* Read the NVS data from flash */
   handleReadCfgNVS();                                                 
