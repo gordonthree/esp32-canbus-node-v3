@@ -1,7 +1,10 @@
 #include "storage.h"           /* NVS storage routines */
 #include "personality_table.h" /* Personality definitions */
 #include "can_producer.h"      /* CAN producer definitions */ 
-// #include "isr_gpio.h"          /* GPIO interrupt routines */
+
+#ifndef IGNORE_CRC_ERROR
+#define IGNORE_CRC_ERROR false
+#endif
 
 // Global mutex for NVS access (declared in main.cpp)
 extern SemaphoreHandle_t flashMutex;
@@ -230,12 +233,14 @@ void deleteProducerCfgFromNVS()
     for (uint8_t i = 0; i < g_submodules_count; i++) {
         node.subModule[i] = submod_setup[i];    /* copy user config from submod_setup */
         node.subModule[i].personalityIndex = i; /* assign matching index */
+        node.subModule[i].personalityId =
+            runtimePersonalityTable[i].personalityId; /* force submodule personalityId to match runtime table */
     }
 
     /** Add virtual submodules from personality table */
-    for (uint8_t i = 0; i < g_personalityCount; i++) {
+    for (uint8_t i = 0; i < runtimePersonalityCount; i++) {
 
-        const personalityDef_t *p = &g_personalityTable[i];
+        const personalityDef_t *p = &runtimePersonalityTable[i];
 
         if (!(p->flags & BUILDER_FLAG_IS_VIRTUAL))
             continue; /* skip non-virtual personalities */
@@ -299,10 +304,9 @@ void handleReadCfgNVS()
   do {
       loadCfgStatus = loadConfigNvs(node);
 
-      if (loadCfgStatus == CFG_OK) {
+      if ((loadCfgStatus == CFG_OK) || (IGNORE_CRC_ERROR == true)) {
           Serial.println("[INIT] Config loaded successfully.");
           FLAG_VALID_CONFIG = true;
-        //   initHardware(); /**< Initialize the hardware */
           break;
       }
 
