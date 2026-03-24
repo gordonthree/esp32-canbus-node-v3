@@ -139,7 +139,7 @@ extern "C" void IRAM_ATTR gpio_isr_handler(void* arg)
         return;
 
     const subModule_t* sub    = nodeGetSubModule(subIdx); /* retrieve submodule */
-    const personalityDef_t* p = &g_personalityTable[sub->personalityIndex]; /* retrieve personality */
+    const personalityDef_t* p = &runtimePersonalityTable[sub->personalityIndex]; /* retrieve personality */
     const uint8_t pinNum      = p->gpioPin;
 
     if (pinNum >= GPIO_NUM_MAX)
