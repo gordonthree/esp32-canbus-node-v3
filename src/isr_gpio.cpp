@@ -12,7 +12,6 @@ extern "C" void IRAM_ATTR gpio_isr_handler(void* arg);
 /* --------------------------------------------------------------------------
  * Global state
  * -------------------------------------------------------------------------- */
-QueueHandle_t gpioEventQueue = NULL; /* GPIO event queue */
 
 IsrGpioState isrGpio;                /* ISR state */
 
