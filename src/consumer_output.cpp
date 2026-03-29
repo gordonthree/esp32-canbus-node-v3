@@ -14,12 +14,7 @@ static void setSwBlinkDelay(can_msg_t *msg)
   sub->config.gpioOutput.param1 = freq;                /* update blink delay */
   sub->runTime.valueU32         = freq;                /* update blink delay runtime */
 
-    /* Queue hardware update */
-  enqueueOutputCmd(
-      OUTPUT_CMD_SET_BLINK_RATE,
-      switchID,
-      (uint32_t)freq
-  );  
+  /* no need to queue hardware update, new freq takes effect immediately */
 
   Serial.printf("Blink Delay: %d Switch: %d\n", sub->config.gpioOutput.param1, switchID);
 }
@@ -33,11 +28,12 @@ static void setSwStrobePat(can_msg_t *msg) {
   subModule_t *sub = nodeGetSubModule(switchID);       /* get submodule reference */
   sub->config.gpioOutput.param2 = strobePat;           /* update strobe pattern */
   sub->runTime.valueU32         = strobePat;           /* update strobe pattern runtime */  
-  /* Queue hardware update */
+
+  /* Reset strobe hardware */
   enqueueOutputCmd(
-      OUTPUT_CMD_SET_STROBE_PAT,
+      OUTPUT_CMD_TRACKER_RESET,
       switchID,
-      (uint32_t)strobePat
+      (uint32_t)true /* this value doesn't matter */
   );  
 
   Serial.printf("Strobe Pattern: %d Switch: %d\n", sub->config.gpioOutput.param2, switchID);
