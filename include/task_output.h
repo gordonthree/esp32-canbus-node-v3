@@ -38,3 +38,4 @@ void setOutput(subModule_t *sub,
 
 void subOutHelper(const uint8_t index, const bool state);
 
+bool blockLocalMsg(const can_msg_t *msg);
