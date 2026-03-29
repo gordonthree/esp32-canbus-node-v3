@@ -7,9 +7,12 @@
 #include "crc16.h"             /* CRC16 functions */
 #include "can_dispatch.h"      /* for sendIntroduction*/
 #include "node_state.h"        /* Node and sub-module state table */
+#include "esp_log.h"
+static const char *TAG = "consumer_identity";
 
 static uint8_t introMsgPtr = 0; /* intro message pointer */
 
+static void setEpochTime(uint32_t epochTime);
 
 /**
  * @brief Receive time in seconds and write it to the ESP32 clock
@@ -35,7 +38,7 @@ static void setEpochTime(uint32_t epochTime)
 void handleIdentityConfig(can_msg_t *msg)
 {
     const uint8_t modIdx = msg->data[4];   /* byte 4 holds the sub module index */
-
+    ESP_LOGI(TAG, "Processing identity command 0x%03X for sub module %d", msg->identifier, modIdx);
     switch (msg->identifier)
     {
         /* 0x400 */

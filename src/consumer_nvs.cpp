@@ -2,6 +2,8 @@
 #include "byte_conversion.h"
 #include "storage.h"              /**< NVS API */
 #include "task_twai.h"            /**< TWAI API */
+#include "esp_log.h"
+static const char *TAG = "consumer_nvs";
 
 void handleNvsConfig(can_msg_t *msg)
 {
@@ -12,15 +14,15 @@ void handleNvsConfig(can_msg_t *msg)
 
     case CFG_ERASE_NVS_ID: /**< Master requesting NVS erase */
         {
-            Serial.println("Master requesting NVS erase...");
+            ESP_LOGI(TAG, "Proccesing NVS erase request.");
             handleEraseCfgNVS();
         }
     break;
 
     case CFG_REBOOT_ID: /** Master requesting reboot */
     {
-        Serial.println("Master requested reboot, rebooting...");
-        vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before reboot */
+        ESP_LOGI(TAG, "Master requested reboot...");
+        vTaskDelay(pdMS_TO_TICKS(10)); /* Short sleep before reboot */
         ESP.restart();
     }
     break;
@@ -39,18 +41,18 @@ void handleNvsConfig(can_msg_t *msg)
         /** CRCs match, attempt to persist to flash */
         if (saveConfigNvs() == CFG_OK) {
             canEnqueueMessage(DATA_CONFIG_CRC_ID, responseData, DATA_CONFIG_CRC_DLC);
-            Serial.println("NVS Commit Successful");
+            ESP_LOGI(TAG, "NVS Commit Successful");
         } else {
             /** Flash hardware error */
             canEnqueueMessage(DATA_CFGWRITE_FAILED_ID, responseData, DATA_CFGWRITE_FAILED_DLC);
-            Serial.println("NVS Commit Failed: Flash Error");
+            ESP_LOGI(TAG, "NVS Commit Failed: Flash Error");
         }
     }
     break;
 
     case CFG_READ_NVS_ID: /**< Master requesting NVS read */
     {
-        Serial.println("NVS Read Request");
+        ESP_LOGI(TAG, "NVS Read Request");
         const uint16_t masterCrc = (msg->data[4] << 8) | msg->data[5];
 
         (void)masterCrc; /* currently unused */
