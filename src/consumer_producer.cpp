@@ -2,16 +2,22 @@
 #include "canbus_msg.h"
 #include "can_producer.h"
 #include "node_state.h"         /* Node and sub-module */
+#include "esp_log.h"
+
+static const char *TAG = "consumer_producer";
 
 void handleProducerConfig(can_msg_t *msg)
 {
     const uint8_t modIdx = msg->data[4];   /* byte 4 holds the sub module index */
+    /* skip local messages for all functions in this block */
+    if (blockLocalMsg(msg))
+        return;
 
     switch (msg->identifier)
     {
         case CFG_PRODUCER_CFG_ID: /**< Configure a single producer submodule */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             handleProducerCfg(msg);
@@ -19,7 +25,7 @@ void handleProducerConfig(can_msg_t *msg)
 
         case CFG_PRODUCER_WRITE_NVS_ID: /**< Commit producer config to NVS. */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             requestProducerSave();
@@ -27,7 +33,7 @@ void handleProducerConfig(can_msg_t *msg)
 
         case CFG_PRODUCER_READ_NVS_ID: /**< Request producer config for all submodules */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             requestProducerLoad();
@@ -35,7 +41,7 @@ void handleProducerConfig(can_msg_t *msg)
 
         case REQ_PRODUCER_CFG_ID: /**< Request producer config  for idx */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             // TODO: IMPLEMENT
@@ -43,7 +49,7 @@ void handleProducerConfig(can_msg_t *msg)
 
         case CFG_PRODUCER_PURGE_ID: /**< Purge the producer list */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             producerPurgeSingle(modIdx);
@@ -51,7 +57,7 @@ void handleProducerConfig(can_msg_t *msg)
 
         case CFG_PRODUCER_DEFAULTS_ID: /**< Reset the producer at idx to defaults */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             producerDefaultSingle(modIdx);
@@ -60,14 +66,14 @@ void handleProducerConfig(can_msg_t *msg)
         case CFG_PRODUCER_ENABLE_ID: /**< Enable the producer at idx */
         {
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             const subModule_t* sub = nodeGetSubModule(modIdx);
             const personalityDef_t* p = nodeGetPersonality(sub->personalityIndex);
             if (!p)
             {
-                Serial.printf("Personality not found for index %d\n", modIdx);
+                ESP_LOGI(TAG, "Personality not found for index %d\n", modIdx);
                 break;
             }
             producerEnable(modIdx);            /* Enable the producer */
@@ -78,14 +84,14 @@ void handleProducerConfig(can_msg_t *msg)
         case CFG_PRODUCER_DISABLE_ID: /**< Disable the producer at idx */
         {
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             const subModule_t* sub = nodeGetSubModule(modIdx);
             const personalityDef_t* p = nodeGetPersonality(sub->personalityIndex);
             if (!p)
             {
-                Serial.printf("Personality not found for index %d\n", modIdx);
+                ESP_LOGI(TAG, "Personality not found for index %d\n", modIdx);
                 break;
             }
             producerDisable(modIdx);            /* Disable the producer */
@@ -99,34 +105,35 @@ void handleProducerConfig(can_msg_t *msg)
 
         case REQ_PRODUCER_LIST_ID: /**< Ask the node to dump the entire producer cfg list */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             break;
 
         case PRODUCER_LIST_BEGIN_ID: /**< Node will announce the count of defined producers */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             break;
 
         case PRODUCER_LIST_DATA_ID: /**< Producer cfg data for index */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             break;
 
         case PRODUCER_LIST_END_ID: /**< Node will announce the end of the defined producers list */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             break;
 
         default:
-            /* ID is in 0x320–0x3FF but not currently handled */
+        /* ID is in 0x320–0x3FF but not currently handled */
+            ESP_LOGW(TAG, "Invalid producer command %d\n", msg->identifier);
             break;
     }
 }

@@ -1,7 +1,13 @@
 #include "consumer_handler.h"
 #include "node_state.h"         /* nodeIsValidSubmodule */
 #include "colorpalette.h"       /* SystemPalette */
+#include "esp_log.h"
 
+static const char *TAG = "consumer_display";
+
+
+static void handleColorCommand(const can_msg_t *msg);
+static void setDisplayMode(can_msg_t *msg, uint8_t displayMode);
 
 /**
  * @brief Handles color commands from the gateway node.
@@ -33,10 +39,12 @@ static void handleColorCommand(const can_msg_t *msg)
       subIdx,
       (uint32_t)colorIndex
   );  
+
+  ESP_LOGI(TAG, "Selecting color index %d for display %d", colorIndex, subIdx);
 }
 
 
-void setDisplayMode(can_msg_t *msg, uint8_t displayMode) {
+static void setDisplayMode(can_msg_t *msg, uint8_t displayMode) {
   const uint8_t subIdx = msg->data[4]; /* display ID */
 
   if (!nodeIsValidSubmodule(subIdx)) return;
@@ -53,7 +61,7 @@ void setDisplayMode(can_msg_t *msg, uint8_t displayMode) {
     (uint32_t)displayMode
   );  
 
-  Serial.printf("Display %d Mode: %d\n", subIdx, displayMode);
+  ESP_LOGI(TAG, "Display %d Mode: %d\n", subIdx, displayMode);
 }
 
 

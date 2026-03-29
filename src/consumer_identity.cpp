@@ -8,6 +8,7 @@
 #include "can_dispatch.h"      /* for sendIntroduction*/
 #include "node_state.h"        /* Node and sub-module state table */
 #include "esp_log.h"
+
 static const char *TAG = "consumer_identity";
 
 static uint8_t introMsgPtr = 0; /* intro message pointer */
@@ -37,13 +38,17 @@ static void setEpochTime(uint32_t epochTime)
 
 void handleIdentityConfig(can_msg_t *msg)
 {
+    /* skip local messages for all functions in this block */
+    if (blockLocalMsg(msg))
+        return;
+
     const uint8_t modIdx = msg->data[4];   /* byte 4 holds the sub module index */
     ESP_LOGI(TAG, "Processing identity command 0x%03X for sub module %d", msg->identifier, modIdx);
     switch (msg->identifier)
     {
         /* 0x400 */
         case ACK_INTRO_ID:
-            Serial.println("Received introduction acknowledgement, advance pointer");
+            ESP_LOGD(TAG, "Received introduction acknowledgement, advance pointer");
             introMsgPtr++;
             if (introMsgPtr > (nodeGetInfo()->subModCnt * 2)) {
                 introMsgPtr = 0;
@@ -53,7 +58,7 @@ void handleIdentityConfig(can_msg_t *msg)
 
         /* 0x401 */
         case REQ_NODE_INTRO_ID:
-            Serial.println("Interface intro request, responding with our introduction");
+            ESP_LOGD(TAG, "Interface intro request, responding with our introduction");
             introMsgPtr = 0;
             sendIntroduction(introMsgPtr);
             break;
@@ -67,7 +72,7 @@ void handleIdentityConfig(can_msg_t *msg)
                         ((uint32_t)msg->data[6] << 8)  |
                         (uint32_t)msg->data[7];
             setEpochTime((uint32_t)epochTime);
-            Serial.println("[CONSUMER] Received epoch from master; updating clock");
+            ESP_LOGD(TAG, "[CONSUMER] Received epoch from master; updating clock");
         }
         break;
 
@@ -80,7 +85,7 @@ void handleIdentityConfig(can_msg_t *msg)
         case CFG_SUB_INTRO_MSG_ID:          /* setup sub module intro message */
         {
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGW(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             subModule_t *sub = nodeGetSubModule(modIdx);
@@ -97,7 +102,7 @@ void handleIdentityConfig(can_msg_t *msg)
         case CFG_ARGB_STRIP_ID: /**< setup ARGB channel */
         {
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGW(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             subModule_t *sub = nodeGetSubModule(modIdx);
@@ -112,7 +117,7 @@ void handleIdentityConfig(can_msg_t *msg)
         case CFG_DIGITAL_INPUT_ID: /**< Setup digital input channel */
         {
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGW(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             subModule_t *sub = nodeGetSubModule(modIdx);
@@ -128,7 +133,7 @@ void handleIdentityConfig(can_msg_t *msg)
         case CFG_ANALOG_INPUT_ID: /**< Setup analog ADC input channel */
         {
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGW(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             subModule_t *sub = nodeGetSubModule(modIdx);
@@ -144,7 +149,7 @@ void handleIdentityConfig(can_msg_t *msg)
         case CFG_ANALOG_STRIP_ID: /**< Setup analog RGB/RGBW strip */
         {
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGW(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             subModule_t *sub = nodeGetSubModule(modIdx);
@@ -160,7 +165,7 @@ void handleIdentityConfig(can_msg_t *msg)
         case CFG_ANALOG_OUTPUT_ID: /**< Setup analog DAC output channel */
         {
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGW(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             subModule_t *sub = nodeGetSubModule(modIdx);
@@ -178,7 +183,7 @@ void handleIdentityConfig(can_msg_t *msg)
         case CFG_DIGITAL_OUTPUT_ID: /**< Setup digital output channel (relays/mosfets) */
         {
             if (nodeIsValidSubmodule(modIdx) == false) {
-                Serial.printf("Invalid sub module index %d\n", modIdx);
+                ESP_LOGW(TAG, "Invalid sub module index %d\n", modIdx);
                 break;
             }
             subModule_t *sub = nodeGetSubModule(modIdx);
@@ -191,6 +196,7 @@ void handleIdentityConfig(can_msg_t *msg)
         break;
 
         default:
+            ESP_LOGI(TAG, "Unknown identity command 0x%03X", msg->identifier);
             /* ID is in 0x400–0x4FF but not currently handled */
             break;
 
