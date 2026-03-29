@@ -14,6 +14,16 @@
 #include "consumer_handler.h"
 
 /* =========================================================================
+ *  Private declarations
+ * ========================================================================= */
+
+static void updateSubModules();
+static void handleProducerTick(uint32_t now);
+static void readCydLdr();
+static void managePeriodicMessages();
+static void TaskProducer(void *pvParameters);
+
+/* =========================================================================
  *  Private functions
  * ========================================================================= */
 
@@ -168,7 +178,8 @@ static void handleProducerTick(uint32_t now)
 }
 
 
-static void readCydLdr() {
+static void readCydLdr() 
+{
 #ifndef ESP32CYD
     return;
 #else
@@ -204,7 +215,8 @@ static void readCydLdr() {
 /**
  * @brief Manages periodic transmissions in TaskTWAI
  */
-static void managePeriodicMessages() {
+static void managePeriodicMessages() 
+{
     static uint32_t lastHeartbeat = 0;
     static uint32_t lastIntro = 0;
     uint32_t currentMillis = millis();
