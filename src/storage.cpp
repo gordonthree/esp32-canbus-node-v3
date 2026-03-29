@@ -2,12 +2,11 @@
 #include "personality_table.h" /* Personality definitions */
 #include "can_producer.h"      /* CAN producer definitions */ 
 
-#ifndef IGNORE_CRC_ERROR
-#define IGNORE_CRC_ERROR false
-#endif
-
 // Global mutex for NVS access (declared in main.cpp)
 extern SemaphoreHandle_t flashMutex;
+
+/** Set this flag when the loaded configuration is valid (CRC matches) */
+static bool FLAG_VALID_CONFIG = false; 
 
 /* ============================================================================
  *  HELPERS
@@ -34,44 +33,33 @@ void printHexDump(const void* ptr, size_t size) {
     Serial.println("\n---------------------------");
 }
 
+
+
 /**
- * @brief Calculates a 16-bit CRC for the node configuration.
- * @details Uses the ESP32 ROM CRC16 implementation (CCITT).
- * @param node Reference to the canNodeInfo struct.
- * @return uint16_t The calculated checksum.
+ * @brief Create a sanitized copy of a nodeInfo_t struct.
+ * @details This function takes a nodeInfo_t struct as input and creates a new
+ *          copy of the struct with all volatile fields such as
+ *          lastSeen, valueU32, and last_published_value fields zeroed out.
+ * @param src Pointer to the nodeInfo_t struct to be sanitized.
+ * @return A sanitized copy of the input nodeInfo_t struct.
  */
-uint16_t crc16_ccitt(const uint8_t* data, uint16_t length) 
+nodeInfo_t makeSanitizedNodeInfo(const nodeInfo_t *src)
 {
-  uint16_t crc = 0xFFFF; // Initial value
-  while (length--) {
-    crc ^= (uint16_t)*data++ << 8;
-    for (int i = 0; i < 8; i++) {
-      if (crc & 0x8000) {
-        crc = (crc << 1) ^ 0x1021; // Polynomial
-      } else {
-        crc <<= 1;
-      }
+    /* copy the live nodeInfo_t struct */
+    nodeInfo_t out = *src; 
+
+    /* zero out the volatile fields */
+    for (uint8_t i = 0; i < MAX_SUB_MODULES; i++) {
+        out.subModule[i].lastSeen = 0;
+        out.subModule[i].runTime.last_change_ms = 0;
+        out.subModule[i].runTime.valueU32 = 0;
+        out.subModule[i].runTime.last_published_value = 0;
+        out.subModule[i].submod_flags &= ~SUBMOD_FLAG_DIRTY;  /**< strip runtime-only dirty flag */
     }
-  }
-  return crc;
+
+    return out;
 }
 
-uint16_t crc16_ccitt_update(uint16_t crc, 
-                            const uint8_t *data, 
-                            uint16_t length)
-{
-    while (length--) {
-        crc ^= (uint16_t)(*data++ << 8);
-        for (int i = 0; i < 8; i++) {
-            if (crc & 0x8000) {
-                crc = (crc << 1) ^ 0x1021;
-            } else {
-                crc <<= 1;
-            }
-        }
-    }
-    return crc;
-}
 /* ============================================================================
  *  ROUTE TABLE LOAD/SAVE
  * ========================================================================== */
@@ -83,9 +71,19 @@ void loadRoutesFromNVS()
 
     Preferences prefs;
     if (prefs.begin(ROUTE_NS, true)) {
-        if (prefs.isKey(ROUTE_KEY))
-            prefs.getBytes(ROUTE_KEY, g_routes, sizeof(g_routes));
-            prefs.getBytes(ROUTE_CRC_KEY, &g_routesCrc, sizeof(g_routesCrc));
+        /* Check version, return 0 if not found*/
+        const uint8_t version = prefs.getUChar(ROUTE_VERSION, 0); 
+        if (version != ROUTER_VERSION) {
+            prefs.end();
+            xSemaphoreGive(flashMutex);
+            Serial.println("Route table version mismatch");
+            return;
+        }
+        if (prefs.isKey(ROUTE_KEY)) 
+            {
+                prefs.getBytes(ROUTE_KEY, g_routes, sizeof(g_routes));
+                prefs.getBytes(ROUTE_CRC_KEY, &g_routesCrc, sizeof(g_routesCrc));
+            }
         prefs.end();
     }
 
@@ -116,112 +114,44 @@ void saveRoutesToNVS()
 
     Preferences prefs;
     if (prefs.begin(ROUTE_NS, false)) {
-        prefs.putBytes(ROUTE_KEY, g_routes, sizeof(g_routes));
-        prefs.putBytes(ROUTE_CRC_KEY, g_routesCrc, sizeof(g_routesCrc));
+        prefs.putUChar(ROUTE_VERSION, ROUTER_VERSION);                     /* Write version */
+        prefs.putBytes(ROUTE_KEY, g_routes, sizeof(g_routes));             /* Write route table */
+        prefs.putBytes(ROUTE_CRC_KEY, g_routesCrc, sizeof(g_routesCrc));   /* Write route table CRC */ 
         prefs.end();
     }
 
     xSemaphoreGive(flashMutex);
 }
 
-/* ============================================================================
- *  PRODUCER CONFIG LOAD/SAVE
- * ========================================================================== */
-
-void loadProducerCfgFromNVS()
-{
-    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
-        return;
-
-    Preferences prefs;
-    if (prefs.begin(PROD_NS, true)) {
-
-        if (prefs.isKey(PROD_KEY)) 
-        {
-            // Read from NVS
-
-            runTime_t temp[MAX_SUB_MODULES] = {0}; /* zero-initialize array */
-            size_t expected = sizeof(temp);
-
-            size_t read = prefs.getBytes(PROD_KEY, temp, expected);
-
-            if (read == expected) {
-                // Copy into submodules
-                for (uint8_t i = 0; i < MAX_SUB_MODULES; i++) {
-                    node.subModule[i].runTime = temp[i];
-                }
-            }
-        }
-
-        prefs.end();
-    }
-
-    xSemaphoreGive(flashMutex);
-}
-
-void saveProducerCfgToNVS()
-{
-    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
-        return;
-
-    Preferences prefs;
-    if (prefs.begin(PROD_NS, false)) {
-
-        runTime_t temp[MAX_SUB_MODULES];
-
-        // Copy from submodules
-        for (uint8_t i = 0; i < MAX_SUB_MODULES; i++) {
-            temp[i] = node.subModule[i].runTime;
-        }
-
-        prefs.putBytes(PROD_KEY, temp, sizeof(temp));
-        prefs.end();
-    }
-
-    xSemaphoreGive(flashMutex);
-}
-
-void deleteProducerCfgFromNVS()
-{
-    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
-        return;
-
-    Preferences prefs;
-    if (prefs.begin(PROD_NS, false)) {
-
-        if (prefs.isKey(PROD_KEY)) {
-            prefs.remove(PROD_KEY);   // <-- delete the stored producer_cfg array
-        }
-
-        prefs.end();
-    }
-
-    xSemaphoreGive(flashMutex);
-}
 
 /* ============================================================================
  *  NODE CONFIG LOAD/SAVE
  * ========================================================================== */
 
  /**
-  * @brief Load default subModule configuration from personality library if no config
-  * was found in NVS.
+  * @brief Load default subModule configuration from the static personality
+  * library and initialize the node configuration.
+  * 
+  * Internal personalities represent node hardware (CPU temp, heap, etc.)
+  * and must be instantiated as submodules at boot.
   * 
   */
  void loadNodeDefaults() {
+
+    nodeInfo_t& node = *nodeGetInfo();
 
     /** Set the number of submodules */
     node.subModCnt = g_submodules_count;
 
     /* Guardrail: personality library must define at least one submodule */
     if (g_submodules_count == 0) {
-        printf("[ERR] loadNodeDefaults(): submod_setup is empty (count = 0)\n");
+        printf("[INIT] Error: loadNodeDefaults(): submod_setup is empty (count = 0)\n");
         return;
     }
 
     /* Guardrail: pointer should never be NULL, but check anyway */
     if (submod_setup == NULL) {
-        printf("[ERR] loadNodeDefaults(): submod_setup pointer is NULL\n");
+        printf("[INIT] Error: loadNodeDefaults(): submod_setup pointer is NULL\n");
         return;
     }
 
@@ -237,20 +167,20 @@ void deleteProducerCfgFromNVS()
             runtimePersonalityTable[i].personalityId; /* force submodule personalityId to match runtime table */
     }
 
-    /** Add virtual submodules from personality table */
+    /** Add internal submodules from personality table */
     for (uint8_t i = 0; i < runtimePersonalityCount; i++) {
 
         const personalityDef_t *p = &runtimePersonalityTable[i];
 
-        if (!(p->flags & BUILDER_FLAG_IS_VIRTUAL))
-            continue; /* skip non-virtual personalities */
+        if (!(p->flags & BUILDER_FLAG_IS_INTERNAL))
+            continue; /* skip non-internal personalities */
 
         if (node.subModCnt >= MAX_SUB_MODULES)
             break;    /* no more space for submodules */
 
-        Serial.printf("[INIT] Adding virtual sub-module: index %d, intro msg 0x%02X\n", i, p->introMsgId);
+        Serial.printf("[INIT] Adding internal sub-module: index %d, intro msg 0x%02X\n", i, p->introMsgId);
 
-        /** Create a virtual sub-module and zero it out */
+        /** Create a internal sub-module and zero it out */
         subModule_t *sub = &node.subModule[node.subModCnt++];
         memset(sub, 0, sizeof(*sub));
 
@@ -258,15 +188,15 @@ void deleteProducerCfgFromNVS()
         sub->personalityId    = p->personalityId; /**< assign personality */
         sub->personalityIndex = i;                /**< assign index */ 
 
-        /**  Virtual submodules usually have no user config */
+        /**  internal submodules usually have no user config */
         memset(sub->config.rawConfig, 0, sizeof(sub->config.rawConfig));
 
         // Use personality table for CAN reporting
         sub->introMsgId          = p->introMsgId;
         sub->introMsgDLC         = p->introMsgDlc;
 
-        // Mark as virtual + read-only
-        sub->submod_flags       |= SUBMOD_FLAG_VIRTUAL;
+        // Mark as internal
+        sub->submod_flags       |= SUBMOD_FLAG_INTERNAL;
         sub->producer_flags     |= PRODUCER_FLAG_ENABLED;
 
         // Producer defaults
@@ -275,71 +205,16 @@ void deleteProducerCfgFromNVS()
     }
 
 
-    Serial.printf("[INIT] Defaults loaded, submod count: %d\n", g_submodules_count);
+    Serial.printf("[INIT] Defaults loaded, submod count: %d\n", node.subModCnt);
 
-    printNodeInfo(&node);
+    if (runtimePersonalityCount < g_submodules_count) {
+       Serial.println("[INIT] WARNING: runtimePersonalityCount less than g_submodules_count!");
+    }
 
-    /** Print hex dump of nodeInfo_t */
-    // printHexDump(&node, sizeof(node));
+    // printNodeInfo(&node);
 }
 
 
-/**
- * @brief Attempts to load the configuration from NVS.
- *
- * This function attempts to load the configuration from NVS and
- * initializes the hardware if successful. If the configuration
- * is invalid or not found, it loads the default configuration from
- * the build flag node type and starts in PROVISIONING MODE. If the
- * function is unable to access NVS due to a mutex timeout, it
- * loads the default configuration from the build flag node type.
- */
-void handleReadCfgNVS() 
-{
-  ConfigStatus loadCfgStatus;
-  int retries = 0;
-
-  Serial.println("\n[INIT] Loading config from NVS...");
-
-  do {
-      loadCfgStatus = loadConfigNvs(node);
-
-      if ((loadCfgStatus == CFG_OK) || (IGNORE_CRC_ERROR == true)) {
-          Serial.println("[INIT] Config loaded successfully.");
-          FLAG_VALID_CONFIG = true;
-          break;
-      }
-
-      if (loadCfgStatus == CFG_ERR_CRC) {
-          Serial.println("[INIT] Config CRC mismatch - loading internal defaults");
-          loadNodeDefaults(); /**< load defaults from build flag node type */
-          break;
-      }
-
-      if (loadCfgStatus == CFG_ERR_CRC_MISS) {
-          Serial.println("[INIT] Config CRC not found in NVS - loading internal defaults");
-          loadNodeDefaults(); /**< load defaults from build flag node type */
-          break;
-      }
-
-      if (loadCfgStatus == CFG_ERR_NOT_FOUND) {
-          Serial.println("[INIT] Config data not found in NVS - loading internal defaults");
-          loadNodeDefaults(); /**< load defaults from build flag node type */
-          break;
-      }
-
-      if (loadCfgStatus == CFG_ERR_MUTEX) {
-          Serial.printf("[INIT] Flash busy - Retry %d/3...\n", retries + 1);
-          vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
-      }
-
-  } while ((loadCfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
-
-  if (loadCfgStatus == CFG_ERR_MUTEX) {
-      Serial.println("[INIT] Critical Error: Could not access NVS (Mutex Timeout), loading internal defaults.");
-      loadNodeDefaults(); /* load defaults from build flag node type */
-  }
-}
 
 /**
  * @brief Handles the erase NVS command from the master node
@@ -422,8 +297,17 @@ ConfigStatus eraseConfigNvs()
  * @param node Reference to the nodeInfo_t struct to persist.
  * @return CFG_OK on success, or CFG_ERR_MUTEX if flash is busy.
  */
-ConfigStatus saveConfigNvs(const nodeInfo_t& node) 
+ConfigStatus saveConfigNvs() 
 {
+    /* record start time */
+    const uint64_t startTime = (uint64_t)esp_timer_get_time();
+
+    /* get a clean copy of the nodeInfo_t struct with volatile fields zeroed out */
+    const nodeInfo_t sanitizedNode = makeSanitizedNodeInfo(nodeGetInfo());
+
+    /* hash the sanitized nodeInfo_t struct to get the CRC key */
+    const uint16_t crc = crc16_ccitt((const uint8_t*)&sanitizedNode, sizeof(sanitizedNode));
+
     /* Attempt to acquire the flash mutex */
     if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return CFG_ERR_MUTEX;
@@ -436,15 +320,22 @@ ConfigStatus saveConfigNvs(const nodeInfo_t& node)
         return CFG_ERR_NVS_OPEN; /* Return error if NVS open fails */
     }
 
-    /** Calculate the CRC of the current RAM buffer before saving */
-    const uint16_t currentCrc = getConfigurationCRC(node);
+    /* Write the version, crc and configuration blob to NVS */
+    prefs.putUChar(NODE_VERSION, NODEINFO_VERSION);
+    prefs.putUShort(NODE_CRC_KEY, crc);
+    prefs.putBytes(NODE_DATA_KEY, &sanitizedNode, sizeof(sanitizedNode));
 
-    /** Write the configuration blob and the CRC key separately */
-    prefs.putBytes(NODE_DATA_KEY, &node, sizeof(nodeInfo_t));
-    prefs.putUShort(NODE_CRC_KEY, currentCrc);
-
+    /* Close NVS */
     prefs.end();
+
+    /* Release the flash mutex */
     xSemaphoreGive(flashMutex);
+
+    /* record elapsed time */
+    const uint64_t elapsedTime = (uint64_t)esp_timer_get_time() - startTime;
+
+    /* print elapsed time */
+    Serial.printf("[NVS] Save complete. Elapsed time: %lu us\n", elapsedTime);
 
     return CFG_OK;
 }
@@ -461,83 +352,68 @@ ConfigStatus saveConfigNvs(const nodeInfo_t& node)
  */
 ConfigStatus loadConfigNvs(nodeInfo_t& node)
 {
+    
+    /* Temporary storage for NVS data before CRC validation */
+    nodeInfo_t quarantineNode = {0}; 
+
+    /* Attempt to acquire the flash mutex */
     if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
         return CFG_ERR_MUTEX;
     }
 
+    /* Open namespace in read-only mode */
     Preferences prefs;
     if (!prefs.begin(NODE_NS, true)) {
         xSemaphoreGive(flashMutex);
         return CFG_ERR_NOT_FOUND;
     }
 
-    /** Check if the data key exists */
+    /* Check version, return 0 if not found*/
+    const uint8_t version = prefs.getUChar(NODE_VERSION, 0);
+
+    /* Check version, return error if not found*/
+    if (version != NODEINFO_VERSION) {
+        prefs.end();
+        xSemaphoreGive(flashMutex);
+        return CFG_VERS_ERROR;
+    }
+
+    /* Check if the data key exists */
     if (!prefs.isKey(NODE_DATA_KEY)) {
         prefs.end();
         xSemaphoreGive(flashMutex);
         return CFG_ERR_NOT_FOUND;
     }
 
-    /** Check if the CRC key exists */
+    /* Check if the CRC key exists */
     if (!prefs.isKey(NODE_CRC_KEY)) {
         prefs.end();
         xSemaphoreGive(flashMutex);
         return CFG_ERR_CRC_MISS;
     }
 
-    // Read data and stored CRC
-    prefs.getBytes(NODE_DATA_KEY, &node, sizeof(nodeInfo_t));
+    /* Read data and CRC from NVS */
+    prefs.getBytes(NODE_DATA_KEY, &quarantineNode, sizeof(quarantineNode));
     uint16_t storedCrc = prefs.getUShort(NODE_CRC_KEY, 0);
 
     prefs.end();
     xSemaphoreGive(flashMutex);
 
-    // Validate
-    if (getConfigurationCRC(node) != storedCrc) {
-        Serial.printf("[INIT] CRC mismatch: %d != %d\n", getConfigurationCRC(node), storedCrc);    
+    /* Sanitize data before CRC validation */
+    const nodeInfo_t sanitized = makeSanitizedNodeInfo(&quarantineNode);
+
+    /* Calculate CRC of sanitized data */
+    const uint16_t crc = crc16_ccitt((const uint8_t*)&sanitized, sizeof(sanitized));
+
+    /* Validate CRC */
+    if ((crc != storedCrc)) {
+        Serial.printf("[INIT] CRC mismatch: %d != %d\n", crc, storedCrc);    
 
         return CFG_ERR_CRC;
     }
 
-    return CFG_OK;
-}
-
-/**
- * @brief Saves a subModule_t to NVS using the Preferences library.
- * @param subModule Pointer to the subModule_t structure to save.
- * @param index Index of the subModule_t in the array.
- * @return CFG_OK on success, or CFG_ERR_MUTEX if flash is busy.
- */
-ConfigStatus saveSubModuleNvs(const subModule_t& subModule, uint8_t index)
-{
-    char data_key[16];
-    char crc_key[16];
-
-    /** Calculate the CRC of the current RAM buffer before saving */
-    const uint16_t currentCrc = getSubModuleCRC(subModule); 
-
-    /** Attempt to acquire the flash mutex */
-    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        return CFG_ERR_MUTEX;
-    }
-
-    Preferences prefs;
-    if (!prefs.begin(NODE_NS, false)) {
-        xSemaphoreGive(flashMutex);
-        return CFG_ERR_NVS_OPEN; /* Return error if NVS open fails */
-    }
-
-    /* Generate unique keys */
-    snprintf(data_key, sizeof(data_key), "subModule_%d", index);
-    snprintf(crc_key, sizeof(crc_key), "sub_%d_crc", index);
-
-    /** Write the configuration blob and the CRC key separately */
-    prefs.putBytes(data_key, &subModule, sizeof(subModule_t));
-    prefs.putUShort(crc_key, currentCrc);
-
-    /** Close NVS and release the mutex */
-    prefs.end();
-    xSemaphoreGive(flashMutex);
+    /* CRC passed, copy data to live node struct */
+    memcpy(&node, &sanitized, sizeof(node));
 
     return CFG_OK;
 }
@@ -550,6 +426,8 @@ ConfigStatus saveSubModuleNvs(const subModule_t& subModule, uint8_t index)
                  const uint8_t* configBytes,
                  size_t configLength)
 {
+    nodeInfo_t& node = *nodeGetInfo();
+
     /* Bounds check: personalityId must exist */
     if (personalityId >= PERSONALITY_MAX) {
         return -1;
@@ -608,18 +486,82 @@ ConfigStatus saveSubModuleNvs(const subModule_t& subModule, uint8_t index)
     /* Increment count */
     node.subModCnt++;
 
-    /* Persist to NVS (optional here, or caller can do it) */
-    // saveSubmodulesToNVS();
 
     return index;
 }
 
+
+/**
+ * @brief Attempts to load the configuration from NVS.
+ *
+ * This function attempts to load the configuration from NVS and
+ * initializes the hardware if successful. If the configuration
+ * is invalid or not found, it loads the default configuration from
+ * the build flag node type and starts in PROVISIONING MODE. If the
+ * function is unable to access NVS due to a mutex timeout, it
+ * loads the default configuration from the build flag node type.
+ */
+void handleReadCfgNVS() 
+{
+  ConfigStatus loadCfgStatus;
+  int retries = 0;
+  /* Record start time */
+  const uint64_t startTime = (uint64_t)esp_timer_get_time();
+
+  Serial.println("[INIT] Loading config from NVS...");
+  nodeInfo_t& node = *nodeGetInfo();
+
+  do {
+    loadCfgStatus = loadConfigNvs(node);
+
+    if (loadCfgStatus == CFG_OK) {
+      Serial.println("[INIT] Config loaded successfully.");
+      FLAG_VALID_CONFIG = true;
+      break;
+    }
+
+    if (loadCfgStatus = CFG_VERS_ERROR) {
+      Serial.println("[INIT] Config version mismatch - NVS load aborted.");
+      break;
+    }
+
+    if (loadCfgStatus == CFG_ERR_CRC) {
+      Serial.println("[INIT] Config CRC mismatch - NVS load aborted.");
+      break;
+    }
+
+    if (loadCfgStatus == CFG_ERR_CRC_MISS) {
+      Serial.println("[INIT] Config CRC not found in NVS - NVS load aborted.");
+      break;
+    }
+
+    if (loadCfgStatus == CFG_ERR_NOT_FOUND) {
+      Serial.println("[INIT] Config data not found in NVS - NVS load aborted.");
+      break;
+    }
+
+    if (loadCfgStatus == CFG_ERR_MUTEX) {
+      Serial.printf("[INIT] Flash busy - Retry %d/3...\n", retries + 1);
+      vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
+    }
+
+  } while ((loadCfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
+
+  if (loadCfgStatus == CFG_ERR_MUTEX) {
+    Serial.println("[INIT] Flash busy, mutex timeout - NVS load aborted.");
+  }
+
+  const uint64_t loadTime = (uint64_t)esp_timer_get_time() - startTime;
+  Serial.printf("[INIT] Config load took %d ms\n", (loadTime / 1000));
+}
 
 bool removeSubmodule(const uint8_t index)
 {
     if (index >= MAX_SUB_MODULES) {
         return false;
     }
+
+    nodeInfo_t& node = *nodeGetInfo();
 
     /* If the slot is already empty, nothing to do */
     if (node.subModule[index].personalityIndex == 0xFF) {
@@ -643,3 +585,7 @@ bool removeSubmodule(const uint8_t index)
     return true;
 }
 
+bool nodeGetValidConfig(void)
+{
+    return FLAG_VALID_CONFIG;
+}

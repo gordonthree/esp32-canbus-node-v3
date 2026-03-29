@@ -5,12 +5,13 @@
 #include "canbus_project.h"   // for node_t, subModule_t, etc.
 #include "submodule_types.h"   /**< Sub-module type definitions */
 #include "personality_table.h" /**< Node and sub-module personality table */
+// #include "consumer.h"          /**< CAN consumer routines and constants */
 
 /* ============================================================================
  *  GLOBAL VARIABLES
  * ============================================================================ */ 
 
-extern volatile bool FLAG_VALID_CONFIG;
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,10 +22,29 @@ extern "C" {
  * ============================================================================ */
 
 /* Node state accessor functions */
-subModule_t* nodeGetSubModule(const uint8_t sub_idx);
-runTime_t* nodeGetRuntime(const uint8_t sub_idx);
-const uint8_t nodeGetSubModuleCount(void);
+nodeInfo_t*    nodeGetInfo();
+subModule_t*   nodeGetSubModule(const uint8_t sub_idx);
+runTime_t*     nodeGetRuntime(const uint8_t sub_idx);
+uint8_t        nodeGetSubModuleCount(void);
+const personalityDef_t* nodeGetPersonality(uint8_t personalityIndex);
 
+/* Utility functions */
+uint32_t nodeGetNodeID(void);
+uint16_t nodeGetNodeType(void);
+void nodePrintStructInfo(void) ;
+void nodeReadMacAddress(void); 
+void nodeInit(void);
+
+/* Validity accessor functions */
+bool nodeIsValidSubmodule(uint8_t index);
+
+/* CRC accessor functions */
+uint16_t       nodeGetCRC();
+void nodeSetCRC(uint16_t crc);
+
+/* Config flag accessor functions */
+// bool           nodeGetValidConfig();
+// void           nodeSetValidConfig(bool valid);
 
 /* Flags accessor functions */
 uint8_t* nodeGetProducerFlags(const uint8_t sub_idx) ;
@@ -40,10 +60,11 @@ void nodeSetRouterFlags(const uint8_t sub_idx, uint8_t flags);
  * ============================================================================ */ 
 
  /** @brief Send message to the CAN bus, lives in main.cpp */
-void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc );
+// void send_message( uint16_t msgid, uint8_t *data, uint8_t dlc );
 
 /** pretty print the in-memory node config database */
 void printNodeInfo(const nodeInfo_t* node);
+
 
 /**
  * @brief Packs three uint8_t values representing red, green, and blue into a single uint32_t.
@@ -84,41 +105,63 @@ static inline uint32_t packStrobeState(uint8_t patternId, uint8_t step, bool out
  *  NODE STATE API
  * ============================================================================ */ 
 
-/**
- * @struct outputTracker_t
- * @brief Represents the state of an output module.
- *
- * This struct is used to track the state of an output module. It contains the following fields:
- *
- * @param nextActionTime: The timestamp for the next state change.
- * @param currentStep: The current step in a multi-stage pattern (strobe).
- * @param isActive: A flag to indicate if a momentary/strobe is running.
- * @param isConfigured: A flag to indicate if a switch is configured.
- * @param hardwareInitialized: A flag to indicate if hardware is initialized.
- */
-struct outputTracker_t {
-    uint32_t     nextActionTime;        /**< Timestamp for the next state change */
-    uint8_t      currentStep;           /**< Current step in a multi-stage pattern (strobe) */
-    uint8_t      timer;                 /**< LEDC timer */
-    bool         isActive;              /**< Flag to indicate if a momentary/strobe is running */
-    bool         isConfigured;          /**< Flag to indicate if a switch is configured */
-    bool         hardwareInitialized;   /**< Flag to indicate if hardware is initialized */
-    bool         hasBeenSet;            /**< Flag to indicate if a switch has been set */
-}; /* end struct outputTracker_t */
 
-extern nodeInfo_t node; /**< Global node configuration */
-extern outputTracker_t trackers[MAX_SUB_MODULES]; /**< Global output trackers */
+// extern nodeInfo_t node; /**< Global node configuration */
 
 #ifdef __cplusplus
 }
 #endif
 
 /* ============================================================================
- *  NODE RELATED FUNCTIONS
+ *  Global Variables  
  * ============================================================================ */ 
 
-void initHardware();
+
+
+
+/* ============================================================================
+ * DECLARATIONS FOR NODE RELATED FUNCTIONS
+ * ============================================================================ */ 
+
+// void initHardware();
 void loadDefaults(uint16_t nodeType);
-const uint16_t getConfigurationCRC(const nodeInfo_t& node);
-const uint16_t getSubModuleCRC(const subModule_t& submod);
 uint32_t getEpochTime();
+/** Inline function to validate sub-module index */
+static inline bool isValidSubModuleIndex(uint8_t index) 
+{ 
+  return (index < MAX_SUB_MODULES); 
+}
+
+// void sendRouteList();
+// void setPWMDuty(twai_message_t *msg);
+// void setPWMFreq(twai_message_t *msg);
+// void txSwitchState(uint8_t* txUnitID, uint16_t txSwitchID, uint8_t swState);
+// void setSwitchMode(twai_message_t *msg);
+// void setSwitchState(twai_message_t *msg, uint8_t swState = OUT_STATE_OFF);
+// void sendCanUint32(uint32_t bigNumber, uint32_t canMsgId = DATA_EPOCH_ID, uint8_t dlc = DATA_EPOCH_DLC);
+// void setEpochTime(uint32_t epochTime);
+// void setSwBlinkDelay(twai_message_t *msg);
+// void setSwStrobePat(twai_message_t *msg);
+// void setDisplayMode(twai_message_t *msg, uint8_t displayMode = DISPLAY_MODE_OFF);
+// void handleColorCommand(twai_message_t *msg);
+// void sendIntroduction(int msgPtr = 0);
+// void handleAddNetworkSubmodule(void);
+
+/**
+ * @brief Validate that a personalityId refers to a user-defined template personality.
+ * @note  NEW helper function, introduced explicitly.
+ */
+static inline bool isValidTemplatePersonality(uint8_t personalityId)
+{
+    for (uint8_t i = 0; i < g_TemplateCount; i++) {
+        const personalityDef_t *p = &templateTable[i];
+
+        /* Match personalityId and ensure it is a user-defined template */
+        if (p->personalityId == personalityId &&
+            (p->flags & BUILDER_FLAG_USER_DEFINED)) {
+            return true;
+        }
+    }
+
+    return false;
+};

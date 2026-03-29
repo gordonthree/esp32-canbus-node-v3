@@ -9,7 +9,15 @@
 // #include "can_producer.h"      // for producer  (your producer config struct)
 #include "node_state.h"        // for shared objects from main.cpp
 #include "submodule_types.h"   /**< Sub-module type definitions */
+#include "crc16.h"             /**< CRC16 functions */
 
+#define ROUTER_VERSION        (1U)
+#define PRODUCER_VERSION      (1U)
+#define NODEINFO_VERSION      (2U)
+
+#ifndef IGNORE_CRC_ERROR
+#define IGNORE_CRC_ERROR false
+#endif
 
 /**
  * @enum ConfigStatus
@@ -17,6 +25,7 @@
  */
 enum ConfigStatus {
     CFG_OK = 0,        /**< Load successful and CRC valid */
+    CFG_VERS_ERROR,    /**< Config version mismatch */
     CFG_ERR_MUTEX,     /**< Failed to acquire flash mutex */
     CFG_ERR_NOT_FOUND, /**< No configuration exists in NVS */
     CFG_ERR_CRC,       /**< Data found but CRC is invalid (corrupt) */
@@ -24,20 +33,21 @@ enum ConfigStatus {
     CFG_ERR_NVS_OPEN   /**< Failed to open NVS namespace */
 };
 
-// NVS namespaces
+/* NVS namespace definitions */
 static constexpr const char* ROUTE_NS        = "route_table";
 static constexpr const char* ROUTE_KEY       = "route_data";
 static constexpr const char* ROUTE_CRC_KEY   = "route_crc";
-
+static constexpr const char* ROUTE_VERSION   = "route_version";
 
 static constexpr const char* PROD_NS         = "producer_table";
 static constexpr const char* PROD_KEY        = "producer_data";
 static constexpr const char* PROD_CRC_KEY    = "producer_crc";
-
+static constexpr const char* PROD_VERSION    = "producer_version";
 
 static constexpr const char* NODE_NS         = "node_cfg";
 static constexpr const char* NODE_CRC_KEY    = "node_crc";
 static constexpr const char* NODE_DATA_KEY   = "node_data";
+static constexpr const char* NODE_VERSION    = "node_version";
 
 #ifdef __cplusplus
 extern "C" {
@@ -107,35 +117,25 @@ bool removeSubmodule(const uint8_t index);
 /* ============================================================================
  *  NODE CONFIG STORAGE API
  * ========================================================================== */
+
 void loadNodeDefaults();
+
 void handleReadCfgNVS();
 void handleEraseCfgNVS();
+
 /** Erase the node configuration and CRC from NVS */
 ConfigStatus eraseConfigNvs();
 /** Save the node configuration and CRC to NVS */
-ConfigStatus saveConfigNvs(const nodeInfo_t& node);
+ConfigStatus saveConfigNvs();
 /** Load the node configuration and CRC from NVS */
-ConfigStatus loadConfigNvs(nodeInfo_t& node);
-/** Save a sub-module and CRC to NVS */
-ConfigStatus saveSubModuleNvs(const subModule_t& subModule, uint8_t index);
+ConfigStatus loadConfigNvs();
 
+/** Check if the node configuration is valid */
+bool nodeGetValidConfig(void);
 
 
 /* =========================================================================== 
  * HELPER FUNCTIONS 
  * ========================================================================= */
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-uint16_t crc16_ccitt(const uint8_t *data, 
-                     uint16_t length);
-
-uint16_t crc16_ccitt_update(uint16_t crc, 
-                            const uint8_t *data, 
-                            uint16_t length);
-
-#ifdef __cplusplus
-}
-#endif
+nodeInfo_t makeSanitizedNodeInfo(const nodeInfo_t *src);

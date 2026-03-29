@@ -4,6 +4,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 
+#include "freertos.h"               /* freeRTOS handles and queues */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,14 +28,6 @@ extern "C" {
 #define GPIO_LATCH_ON               (1U)
 #define GPIO_LATCH_OFF              (0U)
 
-
-
-/* Event Queue constants */
-#define GPIO_EVENT_QUEUE_LEN        (32U)
-typedef struct {
-    uint8_t  subIdx;
-    uint8_t  raw;
-} gpio_event_t;
 
 /* --------------------------------------------------------------------------
  * Private API for GPIO ISR subsystem
@@ -68,12 +62,10 @@ struct IsrGpioState
  * Expose the globals
  * -------------------------------------------------------------------------- */
 
-extern QueueHandle_t gpioEventQueue;
-extern IsrGpioState isrGpio;
 
 
 /* --------------------------------------------------------------------------
- * Public API for GPIO ISR subsystem
+ * Control-plane API for GPIO ISR subsystem
  * -------------------------------------------------------------------------- */
 
 
@@ -110,6 +102,49 @@ void setDigitalInputEdgeMode(uint8_t pin, uint8_t mode);
  * @brief Install the ISR service (must be called once at startup).
  */
 void initGpioIsrService(void);
+
+
+/* -------------------------------------------------------------------------- 
+ * Data-plane API for GPIO ISR subsystem
+ * -------------------------------------------------------------------------- */
+
+bool     isrGpioUpdateRaw(
+    gpio_num_t pin, 
+    uint8_t newValue, 
+    uint32_t nowMs
+);
+
+bool isrGpioUpdateStable(
+    gpio_num_t pin, 
+    uint8_t newValue, 
+    uint32_t nowMs
+);
+
+bool isrGpioUpdatePressStartMs(
+    gpio_num_t pin, 
+    uint32_t nowMs
+);
+
+bool isrGpioUpdateLastClickMs(
+    gpio_num_t pin, 
+    uint32_t nowMs
+);
+
+bool isrGpioUpdateClickCount(
+    gpio_num_t pin, 
+    uint8_t count
+);
+
+bool     isrGpioIsEnabled(gpio_num_t pin);
+uint8_t  isrGpioGetRaw(gpio_num_t pin);
+uint8_t  isrGpioGetStable(gpio_num_t pin);
+uint32_t isrGpioGetLastChange(gpio_num_t pin);
+uint32_t isrGpioGetLastStable(gpio_num_t pin);
+uint32_t isrGpioGetLastClickMs(gpio_num_t pin);
+uint32_t isrGpioGetPressStartMs(gpio_num_t pin);
+uint8_t  isrGpioGetClickCount(gpio_num_t pin);
+
+
 
 #ifdef __cplusplus
 }

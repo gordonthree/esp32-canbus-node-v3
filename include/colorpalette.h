@@ -1,6 +1,4 @@
-#ifndef COLOR_PALETTE_H_
-#define COLOR_PALETTE_H_
-
+#pragma once
 #include <stdint.h>
 
 #define COLOR_PALETTE_SIZE     (32U)       /**< Size of the SystemPalette array */
@@ -50,4 +48,3 @@ const PaletteColor SystemPalette[COLOR_PALETTE_SIZE] = {
     PaletteColor(255, 215, 0)    /**< Gold */
 };
 
-#endif /* END COLOR_PALETTE_H_ */

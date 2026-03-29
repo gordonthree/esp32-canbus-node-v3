@@ -13,6 +13,7 @@ extern "C" void IRAM_ATTR gpio_isr_handler(void* arg);
  * Global state
  * -------------------------------------------------------------------------- */
 QueueHandle_t gpioEventQueue = NULL; /* GPIO event queue */
+
 IsrGpioState isrGpio;                /* ISR state */
 
 IsrGpioState::IsrGpioState() /* Constructor */
@@ -59,6 +60,76 @@ void initGpioIsrService(void)
 /* --------------------------------------------------------------------------
  * Public API
  * -------------------------------------------------------------------------- */
+
+bool isrGpioIsEnabled(gpio_num_t pin) {
+    return isrGpio.enabled[pin];
+}
+
+uint8_t isrGpioGetRaw(gpio_num_t pin) {
+    return isrGpio.lastRawState[pin];
+}
+
+uint8_t isrGpioGetStable(gpio_num_t pin) {
+    return isrGpio.stableState[pin];
+}
+
+uint32_t isrGpioGetLastChange(gpio_num_t pin) {
+    return isrGpio.lastChangeMs[pin];
+}
+
+uint32_t isrGpioGetLastStable(gpio_num_t pin) {
+    return isrGpio.lastStableMs[pin];
+}
+
+uint32_t isrGpioGetPressStartMs(gpio_num_t pin) {
+    return isrGpio.pressStartMs[pin];
+}
+
+uint32_t isrGpioGetLastClickMs(gpio_num_t pin) {
+    return isrGpio.lastClickMs[pin];
+}
+
+uint8_t isrGpioGetClickCount(gpio_num_t pin) {
+    return isrGpio.clickCount[pin];
+}
+
+bool isrGpioUpdateRaw(gpio_num_t pin, uint8_t newValue, uint32_t nowMs)
+{
+    if (isrGpio.lastRawState[pin] != newValue) {
+        isrGpio.lastRawState[pin] = newValue;
+        isrGpio.lastChangeMs[pin] = nowMs;
+        return true;    // raw state changed
+    }
+    return false;       // no change
+}
+
+bool isrGpioUpdateStable(gpio_num_t pin, uint8_t newValue, uint32_t nowMs)
+{
+    if (isrGpio.stableState[pin] != newValue) {
+        isrGpio.stableState[pin] = newValue;
+        isrGpio.lastStableMs[pin] = nowMs;
+        return true;    // stable state changed
+    }
+    return false;       // no change
+}
+
+bool isrGpioUpdatePressStartMs(gpio_num_t pin, uint32_t nowMs)
+{
+    isrGpio.pressStartMs[pin] = nowMs;
+    return true;
+}
+
+bool isrGpioUpdateLastClickMs(gpio_num_t pin, uint32_t nowMs)
+{
+    isrGpio.lastClickMs[pin] = nowMs;
+    return true;
+}
+
+bool isrGpioUpdateClickCount(gpio_num_t pin, uint8_t count)
+{
+    isrGpio.clickCount[pin] = count;
+    return true;
+}
 
 void attachDigitalInputISR(uint8_t pin, uint8_t subIdx)
 {

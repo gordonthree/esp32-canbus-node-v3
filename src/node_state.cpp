@@ -1,8 +1,85 @@
 #include "node_state.h"
+
+/* ============================================================================
+ *  CONSTANTS
+ * ============================================================================ */ 
+
+
+/* ============================================================================
+ *  PRIVATE VARIABLES
+ * ============================================================================ */  
+
+ /** Flag indicating that the node config is valid */
+bool FLAG_NODE_CONFIG_VALID = false;
+uint16_t nodeCRC = 0xFFFF; /* start with an invalid CRC */
+
+
+
+/* ============================================================================
+ *  GLOBAL VARIABLES
+ * ============================================================================ */ 
+
+ /** Runtime data storage */
+// submoduleRuntime_t g_subRuntime[MAX_SUB_MODULES];
+
+/** Current node configuration */
+nodeInfo_t node; 
+
+ /* ============================================================================
+ *  PRIVATE FUNCTIONS
+ * ============================================================================ */ 
+
+
+ /* ============================================================================
+ *  PUBLIC API FUNCTIONS
+ * ============================================================================ */ 
+
+/* Print memory information about node structures to the Serial console */
+void nodePrintStructInfo(void) 
+{
+  /* Debug check for memory alignment */
+  Serial.printf("\n[DEBUG] Struct Sizes - nodeInfo_t: %d, subModule_t: %d, runTime_t: %d\n",
+              sizeof(nodeInfo_t), sizeof(subModule_t), sizeof(runTime_t));
+}
+
+/** Initialize the node state array */
+void nodeInit(void) { memset(&node, 0, sizeof(nodeInfo_t)); }
+
+/** Read the MAC address from hardware, store it in nodeInfo_t */
+void nodeReadMacAddress(void)
+{
+    uint8_t baseMac[6] = {};
+    esp_efuse_mac_get_default(baseMac);   // factory-burned MAC
+
+    // Extract bytes 2–5 as a big-endian uint32_t
+    node.nodeID =
+        (static_cast<uint32_t>(baseMac[2]) << 24) |
+        (static_cast<uint32_t>(baseMac[3]) << 16) |
+        (static_cast<uint32_t>(baseMac[4]) << 8)  |
+        (static_cast<uint32_t>(baseMac[5]));
+
+    Serial.printf("[INIT] Node ID extracted: 0x%02X%02X%02X%02X  (0x%08X)\n",
+                  baseMac[2], baseMac[3], baseMac[4], baseMac[5],
+                  node.nodeID);
+}
+
+
+nodeInfo_t* nodeGetInfo() { return &node; }
+uint32_t nodeGetNodeID() { return node.nodeID; }
+uint16_t nodeGetNodeType() { return node.nodeTypeMsg; }
+
+/* CRC accessor functions */
+uint16_t nodeGetCRC() { return nodeCRC; }
+void nodeSetCRC(uint16_t crc) { nodeCRC = crc; }
+
+/* Config flag accessor functions */
+bool nodeSetValidConfig() { return FLAG_NODE_CONFIG_VALID; }
+void nodeSetValidConfig(bool valid) { FLAG_NODE_CONFIG_VALID = valid; }
+
 /** Runtime array accessor */
 runTime_t* nodeGetRuntime(const uint8_t sub_idx) 
 {
-    return &node.subModule[sub_idx].runTime;
+    return &node.subModule[sub_idx].runTime; 
 }
 
 /** Submodule array accessor */
@@ -48,10 +125,28 @@ void nodeSetRouterFlags(const uint8_t sub_idx, uint8_t flags)
 }
 
 /** Return count of configured submodules */
-const uint8_t nodeGetSubModuleCount(void)
+uint8_t nodeGetSubModuleCount(void)
 {
-    return sizeof(node.subModule) / sizeof(subModule_t);
+    uint8_t count = node.subModCnt;
+    if (count > MAX_SUB_MODULES)
+        count = MAX_SUB_MODULES;
+    return count;
 }
+
+
+bool nodeIsValidSubmodule(uint8_t index)
+{
+    return (index < nodeGetSubModuleCount());
+}
+
+const personalityDef_t* nodeGetPersonality(uint8_t personalityIndex)
+{
+    if (personalityIndex >= runtimePersonalityCount)
+        return NULL;
+
+    return &runtimePersonalityTable[personalityIndex];
+}
+
 
 /** Pretty print nodeInfo_t */
 /**
@@ -71,24 +166,23 @@ void printNodeInfo(const nodeInfo_t* node)
   Serial.printf("  subModule array:\n");
   for (uint8_t i = 0; i < node->subModCnt; i++) {
     /** Pointer to the personality definition for this sub-module */
-    const personalityDef_t* p = &g_personalityTable[node->subModule[i].personalityIndex]; 
+    const personalityDef_t* p = &runtimePersonalityTable[node->subModule[i].personalityIndex]; 
 
     Serial.printf("     subModule[%d]:\n", i);
     Serial.printf("       personalityId: %d\n", node->subModule[i].personalityId);
     Serial.printf("       personalityIndex: %d\n", node->subModule[i].personalityIndex);
-    Serial.printf("       introMsgId: 0x%03X\n", node->subModule[i].introMsgId);
-    Serial.printf("       introMsgDLC: %d\n", node->subModule[i].introMsgDLC);
-    Serial.printf("       dataMsgId: 0x%03X\n", p->dataMsgId);
-    Serial.printf("       dataMsgDlc: %d\n", p->dataMsgDlc);
-    Serial.printf("       gpio Pin: %d\n", p->gpioPin);
+    Serial.printf("(p->)    dataMsgId: 0x%03X\n", p->dataMsgId);
+    Serial.printf("(p->)    dataMsgDlc: %d\n", p->dataMsgDlc);
+    Serial.printf("(p->)    gpio Pin: %d\n", p->gpioPin);
     if (node->subModule[i].personalityId == PERS_GPIO_INPUT) {
-        Serial.printf("         gpio_input flags: 0x%02X\n", node->subModule[i].config.gpioInput.flags); 
-        Serial.printf("         gpio_input debounce_ms: %d\n", node->subModule[i].config.gpioInput.debounce_ms); 
-        Serial.printf("         gpio_input reserved: 0x%02X\n", node->subModule[i].config.gpioInput.reserved); 
+        Serial.printf("       gpio_input flags: 0x%02X\n", node->subModule[i].config.gpioInput.flags); 
+        Serial.printf("       gpio_input debounce_ms: %d\n", node->subModule[i].config.gpioInput.debounce_ms); 
+        Serial.printf("       gpio_input reserved: 0x%02X\n", node->subModule[i].config.gpioInput.reserved); 
     } else {
         Serial.printf("       config bytes 0x%02X 0x%02X 0x%02X\n", node->subModule[i].config.rawConfig[0], node->subModule[i].config.rawConfig[1], node->subModule[i].config.rawConfig[2]);
     }
-    // Serial.printf("       config bytes 0x%02X 0x%02X 0x%02X\n", node->subModule[i].config.rawConfig[0], node->subModule[i].config.rawConfig[1], node->subModule[i].config.rawConfig[2]);
+    Serial.printf("       introMsgId: 0x%03X\n", node->subModule[i].introMsgId);
+    Serial.printf("       introMsgDLC: %d\n", node->subModule[i].introMsgDLC);
     Serial.printf("       submod_flags: 0x%02X\n", node->subModule[i].submod_flags);
     Serial.printf("       producer_flags: 0x%02X\n", node->subModule[i].producer_flags);
     Serial.printf("       router_flags: 0x%02X\n", node->subModule[i].router_flags);
