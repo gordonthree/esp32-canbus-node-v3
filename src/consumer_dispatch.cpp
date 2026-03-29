@@ -9,23 +9,22 @@ static const char *TAG = "consumer_dispatch";
 const ConsumerHandlerEntry consumerHandlerTable[] =
 {
     /* 0x110–0x1FF: Output commands */
-    { 0x110, 0x1FF, handleOutputCommands },
+    { SW_RESERVED_110_ID, SW_RESERVED_13F_ID, handleOutputCommands },
 
     /* 0x200–0x2FF: Display/UI commands */
-    { 0x200, 0x2FF, handleDisplayCommands },
+    { SET_DISPLAY_OFF_ID, SET_BUTTON_RESERVED_22F_ID, handleDisplayCommands },
 
     /* 0x320–0x3FF: Producer configuration commands */
-    { 0x320, 0x3FF, handleProducerConfig },
+    { CFG_PRODUCER_CFG_ID, PRODUCER_LIST_END_ID, handleProducerConfig },
 
     /* 0x428–0x433: Network submodule configuration commands */
-    { 0x428, 0x433, handleNetworkConfig },
+    { CFG_NET_NODE_DATA_ID, CFG_NET_NODE_DEL_ID, handleNetworkConfig },
 
     /* 0x434–0x437: NVS commands */
     { CFG_ERASE_NVS_ID, CFG_READ_NVS_ID, handleNvsConfig },
 
-
     /* 0x400–0x4FF: Identity/config/network/intro/epoch */
-    { 0x400, 0x4FF, handleIdentityConfig },
+    { ACK_INTRO_ID, CFG_PWM_OUTPUT_ID, handleIdentityConfig },
 };
 
 const uint8_t consumerHandlerTableCount =
