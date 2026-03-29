@@ -37,6 +37,8 @@ void TaskOTA(void *pvParameters) {
     if (xTWAIHandle != NULL)   vTaskSuspend(xTWAIHandle);   /* suspend the TWAI task */
     if (xOutputHandle != NULL) vTaskSuspend(xOutputHandle); /* suspend the output switch task */
     if (xInputHandle != NULL)  vTaskSuspend(xInputHandle);  /* suspend the input event task */
+    if (xProducerHandle != NULL) vTaskSuspend(xProducerHandle); /* suspend the producer task */
+    if (xConsumerHandle != NULL) vTaskSuspend(xConsumerHandle); /* suspend the consumer task */
 #ifdef ESP32CYD
     if (xDisplayHandle != NULL) vTaskSuspend(xDisplayHandle); /* suspend the display task */
     if (xTouchHandle != NULL) vTaskSuspend(xTouchHandle); /* suspend the touch task */
