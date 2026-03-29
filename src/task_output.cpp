@@ -137,3 +137,22 @@ void enqueueOutputCmd(OutputCmdType_t type,
   ESP_LOGD(TAG, "Enqueueing output command: type=%d, index=%d, param1=%d", type, index, param1);
   xQueueSend(outputTaskQueue, &cmd, 0); /* no wait */
 }
+
+/**
+ * @brief Determine whether a message should be blocked by the output task
+ *
+ * @param msg Pointer to the CAN message to be processed
+ *
+ * @return true if the message should be blocked, false otherwise
+ */
+bool blockLocalMsg(const can_msg_t *msg)
+{
+  /* Only block local messages */
+  if (msg->isLocal)
+    return true;
+
+  /* future message type exceptions go here*/
+
+  /* Default: do not block messages */
+  return false;
+}
