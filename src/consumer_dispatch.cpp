@@ -3,6 +3,8 @@
 #include "consumer_lookup.h"
 #include "canbus_msg.h"
 #include "can_router.h"
+#include "esp_log.h"
+static const char *TAG = "consumer_dispatch";
 
 const ConsumerHandlerEntry consumerHandlerTable[] =
 {
@@ -18,8 +20,8 @@ const ConsumerHandlerEntry consumerHandlerTable[] =
     /* 0x428–0x433: Network submodule configuration commands */
     { 0x428, 0x433, handleNetworkConfig },
 
-    /* 0x41B–0x41E: NVS commands */
-    { 0x41B, 0x41E, handleNvsConfig },
+    /* 0x434–0x437: NVS commands */
+    { CFG_ERASE_NVS_ID, CFG_READ_NVS_ID, handleNvsConfig },
 
 
     /* 0x400–0x4FF: Identity/config/network/intro/epoch */
@@ -35,24 +37,28 @@ void consumeMsg(can_msg_t *msg)
 
     /* Special case: ROUTE_TAKE_NO_ACTION (0xFFFF, outside normal ranges) */
     if (id == ROUTE_TAKE_NO_ACTION) {
+        ESP_LOGD(TAG, "Received ROUTE_TAKE_NO_ACTION");
         /* no action */
         return;
     }
 
     /* Explicitly ignore 0x300–0x31F (router handles these before consumer) */
     if (id >= 0x300 && id <= 0x31F) {
+        ESP_LOGW(TAG, "Received 0x300–0x31F (router handles these before consumer)");
         return;
     }
 
     /* Range-based dispatch */
     for (uint8_t i = 0; i < consumerHandlerTableCount; i++) {
         const ConsumerHandlerEntry *entry = &consumerHandlerTable[i];
+        ESP_LOGD(TAG, "Searching for route for 0x%x", id);
         if (id >= entry->startId && id <= entry->endId) {
+            ESP_LOGI(TAG, "Found handler for 0x%x at index %d", id, i);
             entry->handler(msg);
             return;
         }
     }
 
     /* No handler claimed this ID */
-    Serial.printf("Unknown message received 0x%x\n", id);
+    ESP_LOGW(TAG, "Unknown message received 0x%x\n", id);
 }
