@@ -172,6 +172,31 @@ void outputTrackerInit(void)
     ESP_LOGI(TAG, "Tracker initialized");
 }
 
+/** Reset the state machine for a particular sub-module tracker */
+void outputTrackerReset(const uint8_t index)
+{
+    outputTracker_t &trk = trackers[index];
+
+    trk.nextActionTime = 0;
+    trk.currentStep = 0;
+
+}
+
+void outputTrackerActive(const uint8_t index, bool state)
+{
+    outputTracker_t &trk = trackers[index];
+
+    trk.isActive = state;
+    
+}
+
+void outputTrackerConfig(const uint8_t index, bool state)
+{
+    outputTracker_t &trk = trackers[index];
+
+    trk.outputSupported = state;
+}
+
 void outputTrackerTick(void)
 {
     for (int i = 0; i < MAX_SUB_MODULES; i++)

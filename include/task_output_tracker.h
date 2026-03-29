@@ -45,3 +45,6 @@ outputTracker_t *getOutputTracker(const uint8_t index);
 outputTracker_t *getOutputTrackers(void);
 void outputTrackerTick(void);
 void outputTrackerInit(void);
+void outputTrackerReset(const uint8_t index);
+void outputTrackerActive(const uint8_t index, bool state);
+void outputTrackerConfig(const uint8_t index, bool state);

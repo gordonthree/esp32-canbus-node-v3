@@ -8,8 +8,6 @@
 
 #include "esp_log.h"
 
-static const char* TAG = "task_output";
-
 /*
 * ==========================================================================
 * Private Constants and Variables
@@ -67,10 +65,19 @@ static void TaskOutput(void *pvParameters)
         argbRequestStripColor(cmd.index, cmd.param1);
         break;
 
+      case OUTPUT_CMD_TRACKER_ACTIVE:
+        outputTrackerActive(cmd.index, cmd.param1);
+        break;
+
+      case OUTPUT_CMD_TRACKER_CFG:
+        outputTrackerConfig(cmd.index, cmd.param1);
+        break;
+
+      case OUTPUT_CMD_TRACKER_RESET:
+        outputTrackerReset(cmd.index);
+        break;
       /* No-op commands */
       case OUTPUT_CMD_APPLY_MODE:
-      case OUTPUT_CMD_SET_BLINK_RATE:
-      case OUTPUT_CMD_SET_STROBE_PAT:
         break;
 
       default:

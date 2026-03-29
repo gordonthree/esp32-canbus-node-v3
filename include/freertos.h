@@ -42,6 +42,7 @@ typedef enum {
     OUTPUT_CMD_SET_PWM_DUTY,     // param1 = 13-bit duty
     OUTPUT_CMD_TRACKER_ACTIVE,   // param1 = true / false, enable tracker
     OUTPUT_CMD_TRACKER_CFG,      // param1 = true / false, output supported
+    OUTPUT_CMD_TRACKER_RESET,    // param1 = true, reset strobe counter and momentary timer
     OUTPUT_CMD_SET_COLOR_INDEX,  // param1 = palette index
     OUTPUT_CMD_SET_DISPLAY_MODE, // param1 = display mode
     OUTPUT_CMD_INVALID           // keep this last in the list
