@@ -9,9 +9,14 @@
 #include "task_twai.h"
 #include "freertos.h"
 
+#include "esp_log.h"
+
 /* ========================================================================= 
-  Private Variables
+  Private Constants and Variables
   ========================================================================= */
+
+static const char* TAG = "task_twai";
+
 
 static bool can_driver_installed = false;
 static bool can_suspended = false;
@@ -36,26 +41,26 @@ static void twaiInit(void)
 
   /* Install TWAI driver */
   if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
-    Serial.println("[TWAI] Driver installed.");
+    ESP_LOGI(TAG, "[TWAI] Driver installed.");
   } else {
-    Serial.println("[TWAI] Failed to install driver.");
+    ESP_LOGE(TAG, "[TWAI] Failed to install driver, reboot recommended.");
     vTaskDelete(NULL); /* <--- Safety fix */
   }
 
   /* Start TWAI driver */
   if (twai_start() == ESP_OK) {
-    Serial.println("[TWAI] Driver started.");
+    ESP_LOGI(TAG, "[TWAI] Driver started.");
   } else {
-    Serial.println("[TWAI] Failed to start driver, reboot recommended.");
+    ESP_LOGE(TAG, "[TWAI] Failed to start driver, reboot recommended.");
     vTaskDelete(NULL); /* <--- Safety fix */
   }
 
   /* Reconfigure alerts to detect frame receive, Bus-Off error and RX queue full states */
   uint32_t alerts_to_enable = TWAI_ALERT_RX_DATA | TWAI_ALERT_ERR_PASS | TWAI_ALERT_RX_QUEUE_FULL | TWAI_ALERT_TX_IDLE | TWAI_ALERT_TX_SUCCESS | TWAI_ALERT_TX_FAILED | TWAI_ALERT_BUS_ERROR;
   if (twai_reconfigure_alerts(alerts_to_enable, NULL) == ESP_OK) {
-    Serial.println("[TWAI] Alerts reconfigured.");
+    ESP_LOGI(TAG, "[TWAI] Alerts reconfigured.");
   } else {
-    Serial.println("[TWAI] Failed to reconfigure alerts.");
+    ESP_LOGW(TAG, "[TWAI] Failed to reconfigure alerts.");
     vTaskDelete(NULL); /* <--- Safety fix */
   }
 
@@ -69,7 +74,7 @@ void TaskTWAI(void *pvParameters)
   
   /* give some time at boot for the cpu setup other parameters */
   vTaskDelay(pdMS_TO_TICKS(100));
-  Serial.println("[RTOS] TWAI task started.");
+  ESP_LOGI(TAG, "[RTOS] TWAI task started.");
 
   /* Initialize the TWAI driver */
   twaiInit();
@@ -97,28 +102,28 @@ void TaskTWAI(void *pvParameters)
     /* Handle alerts */
     if (alerts_triggered & TWAI_ALERT_ERR_PASS) {
       if (millis() - lastErrPassLog > LOG_INTERVAL) {
-        Serial.println("[TWAI] Alert: Controller has become error passive.");
+        ESP_LOGW(TAG, "[TWAI] Alert: Controller has become error passive.");
         lastErrPassLog = millis();
       }
     }
 
     if (alerts_triggered & TWAI_ALERT_BUS_ERROR) {
       if (millis() - lastBusErrLog > LOG_INTERVAL) {
-        Serial.printf("[TWAI] Alert: Bus error. Count: %d\n", twaistatus.bus_error_count);
+        ESP_LOGW(TAG, "[TWAI] Alert: Bus error. Count: %d\n", twaistatus.bus_error_count);
         lastBusErrLog = millis();
       }
     }
 
     if (alerts_triggered & TWAI_ALERT_TX_FAILED) {
       if (millis() - lastTxFailLog > LOG_INTERVAL) {
-        Serial.println("[TWAI] Alert: Transmission failed.");
+        ESP_LOGW(TAG, "[TWAI] Alert: Transmission failed.");
         lastTxFailLog = millis();
       }
     }
 
     if (alerts_triggered & TWAI_ALERT_RX_QUEUE_FULL) {
       if (millis() - lastRxFullLog > LOG_INTERVAL) {
-        Serial.println("[TWAI] Alert: RX queue full.");
+        ESP_LOGW(TAG, "[TWAI] Alert: RX queue full.");
         lastRxFullLog = millis();
       }
     }
@@ -138,13 +143,13 @@ void TaskTWAI(void *pvParameters)
     while (xQueueReceive(canMsgTxQueue, &tx, 0) == pdTRUE) {
         esp_err_t res = twai_transmit(&tx, pdMS_TO_TICKS(10)); /* Transmit message */
         if (res != ESP_OK) {
-            Serial.printf("[TWAI] TX failed (%d) ID=0x%03X\n", res, tx.identifier);
+            ESP_LOGW(TAG, "[TWAI] TX failed (%d) ID=0x%03X\n", res, tx.identifier);
         } else {
-            Serial.printf("[TWAI] TX OK ID=0x%03X\n", tx.identifier);
+            ESP_LOGI(TAG, "[TWAI] TX OK ID=0x%03X\n", tx.identifier);
         }
     }
 
-    vTaskDelay(pdMS_TO_TICKS(5));
+    vTaskDelay(pdMS_TO_TICKS(1)); /* minimal task delay */
   }
 }
 
