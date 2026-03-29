@@ -13,6 +13,10 @@
 #include "wifi_hw.h"
 #include "consumer_handler.h"
 
+#include "esp_log.h"
+
+static const char *TAG = "task_producer";
+
 /* =========================================================================
  *  Private declarations
  * ========================================================================= */
@@ -36,7 +40,7 @@ static void updateSubModules()
     const personalityDef_t *p = nodeGetPersonality(sub->personalityIndex);
 
     if (!p) {
-        Serial.printf("[PRODUCER] Error: Personality lookup failed for index %u\n", i);
+        ESP_LOGW(TAG, "[PRODUCER] Error: Personality lookup failed for index %u\n", i);
         continue;
     }
 
@@ -104,6 +108,7 @@ static void updateSubModules()
         break;
 
       default:
+        ESP_LOGW(TAG, "[PRODUCER] Error: Unknown personality %u\n", sub->personalityId);
         // Unknown virtual personality — ignore safely
         continue;
       }
@@ -120,14 +125,14 @@ static void handleProducerTick(uint32_t now)
     producer_event_t evt = producerTick(now);
 
     if (evt.error) {
-        Serial.println("[PRODUCER] ProducerTick returned error, aborting producer processing");
+        ESP_LOGW(TAG, "[PRODUCER] ProducerTick returned error, aborting producer processing");
         return;
     }
     if (!evt.ready)
         return;
 
     if (evt.sub_idx >= nodeGetInfo()->subModCnt) {
-        Serial.printf("[PRODUCER] Error: bad sub_idx %u (max %u)\n",
+        ESP_LOGW(TAG, "[PRODUCER] Error: bad sub_idx %u (max %u)\n",
                       evt.sub_idx, nodeGetInfo()->subModCnt - 1);
         return;
     }
@@ -137,7 +142,7 @@ static void handleProducerTick(uint32_t now)
     const subModule_t    &sub  = *nodeGetSubModule(evt.sub_idx); 
     const personalityDef_t *p  = &runtimePersonalityTable[nodeGetSubModule(evt.sub_idx)->personalityIndex];
     if (!p) {
-        Serial.printf("[PRODUCER] Error: personality lookup failed for sub %u\n", evt.sub_idx);
+        ESP_LOGW(TAG, "[PRODUCER] Error: personality lookup failed for sub %u\n", evt.sub_idx);
         return;
     }
 
@@ -173,7 +178,7 @@ static void handleProducerTick(uint32_t now)
     /* Send message */
     canEnqueueMessage(p->dataMsgId, payload, dlc);
 
-    Serial.printf("[PRODUCER] Tx: sub %u msg 0x%03X dlc %u val %u\n",
+    ESP_LOGI(TAG, "[PRODUCER] Tx: sub %u msg 0x%03X dlc %u val %u\n",
                   evt.sub_idx, p->dataMsgId, dlc, evt.value);
 }
 
@@ -226,7 +231,7 @@ static void managePeriodicMessages()
         unless FLAG_SEND_INTRODUCTION is manually set by a Master request. */
     if (currentMillis - lastIntro >= 10000) {
         lastIntro = currentMillis;
-        Serial.println("Sending heartbeat");
+        ESP_LOGI(TAG, "[PRODUCER] Sending heartbeat");
         sendIntroduction(0); /* send the node introduction message as heartbeat */
         // TODO: readCydLdr should be configured as a producer
         readCydLdr(); /* Read CYD LDR and send that data to the bus */
@@ -246,10 +251,7 @@ static void managePeriodicMessages()
 
 static void TaskProducer(void *pvParameters)
 {
-    /* Allow system to settle at boot */
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    Serial.println("[RTOS] Producer task started.");
+    ESP_LOGI(TAG, "[RTOS] Producer task started.");
 
     for (;;) {
         managePeriodicMessages();     /* Publish periodic CAN messages */
