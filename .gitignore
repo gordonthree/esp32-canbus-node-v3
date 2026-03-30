@@ -6,3 +6,4 @@
 src/secrets.cpp
 secrets.ini
 archive/
+*kate-swp
