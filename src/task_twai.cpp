@@ -134,6 +134,7 @@ void TaskTWAI(void *pvParameters)
       twai_message_t message;
       while (twai_receive(&message, 0) == ESP_OK) {
         can_msg_t rx = toCanMsg(&message);
+        ESP_LOGV(TAG, "[TWAI] RX ID=0x%03X DLC=%d", rx.identifier, rx.data_length_code);
         xQueueSend(canMsgRxQueue, &rx, QUEUE_NO_WAIT);
       }
     }
@@ -145,7 +146,7 @@ void TaskTWAI(void *pvParameters)
         if (res != ESP_OK) {
             ESP_LOGW(TAG, "[TWAI] TX failed (%d) ID=0x%03X", res, tx.identifier);
         } else {
-            ESP_LOGI(TAG, "[TWAI] TX OK ID=0x%03X", tx.identifier);
+            ESP_LOGD(TAG, "[TWAI] TX OK ID=0x%03X", tx.identifier);
         }
     }
 
