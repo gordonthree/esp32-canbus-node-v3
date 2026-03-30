@@ -17,7 +17,7 @@ void handleProducerConfig(can_msg_t *msg)
     {
         case CFG_PRODUCER_CFG_ID: /**< Configure a single producer submodule */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             handleProducerCfg(msg);
@@ -25,7 +25,7 @@ void handleProducerConfig(can_msg_t *msg)
 
         case CFG_PRODUCER_WRITE_NVS_ID: /**< Commit producer config to NVS. */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             requestProducerSave();
@@ -33,7 +33,7 @@ void handleProducerConfig(can_msg_t *msg)
 
         case CFG_PRODUCER_READ_NVS_ID: /**< Request producer config for all submodules */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             requestProducerLoad();
@@ -41,7 +41,7 @@ void handleProducerConfig(can_msg_t *msg)
 
         case REQ_PRODUCER_CFG_ID: /**< Request producer config  for idx */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             // TODO: IMPLEMENT
@@ -49,7 +49,7 @@ void handleProducerConfig(can_msg_t *msg)
 
         case CFG_PRODUCER_PURGE_ID: /**< Purge the producer list */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             producerPurgeSingle(modIdx);
@@ -57,7 +57,7 @@ void handleProducerConfig(can_msg_t *msg)
 
         case CFG_PRODUCER_DEFAULTS_ID: /**< Reset the producer at idx to defaults */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             producerDefaultSingle(modIdx);
@@ -66,14 +66,14 @@ void handleProducerConfig(can_msg_t *msg)
         case CFG_PRODUCER_ENABLE_ID: /**< Enable the producer at idx */
         {
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             const subModule_t* sub = nodeGetSubModule(modIdx);
             const personalityDef_t* p = nodeGetPersonality(sub->personalityIndex);
             if (!p)
             {
-                ESP_LOGI(TAG, "Personality not found for index %d\n", modIdx);
+                ESP_LOGI(TAG, "Personality not found for index %d", modIdx);
                 break;
             }
             producerEnable(modIdx);            /* Enable the producer */
@@ -84,14 +84,14 @@ void handleProducerConfig(can_msg_t *msg)
         case CFG_PRODUCER_DISABLE_ID: /**< Disable the producer at idx */
         {
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             const subModule_t* sub = nodeGetSubModule(modIdx);
             const personalityDef_t* p = nodeGetPersonality(sub->personalityIndex);
             if (!p)
             {
-                ESP_LOGI(TAG, "Personality not found for index %d\n", modIdx);
+                ESP_LOGI(TAG, "Personality not found for index %d", modIdx);
                 break;
             }
             producerDisable(modIdx);            /* Disable the producer */
@@ -105,35 +105,35 @@ void handleProducerConfig(can_msg_t *msg)
 
         case REQ_PRODUCER_LIST_ID: /**< Ask the node to dump the entire producer cfg list */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             break;
 
         case PRODUCER_LIST_BEGIN_ID: /**< Node will announce the count of defined producers */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             break;
 
         case PRODUCER_LIST_DATA_ID: /**< Producer cfg data for index */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             break;
 
         case PRODUCER_LIST_END_ID: /**< Node will announce the end of the defined producers list */
             if (nodeIsValidSubmodule(modIdx) == false) {
-                ESP_LOGI(TAG, "Invalid sub module index %d\n", modIdx);
+                ESP_LOGI(TAG, "Invalid sub module index %d", modIdx);
                 break;
             }
             break;
 
         default:
         /* ID is in 0x320–0x3FF but not currently handled */
-            ESP_LOGW(TAG, "Invalid producer command %d\n", msg->identifier);
+            ESP_LOGW(TAG, "Invalid producer command %d", msg->identifier);
             break;
     }
 }

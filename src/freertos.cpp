@@ -2,6 +2,9 @@
 #include "can_platform.h"  /* brings in can_msg_t */
 #include "driver/twai.h"   /* esp32 native TWAI CAN library */
 
+#include "esp_log.h"
+
+static const char* TAG = "freertos";
 
 
 /* ========================================================================== 
@@ -63,5 +66,5 @@ void freeRtosInit()
     // xTaskCreate(TaskReadTouch,     "Touch",   TASK_TOUCH_STACK_SIZE,   NULL, tskNormalPriority, &xTouchHandle);
 #endif
     
-    printf("[INIT] FreeRTOS queue memory initialized./n");
+    ESP_LOGI(TAG, "[INIT] FreeRTOS queue memory initialized.");
 }

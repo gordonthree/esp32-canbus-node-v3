@@ -1,4 +1,7 @@
 #include "node_state.h"
+#include "esp_log.h"
+
+static const char *TAG = "node_state";
 
 /* ============================================================================
  *  CONSTANTS
@@ -38,7 +41,7 @@ nodeInfo_t node;
 void nodePrintStructInfo(void) 
 {
   /* Debug check for memory alignment */
-  Serial.printf("\n[DEBUG] Struct Sizes - nodeInfo_t: %d, subModule_t: %d, runTime_t: %d\n",
+  ESP_LOGI(TAG, "[INIT] Struct Sizes - nodeInfo_t: %d, subModule_t: %d, runTime_t: %d",
               sizeof(nodeInfo_t), sizeof(subModule_t), sizeof(runTime_t));
 }
 
@@ -58,7 +61,7 @@ void nodeReadMacAddress(void)
         (static_cast<uint32_t>(baseMac[4]) << 8)  |
         (static_cast<uint32_t>(baseMac[5]));
 
-    Serial.printf("[INIT] Node ID extracted: 0x%02X%02X%02X%02X  (0x%08X)\n",
+    ESP_LOGI(TAG, "[INIT] Node ID extracted: 0x%02X%02X%02X%02X  (0x%08X)",
                   baseMac[2], baseMac[3], baseMac[4], baseMac[5],
                   node.nodeID);
 }
@@ -154,48 +157,70 @@ const personalityDef_t* nodeGetPersonality(uint8_t personalityIndex)
  *
  * @param node Pointer to the nodeInfo_t structure to print.
  */
-void printNodeInfo(const nodeInfo_t* node) 
+void printNodeInfo(const nodeInfo_t* node)
 {
-  Serial.println("\n--------- nodeInfo_t ---------");
-  Serial.printf("NodeInfo:\n");
-  Serial.printf("  nodeID: 0x%08X\n", node->nodeID);
-  Serial.printf("  nodeTypeMsg: 0x%03X\n", node->nodeTypeMsg);
-  Serial.printf("  nodeTypeDLC: %d\n", node->nodeTypeDLC);
-  Serial.printf("  subModCnt: %d\n", node->subModCnt);
+    ESP_LOGD("NODEINFO", "--------- nodeInfo_t ---------");
+    ESP_LOGD("NODEINFO", "NodeInfo:");
+    ESP_LOGD("NODEINFO", "  nodeID: 0x%08X", node->nodeID);
+    ESP_LOGD("NODEINFO", "  nodeTypeMsg: 0x%03X", node->nodeTypeMsg);
+    ESP_LOGD("NODEINFO", "  nodeTypeDLC: %d", node->nodeTypeDLC);
+    ESP_LOGD("NODEINFO", "  subModCnt: %d", node->subModCnt);
 
-  Serial.printf("  subModule array:\n");
-  for (uint8_t i = 0; i < node->subModCnt; i++) {
-    /** Pointer to the personality definition for this sub-module */
-    const personalityDef_t* p = &runtimePersonalityTable[node->subModule[i].personalityIndex]; 
+    ESP_LOGD("NODEINFO", "  subModule array:");
+    for (uint8_t i = 0; i < node->subModCnt; i++) {
 
-    Serial.printf("     subModule[%d]:\n", i);
-    Serial.printf("       personalityId: %d\n", node->subModule[i].personalityId);
-    Serial.printf("       personalityIndex: %d\n", node->subModule[i].personalityIndex);
-    Serial.printf("(p->)    dataMsgId: 0x%03X\n", p->dataMsgId);
-    Serial.printf("(p->)    dataMsgDlc: %d\n", p->dataMsgDlc);
-    Serial.printf("(p->)    gpio Pin: %d\n", p->gpioPin);
-    if (node->subModule[i].personalityId == PERS_GPIO_INPUT) {
-        Serial.printf("       gpio_input flags: 0x%02X\n", node->subModule[i].config.gpioInput.flags); 
-        Serial.printf("       gpio_input debounce_ms: %d\n", node->subModule[i].config.gpioInput.debounce_ms); 
-        Serial.printf("       gpio_input reserved: 0x%02X\n", node->subModule[i].config.gpioInput.reserved); 
-    } else {
-        Serial.printf("       config bytes 0x%02X 0x%02X 0x%02X\n", node->subModule[i].config.rawConfig[0], node->subModule[i].config.rawConfig[1], node->subModule[i].config.rawConfig[2]);
+        const personalityDef_t* p =
+            &runtimePersonalityTable[node->subModule[i].personalityIndex];
+
+        ESP_LOGD("NODEINFO", "     subModule[%d]:", i);
+        ESP_LOGD("NODEINFO", "       personalityId: %d",
+                 node->subModule[i].personalityId);
+        ESP_LOGD("NODEINFO", "       personalityIndex: %d",
+                 node->subModule[i].personalityIndex);
+
+        ESP_LOGD("NODEINFO", "       (p->) dataMsgId: 0x%03X", p->dataMsgId);
+        ESP_LOGD("NODEINFO", "       (p->) dataMsgDlc: %d", p->dataMsgDlc);
+        ESP_LOGD("NODEINFO", "       (p->) gpio Pin: %d", p->gpioPin);
+
+        if (node->subModule[i].personalityId == PERS_GPIO_INPUT) {
+            ESP_LOGD("NODEINFO", "       gpio_input flags: 0x%02X",
+                     node->subModule[i].config.gpioInput.flags);
+            ESP_LOGD("NODEINFO", "       gpio_input debounce_ms: %d",
+                     node->subModule[i].config.gpioInput.debounce_ms);
+            ESP_LOGD("NODEINFO", "       gpio_input reserved: 0x%02X",
+                     node->subModule[i].config.gpioInput.reserved);
+        } else {
+            ESP_LOGD("NODEINFO", "       config bytes 0x%02X 0x%02X 0x%02X",
+                     node->subModule[i].config.rawConfig[0],
+                     node->subModule[i].config.rawConfig[1],
+                     node->subModule[i].config.rawConfig[2]);
+        }
+
+        ESP_LOGD("NODEINFO", "       introMsgId: 0x%03X",
+                 node->subModule[i].introMsgId);
+        ESP_LOGD("NODEINFO", "       introMsgDLC: %d",
+                 node->subModule[i].introMsgDLC);
+        ESP_LOGD("NODEINFO", "       submod_flags: 0x%02X",
+                 node->subModule[i].submod_flags);
+        ESP_LOGD("NODEINFO", "       producer_flags: 0x%02X",
+                 node->subModule[i].producer_flags);
+        ESP_LOGD("NODEINFO", "       router_flags: 0x%02X",
+                 node->subModule[i].router_flags);
+
+        ESP_LOGD("NODEINFO", "       runTime:");
+        ESP_LOGD("NODEINFO", "         last_change_ms: %d",
+                 node->subModule[i].runTime.last_change_ms);
+        ESP_LOGD("NODEINFO", "         valueU32: %d",
+                 node->subModule[i].runTime.valueU32);
+        ESP_LOGD("NODEINFO", "         kind: %d",
+                 node->subModule[i].runTime.kind);
+        ESP_LOGD("NODEINFO", "         period_ms: %d",
+                 node->subModule[i].runTime.period_ms);
+        ESP_LOGD("NODEINFO", "         last_published_value: %d",
+                 node->subModule[i].runTime.last_published_value);
     }
-    Serial.printf("       introMsgId: 0x%03X\n", node->subModule[i].introMsgId);
-    Serial.printf("       introMsgDLC: %d\n", node->subModule[i].introMsgDLC);
-    Serial.printf("       submod_flags: 0x%02X\n", node->subModule[i].submod_flags);
-    Serial.printf("       producer_flags: 0x%02X\n", node->subModule[i].producer_flags);
-    Serial.printf("       router_flags: 0x%02X\n", node->subModule[i].router_flags);
-    Serial.printf("       runTime:\n");
-    Serial.printf("         last_change_ms: %d\n", node->subModule[i].runTime.last_change_ms);
-    Serial.printf("         valueU32: %d\n", node->subModule[i].runTime.valueU32);
-    Serial.printf("         kind: %d\n", node->subModule[i].runTime.kind);
-    Serial.printf("         period_ms: %d\n", node->subModule[i].runTime.period_ms);
-    Serial.printf("         last_published_value: %d\n", node->subModule[i].runTime.last_published_value);
-    // You can continue this pattern for each field in the subModule_t structure
-  }
-  Serial.println("--------- nodeInfo_t ---------\n");
 
+    ESP_LOGD("NODEINFO", "--------- nodeInfo_t ---------");
 }
 
 

@@ -73,6 +73,10 @@
 /* hardware constants */
 // #include "esp32_defs.h"        /**< ESP32 hardware definitions for personality table */
 
+#include "esp_log.h"
+
+static const char *TAG = "main";
+
 #ifdef ESP32CYD
 #include "espcyd.h"
 #endif
@@ -187,7 +191,7 @@ static int appendTemplatePersonalities(void)
 
         /* Skip pre-defined submodules */
         if (s < g_personalityCount) {
-            Serial.printf("[INIT] Skipping pre-defined submodule at index %d\n", s);
+            ESP_LOGI(TAG, "[INIT] Skipping pre-defined submodule at index %d", s);
             continue;
         }
 
@@ -233,8 +237,8 @@ static int appendTemplatePersonalities(void)
 
         if (src == NULL) {
             /* Template personality missing — fatal configuration error */
-            Serial.printf(
-                "[ERR] appendTemplatePersonalities(): personalityId 0x%04X not found in templateTable\n",
+            ESP_LOGW(TAG, 
+                "[ERR] appendTemplatePersonalities(): personalityId 0x%04X not found in templateTable",
                 pid
             );
             return -1;
@@ -244,7 +248,7 @@ static int appendTemplatePersonalities(void)
          * Step 3: Ensure runtime table has space for another personality.
          * ------------------------------------------------------------ */
         if (runtimePersonalityCount >= MAX_RUNTIME_PERSONALITIES) {
-            Serial.println("[ERR] appendTemplatePersonalities(): runtime table full");
+            ESP_LOGW(TAG, "[ERR] appendTemplatePersonalities(): runtime table full");
             return -1;
         }
 
@@ -259,8 +263,8 @@ static int appendTemplatePersonalities(void)
         /* Update submodule to reference the new runtime index */
         sub->personalityIndex = newIndex;
 
-        Serial.printf(
-            "[INIT] Appended template personality 0x%03X at runtime index %d\n",
+        ESP_LOGI(TAG, 
+            "[INIT] Appended template personality 0x%03X at runtime index %d",
             pid, newIndex
         );
 
@@ -306,7 +310,7 @@ static void manageColorPickerList(can_msg_t *msg) {
             {
                 prefs.getBytes(NVS_KEY, (void*)discoveredNodes, bytesAvailable);
                 discoveredNodeCount = bytesAvailable / sizeof(argbNode_t);
-                Serial.printf("ARGB: Loaded %d nodes from NVS\n", discoveredNodeCount);
+                ESP_LOGI(TAG, "ARGB: Loaded %d nodes from NVS", discoveredNodeCount);
             }
             prefs.end();
             break;
@@ -322,7 +326,7 @@ static void manageColorPickerList(can_msg_t *msg) {
             prefs.putBytes(NVS_KEY, (const void*)discoveredNodes, bytesToWrite);
 
             prefs.end();
-            Serial.println("ARGB: Node list persisted to NVS");
+            ESP_LOGI(TAG, "ARGB: Node list persisted to NVS");
             break;
         }
 
@@ -330,7 +334,7 @@ static void manageColorPickerList(can_msg_t *msg) {
         {
             memset((void*)discoveredNodes, 0, sizeof(discoveredNodes));
             discoveredNodeCount = 0;
-            Serial.println("ARGB: List purged from memory");
+            ESP_LOGI(TAG, "ARGB: List purged from memory");
             break;
         }
 
@@ -355,7 +359,7 @@ static void manageColorPickerList(can_msg_t *msg) {
         //         discoveredNodes[discoveredNodeCount].lastColorIdx = 0; /* Default to Black/Off */
         //         discoveredNodes[discoveredNodeCount].active = true;
         //         discoveredNodeCount++;
-        //         Serial.printf("ARGB: Node 0x%08X added to picker\n", targetNodeId);
+        //         ESP_LOGI(TAG, "ARGB: Node 0x%08X added to picker", targetNodeId);
         //     }
         //     break;
         // }
@@ -372,7 +376,7 @@ static void manageColorPickerList(can_msg_t *msg) {
         //                 discoveredNodes[j] = discoveredNodes[j + 1];
         //             }
         //             discoveredNodeCount--;
-        //             Serial.printf("ARGB: Node 0x%08X removed\n", targetNodeId);
+        //             ESP_LOGI(TAG, "ARGB: Node 0x%08X removed", targetNodeId);
         //             break;
         //         }
         //     }
@@ -392,7 +396,7 @@ static void manageColorPickerList(can_msg_t *msg) {
         }
 
         default:
-            Serial.printf("ARGB: Unknown picker management command: 0x%03X\n", cmd);
+            ESP_LOGW(TAG, "ARGB: Unknown picker management command: 0x%03X", cmd);
             break;
     }
 #endif
@@ -415,15 +419,14 @@ void setup() {
   Serial.setDebugOutput(true);
 
   wifiEnable(); /* start the WiFi task */
-
-  delay(2500); /* Provide time for the CPU to settle after reboot */
+  
 
   /* set up some clock parameters */
   setenv("TZ", DEFAULT_TIMEZONE, ENV_VAL_OVERWRITE);
   tzset();
 
   /* Initialize memory */
-  Serial.println("[INIT] Initializing memory...");
+  ESP_LOGI(TAG, "[INIT] Initializing memory...");
   nodeInit(); /* Initialize the node state array */
   pwmHwInit(); /* Initialize LEDC memory resources */
   freeRtosInit(); /* Initialize FreeRTOS resources */ 
@@ -433,9 +436,9 @@ void setup() {
   int rc = initRuntimePersonalityTable();
   if (rc > 0) {
       runtimePersonalityCount = rc;
-      Serial.printf("[INIT] Initialized runtime personality table with %d personalities\n", rc);
+      ESP_LOGI(TAG, "[INIT] Initialized runtime personality table with %d personalities", rc);
   } else {
-      Serial.println("[INIT] Error: failed to initialize runtime personality table!");
+      ESP_LOGW(TAG, "[INIT] Error: failed to initialize runtime personality table!");
       // TODO: recovery state
   }
 
@@ -448,7 +451,7 @@ void setup() {
   /* Append template personalities based on user defined submodules loaded from NVS */
   rc = appendTemplatePersonalities();
   if (rc < 0) {
-    Serial.println("[INIT] Error: appendTemplatePersonalities() failed");
+    ESP_LOGW(TAG, "[INIT] Error: appendTemplatePersonalities() failed");
     // TODO: enter recovery state
   }
 
@@ -463,6 +466,8 @@ void setup() {
 
   /* Initialize router CRC16 callback */
   router_set_crc_callback(crc16_ccitt);
+
+  esp_log_write(ESP_LOG_INFO, "TEST", "Direct IDF call to trigger hook\n");
 
   #ifdef ESP32CYD
   /* Initialize CYD interface */

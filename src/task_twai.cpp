@@ -109,7 +109,7 @@ void TaskTWAI(void *pvParameters)
 
     if (alerts_triggered & TWAI_ALERT_BUS_ERROR) {
       if (millis() - lastBusErrLog > LOG_INTERVAL) {
-        ESP_LOGW(TAG, "[TWAI] Alert: Bus error. Count: %d\n", twaistatus.bus_error_count);
+        ESP_LOGW(TAG, "[TWAI] Alert: Bus error. Count: %d", twaistatus.bus_error_count);
         lastBusErrLog = millis();
       }
     }
@@ -143,9 +143,9 @@ void TaskTWAI(void *pvParameters)
     while (xQueueReceive(canMsgTxQueue, &tx, 0) == pdTRUE) {
         esp_err_t res = twai_transmit(&tx, pdMS_TO_TICKS(10)); /* Transmit message */
         if (res != ESP_OK) {
-            ESP_LOGW(TAG, "[TWAI] TX failed (%d) ID=0x%03X\n", res, tx.identifier);
+            ESP_LOGW(TAG, "[TWAI] TX failed (%d) ID=0x%03X", res, tx.identifier);
         } else {
-            ESP_LOGI(TAG, "[TWAI] TX OK ID=0x%03X\n", tx.identifier);
+            ESP_LOGI(TAG, "[TWAI] TX OK ID=0x%03X", tx.identifier);
         }
     }
 
@@ -183,13 +183,12 @@ void canEnqueueMessage(uint16_t msgid, const uint8_t *data, uint8_t dlc)
     memcpy(frame.data, data, dlc);
 
     /* print debug info */
-    // Serial.printf("[TWAI] Enqueue ID=0x%03X DLC=%d DATA: \n", msgid, dlc);
+    ESP_LOGV(TAG, "[TWAI] Enqueue ID=0x%03X DLC=%d", msgid, dlc);
 
     /* loop through *data and print it */
-    // for (int i = 0; i < dlc; i++) {
-    //   Serial.printf("0x%02X ", data[i]);
-    // }
-    // Serial.println(""); /* newline after data */
+    for (int i = 0; i < dlc; i++) {
+      ESP_LOGV(TAG, "[TWAI] Data=0x%02X ", data[i]);
+    }
 
     CanTxMsg_t hw = toTwaiMsg(&frame);
     xQueueSend(canMsgTxQueue, &hw, QUEUE_NO_WAIT);

@@ -11,6 +11,8 @@ static uint32_t pendingRemoteNodeId = 0;
 static uint8_t pendingRemoteIndex = 0;
 static uint8_t pendingPersonalityId = 0;
 
+static void handleAddNetworkSubmodule(void);
+
 static void handleAddNetworkSubmodule(void)
 {
     /* Only proceed when both messages have arrived and validated */
@@ -29,7 +31,7 @@ static void handleAddNetworkSubmodule(void)
     }
     else
     {
-        ESP_LOGI(TAG, "[CFG] Added network submodule: node=0x%08lX index=%u submod=%d)\n",
+        ESP_LOGI(TAG, "[CFG] Added network submodule: node=0x%08lX index=%u submod=%d)",
                  (unsigned long)pendingRemoteNodeId,
                  pendingRemoteIndex,
                  idx);
@@ -67,7 +69,7 @@ void handleNetworkConfig(can_msg_t *msg)
 
         pendingNetNodeValid = true;
 
-        ESP_LOGI(TAG, "[CONSUMER] Pending remoteNodeId = 0x%08lX\n",
+        ESP_LOGI(TAG, "[CONSUMER] Pending remoteNodeId = 0x%08lX",
                  (unsigned long)pendingRemoteNodeId);
 
         /* Attempt creation if CFG already arrived */
@@ -84,7 +86,7 @@ void handleNetworkConfig(can_msg_t *msg)
         /* Validate personalityId against template table */
         if (!isValidTemplatePersonality(personalityId))
         {
-            ESP_LOGW(TAG, "[CONSUMER] Error: Invalid template personalityId: %u\n", personalityId);
+            ESP_LOGW(TAG, "[CONSUMER] Error: Invalid template personalityId: %u", personalityId);
             pendingNetDataValid = false;
             break;
         }
@@ -94,7 +96,7 @@ void handleNetworkConfig(can_msg_t *msg)
         pendingPersonalityId = personalityId;
         pendingNetDataValid = true;
 
-        ESP_LOGI(TAG, "[CFG] Pending remoteIndex=%u personalityId=%u\n",
+        ESP_LOGI(TAG, "[CFG] Pending remoteIndex=%u personalityId=%u",
                  pendingRemoteIndex, pendingPersonalityId);
 
         /* Attempt creation if ADD already arrived */
@@ -120,7 +122,7 @@ void handleNetworkConfig(can_msg_t *msg)
             if (nodeGetSubModule(i)->networkNodeId == remoteNode)
             {
                 removeSubmodule(i);
-                ESP_LOGI(TAG, "[CFG] Removed network submodule for node 0x%08lX\n",
+                ESP_LOGI(TAG, "[CFG] Removed network submodule for node 0x%08lX",
                          (unsigned long)remoteNode);
                 break;
             }

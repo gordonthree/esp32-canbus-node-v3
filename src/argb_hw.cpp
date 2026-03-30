@@ -1,5 +1,7 @@
 #include "argb_hw.h"
+#include "esp_log.h"
 
+static const char* TAG = "argb_hw";
 
 
 #ifdef ARGB_LED
@@ -51,63 +53,63 @@ void initArgbHardware(uint8_t index, subModule_t *sub)
         g_argbStrips[index] = nullptr;
     }
 
-    Serial.printf("ARGB using RMT channel %u\n", index);
+    ESP_LOGI(TAG, "[ARGB] Using RMT channel %u", index);
 
 
     /* Instantiate strip with unique RMT channel */
     switch (index)
     {
         case 0:
-            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            ESP_LOGI(TAG, "[ARGB] Constructed type: RmtMethod%d", index);
 
             g_argbStrips[index] =
                 new NeoPixelBus<NeoGrbFeature, RmtMethod0>(pixelCount, dataPin);
             break;
 
         case 1:
-            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            ESP_LOGI(TAG, "[ARGB] Constructed type: RmtMethod%d", index);
             g_argbStrips[index] =
                 new NeoPixelBus<NeoGrbFeature, RmtMethod1>(pixelCount, dataPin);
             break;
 
         case 2:
-            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            ESP_LOGI(TAG, "[ARGB] Constructed type: RmtMethod%d", index);
             g_argbStrips[index] =
                 new NeoPixelBus<NeoGrbFeature, RmtMethod2>(pixelCount, dataPin);
             break;
 
         case 3:
-            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            ESP_LOGI(TAG, "[ARGB] Constructed type: RmtMethod%d", index);
             g_argbStrips[index] =
                 new NeoPixelBus<NeoGrbFeature, RmtMethod3>(pixelCount, dataPin);
             break;
 
         case 4:
-            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            ESP_LOGI(TAG, "[ARGB] Constructed type: RmtMethod%d", index);
             g_argbStrips[index] =
                 new NeoPixelBus<NeoGrbFeature, RmtMethod4>(pixelCount, dataPin);
             break;
 
         case 5:
-            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            ESP_LOGI(TAG, "[ARGB] Constructed type: RmtMethod%d", index);
             g_argbStrips[index] =
                 new NeoPixelBus<NeoGrbFeature, RmtMethod5>(pixelCount, dataPin);
             break;
 
         case 6:
-            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            ESP_LOGI(TAG, "[ARGB] Constructed type: RmtMethod%d", index);
             g_argbStrips[index] =
                 new NeoPixelBus<NeoGrbFeature, RmtMethod6>(pixelCount, dataPin);
             break;
 
         case 7:
-            Serial.printf("Constructed type: RmtMethod%d\n", index);
+            ESP_LOGI(TAG, "[ARGB] Constructed type: RmtMethod%d", index);
             g_argbStrips[index] =
                 new NeoPixelBus<NeoGrbFeature, RmtMethod7>(pixelCount, dataPin);
             break;
 
         default:
-            Serial.printf("ARGB Init ERROR: No RMT channel for submod %u\n", index);
+            ESP_LOGW(TAG, "[ARGB] ERROR: No RMT channel for submod %u", index);
             return;
     }
 
@@ -158,7 +160,7 @@ void initArgbHardware(uint8_t index, subModule_t *sub)
                 break;
         }
 
-        Serial.printf("ARGB Init: submod %u pin %u count %u (RMT channel %u)\n",
+        ESP_LOGI(TAG, "[ARGB] constructed submod %u pin %u count %u (RMT channel %u)",
                       index, dataPin, pixelCount, index);
     }
 
@@ -234,6 +236,6 @@ void argbSetStripColor(uint8_t subIdx, uint8_t colorIndex)
             break;
     }
 
-    Serial.printf("ARGB[%d] = (%d,%d,%d)\n", subIdx, p.R, p.G, p.B);
+    ESP_LOGI(TAG, "[ARGB] submod[%d] = (%d,%d,%d)", subIdx, p.R, p.G, p.B);
 }
 #endif

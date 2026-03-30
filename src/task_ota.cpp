@@ -1,9 +1,13 @@
 #include "task_ota.h"
 #include "wifi_hw.h"
+#include "esp_log.h"
+
 
 /* ========================================================================== 
 *  Private variables 
 * ==========================================================================*/
+
+static const char *TAG = "OTA";
 bool ota_started                  = false;
 const char* otaHostname           = "ESPOTA";
 unsigned long ota_progress_millis = 0;
@@ -24,7 +28,7 @@ void TaskOTA(void *pvParameters) {
     vTaskDelay(pdMS_TO_TICKS(10));
   }
 
-  Serial.println("[RTOS] OTA task started.");
+  ESP_LOGI(TAG, "[RTOS] OTA task started.");
 
   /* Configure ArduinoOTA */
   ArduinoOTA.setHostname(otaHostname);
@@ -46,23 +50,23 @@ void TaskOTA(void *pvParameters) {
     /* Stop the TWAI driver */
     // twai_stop();
 
-    Serial.println("OTA Start: Background tasks suspended, starting flash... ");
+    ESP_LOGI(TAG, "[OTA] Start: Background tasks suspended, starting flash... ");
   });
   ArduinoOTA.onEnd([]() {
-    Serial.println("\nOTA End");
+    ESP_LOGI(TAG, "[OTA] End");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.print(".");
+    // no-op Serial.print(".");
   });
   ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("OTA Error[%u]\n", error);
+    ESP_LOGE(TAG, "[OTA] Error[%u]", error);
     ESP.restart(); /* Cleanest way to recover CAN hardware after a failed OTA */
   });
 
   /* Option A: Always enable OTA listener */
   ArduinoOTA.begin();
   ota_started = true;
-  Serial.println("[OTA] OTA library ready");
+  ESP_LOGI(TAG, "[OTA] Library ready");
 
   /* Main loop: handle OTA requests */
   for (;;) {
@@ -85,15 +89,4 @@ void TaskOTA(void *pvParameters) {
 
 bool getOtaStarted() { return ota_started; }
 
-// void startTaskOTA() 
-// {
-//   /* Start OTA task  */
-//   xTaskCreate(
-//     TaskOTA,
-//     "Task OTA",
-//     TASK_OTA_STACK_SIZE,
-//     NULL,
-//     tskHighPriority,
-//     NULL
-//   );
-// }
+/* OTA task is started and stopped by the WiFi task */

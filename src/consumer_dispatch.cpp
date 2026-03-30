@@ -8,23 +8,23 @@ static const char *TAG = "consumer_dispatch";
 
 const ConsumerHandlerEntry consumerHandlerTable[] =
 {
-    /* 0x110–0x1FF: Output commands */
+    /* 0x110–0x13F: Output commands */
     { SW_RESERVED_110_ID, SW_RESERVED_13F_ID, handleOutputCommands },
 
-    /* 0x200–0x2FF: Display/UI commands */
+    /* 0x200–0x22F: Display/UI commands */
     { SET_DISPLAY_OFF_ID, SET_BUTTON_RESERVED_22F_ID, handleDisplayCommands },
 
-    /* 0x320–0x3FF: Producer configuration commands */
-    { CFG_PRODUCER_CFG_ID, PRODUCER_LIST_END_ID, handleProducerConfig },
+    /* 0x320–0x332: Producer configuration commands */
+    { PRODUCER_RESERVED_320_ID, PRODUCER_RESERVED_332_ID, handleProducerConfig },
 
-    /* 0x428–0x433: Network submodule configuration commands */
-    { CFG_NET_NODE_DATA_ID, CFG_NET_NODE_DEL_ID, handleNetworkConfig },
+    /* 0x430–0x439: Network submodule configuration commands */
+    { CFG_NET_RESERVED_430_ID, CFG_NET_RESERVED_439_ID, handleNetworkConfig },
 
-    /* 0x434–0x437: NVS commands */
-    { CFG_ERASE_NVS_ID, CFG_READ_NVS_ID, handleNvsConfig },
+    /* 0x440–0x449: NVS commands */
+    { CFG_NVS_RESERVED_440_ID, CFG_NVS_RESERVED_449_ID, handleNvsConfig },
 
-    /* 0x400–0x4FF: Identity/config/network/intro/epoch */
-    { ACK_INTRO_ID, CFG_PWM_OUTPUT_ID, handleIdentityConfig },
+    /* 0x400–0x47F: Identity/config/network/intro/epoch */
+    { ACK_INTRO_ID, CFG_RESERVED_47F_ID, handleIdentityConfig },
 };
 
 const uint8_t consumerHandlerTableCount =
@@ -59,5 +59,5 @@ void consumeMsg(can_msg_t *msg)
     }
 
     /* No handler claimed this ID */
-    ESP_LOGW(TAG, "Unknown message received 0x%x\n", id);
+    ESP_LOGW(TAG, "Unknown message received 0x%x", id);
 }

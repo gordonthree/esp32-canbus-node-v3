@@ -8,6 +8,10 @@
 #include "crc16.h"             /**< CRC16 functions */
 #include "storage.h"           /**< NVS storage routines */
 
+#include "esp_log.h"
+
+static const char *TAG = "can_dispatch";
+
 /* ========================================================================= 
   Private Variables
   ========================================================================= */
@@ -162,7 +166,7 @@ void sendIntroduction(int msgPtr)
   /* Consistent 32-bit Node ID across all intro frames */
   packUint32ToBytes(nodeGetNodeID(), &msgData[0]);
 
-  // Serial.printf("TX INTRO: NODE 0x%08X SUBMODCNT %02u MSGPTR %d\n", node->nodeID, node->subModCnt, msgPtr);
+  ESP_LOGV("CAN", "TX INTRO: NODE 0x%08X SUBMODCNT %02u MSGPTR %d", node->nodeID, node->subModCnt, msgPtr);
 
 /* 0: Node Identity */
   if (msgPtr == 0) {
@@ -183,7 +187,7 @@ void sendIntroduction(int msgPtr)
     msgData[5]                 = (uint8_t)(txCrc >> 8);
     msgData[6]                 = (uint8_t)(txCrc);
 
-    // Serial.printf("TX INTRO: NODE 0x%08X SUBMODCNT %02u (Type: 0x%03X, CRC: 0x%04X)\n", node->nodeID, msgData[4], txMsgID, txCrc);
+    ESP_LOGV("CAN", "TX INTRO: NODE 0x%08X SUBMODCNT %02u (Type: 0x%03X, CRC: 0x%04X)", node->nodeID, msgData[4], txMsgID, txCrc);
   }
 /* >0: Sub-module Identity (Part A and Part B) */
   else {
@@ -218,7 +222,7 @@ void sendIntroduction(int msgPtr)
         return;  /* error condition, msg ID is invalid, exit the routine */
     }
 
-    Serial.printf("TX INTRO: MOD 0x%03X at Idx %i (Cfg: %02X %02X %02X)\n",
+    ESP_LOGI(TAG, "TX INTRO: MOD 0x%03X at Idx %i (Cfg: %02X %02X %02X)",
                   txMsgID, msgData[4], msgData[5], msgData[6], msgData[7]);
   }
   /* put the message on the bus */

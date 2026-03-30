@@ -40,7 +40,7 @@ static void updateSubModules()
     const personalityDef_t *p = nodeGetPersonality(sub->personalityIndex);
 
     if (!p) {
-        ESP_LOGW(TAG, "[PRODUCER] Error: Personality lookup failed for index %u\n", i);
+        ESP_LOGW(TAG, "[PRODUCER] Error: Personality lookup failed for index %u", i);
         continue;
     }
 
@@ -108,7 +108,7 @@ static void updateSubModules()
         break;
 
       default:
-        ESP_LOGW(TAG, "[PRODUCER] Error: Unknown personality %u\n", sub->personalityId);
+        ESP_LOGW(TAG, "[PRODUCER] Error: Unknown personality %u", sub->personalityId);
         // Unknown virtual personality — ignore safely
         continue;
       }
@@ -132,7 +132,7 @@ static void handleProducerTick(uint32_t now)
         return;
 
     if (evt.sub_idx >= nodeGetInfo()->subModCnt) {
-        ESP_LOGW(TAG, "[PRODUCER] Error: bad sub_idx %u (max %u)\n",
+        ESP_LOGW(TAG, "[PRODUCER] Error: bad sub_idx %u (max %u)",
                       evt.sub_idx, nodeGetInfo()->subModCnt - 1);
         return;
     }
@@ -142,7 +142,7 @@ static void handleProducerTick(uint32_t now)
     const subModule_t    &sub  = *nodeGetSubModule(evt.sub_idx); 
     const personalityDef_t *p  = &runtimePersonalityTable[nodeGetSubModule(evt.sub_idx)->personalityIndex];
     if (!p) {
-        ESP_LOGW(TAG, "[PRODUCER] Error: personality lookup failed for sub %u\n", evt.sub_idx);
+        ESP_LOGW(TAG, "[PRODUCER] Error: personality lookup failed for sub %u", evt.sub_idx);
         return;
     }
 
@@ -178,7 +178,7 @@ static void handleProducerTick(uint32_t now)
     /* Send message */
     canEnqueueMessage(p->dataMsgId, payload, dlc);
 
-    ESP_LOGI(TAG, "[PRODUCER] Tx: sub %u msg 0x%03X dlc %u val %u\n",
+    ESP_LOGI(TAG, "[PRODUCER] Tx: sub %u msg 0x%03X dlc %u val %u",
                   evt.sub_idx, p->dataMsgId, dlc, evt.value);
 }
 
@@ -194,7 +194,7 @@ static void readCydLdr()
     uint32_t       raw_accumulator = 0;
 
     /* Perform over-sampling on pin 34 */
-    // Serial.printf("CYD LDR: %d\n", analogRead(CYD_LDR_PIN));
+    ESP_LOGD(TAG, "CYD LDR: %d", analogRead(CYD_LDR_PIN));
     for (uint8_t i = 0; i < oversample_count; i++) {
         raw_accumulator += analogRead(CYD_LDR_PIN);
     }

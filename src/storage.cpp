@@ -1,6 +1,11 @@
 #include "storage.h"           /* NVS storage routines */
 #include "personality_table.h" /* Personality definitions */
 #include "can_producer.h"      /* CAN producer definitions */ 
+#include "esp_log.h"
+
+static const char* TAG = "storage";
+static const char* TAG_HEX = "HEX DUMP";
+
 
 // Global mutex for NVS access (declared in main.cpp)
 extern SemaphoreHandle_t flashMutex;
@@ -16,21 +21,35 @@ static bool FLAG_VALID_CONFIG = false;
  * @param ptr Pointer to the memory block
  * @param size Size of the block in bytes
  */
-void printHexDump(const void* ptr, size_t size) {
+void printHexDump(const void* ptr, size_t size)
+{
     const uint8_t* p = (const uint8_t*)ptr;
-    char buf[16]; /* Buffer for hex formatting */
 
-    Serial.println("\n--- nodeInfo_t Hex Dump ---");
-    for (size_t i = 0; i < size; i++) {
-        /* Print address offset every 16 bytes */
-        if (i % 16 == 0) {
-            if (i > 0) Serial.println();
-            Serial.printf("%04X: ", (uint16_t)i);
+    ESP_LOGD(TAG_HEX, "--- nodeInfo_t Hex Dump ---");
+
+    /* One row buffer: "0000: " + 16 * "FF " + null = ~60 bytes */
+    char line[80];
+
+    for (size_t i = 0; i < size; i += 16) {
+
+        int pos = 0;
+
+        /* Write the offset */
+        pos += snprintf(&line[pos], sizeof(line) - pos,
+                        "%04X: ", (uint16_t)i);
+
+        /* Write up to 16 bytes */
+        for (size_t j = 0; j < 16 && (i + j) < size; j++) {
+            pos += snprintf(&line[pos], sizeof(line) - pos,
+                            "%02X ", p[i + j]);
+            if (pos >= sizeof(line))
+                break;
         }
 
-        Serial.printf("%02X ", p[i]);
+        ESP_LOGD(TAG_HEX, "%s", line);
     }
-    Serial.println("\n---------------------------");
+
+    ESP_LOGD(TAG_HEX, "---------------------------");
 }
 
 
@@ -76,7 +95,7 @@ void loadRoutesFromNVS()
         if (version != ROUTER_VERSION) {
             prefs.end();
             xSemaphoreGive(flashMutex);
-            Serial.println("Route table version mismatch");
+            ESP_LOGW(TAG, "[NVS] Warning: Route table version mismatch");
             return;
         }
         if (prefs.isKey(ROUTE_KEY)) 
@@ -104,7 +123,7 @@ void saveRoutesToNVS()
         
         crc->ts  = getEpochTime();
 
-        printf("[CRC] route %d CRC=0x%04X TS=%d in_use=%d\n",
+        ESP_LOGD(TAG, "[CRC] route %d CRC=0x%04X TS=%d in_use=%d",
            i, crc->crc, crc->ts, crc->in_use);
 
     }
@@ -145,13 +164,13 @@ void saveRoutesToNVS()
 
     /* Guardrail: personality library must define at least one submodule */
     if (g_submodules_count == 0) {
-        printf("[INIT] Error: loadNodeDefaults(): submod_setup is empty (count = 0)\n");
+        ESP_LOGE(TAG, "[INIT] Error: loadNodeDefaults(): submod_setup is empty (count = 0)");
         return;
     }
 
     /* Guardrail: pointer should never be NULL, but check anyway */
     if (submod_setup == NULL) {
-        printf("[INIT] Error: loadNodeDefaults(): submod_setup pointer is NULL\n");
+        ESP_LOGE(TAG, "[INIT] Error: loadNodeDefaults(): submod_setup pointer is NULL");
         return;
     }
 
@@ -178,7 +197,7 @@ void saveRoutesToNVS()
         if (node.subModCnt >= MAX_SUB_MODULES)
             break;    /* no more space for submodules */
 
-        Serial.printf("[INIT] Adding internal sub-module: index %d, intro msg 0x%02X\n", i, p->introMsgId);
+        ESP_LOGI(TAG, "[INIT] Adding internal sub-module: index %d, intro msg 0x%02X", i, p->introMsgId);
 
         /** Create a internal sub-module and zero it out */
         subModule_t *sub = &node.subModule[node.subModCnt++];
@@ -205,10 +224,10 @@ void saveRoutesToNVS()
     }
 
 
-    Serial.printf("[INIT] Defaults loaded, submod count: %d\n", node.subModCnt);
+    ESP_LOGI(TAG, "[INIT] Defaults loaded, submod count: %d", node.subModCnt);
 
     if (runtimePersonalityCount < g_submodules_count) {
-       Serial.println("[INIT] WARNING: runtimePersonalityCount less than g_submodules_count!");
+       ESP_LOGW(TAG, "[INIT] WARNING: runtimePersonalityCount less than g_submodules_count!");
     }
 
     // printNodeInfo(&node);
@@ -229,32 +248,32 @@ void handleEraseCfgNVS()
   ConfigStatus cfgStatus;
   int retries = 0;
 
-  Serial.println("\nErasing config...");
+  ESP_LOGI(TAG, "[NVS] Erasing config...");
 
   do {
       cfgStatus = eraseConfigNvs();
 
       if (cfgStatus == CFG_OK) {
-          Serial.println("Config erased successfully, rebooting...");
+          ESP_LOGI(TAG, "[NVS] Config erased successfully, rebooting...");
           vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before reboot */
           ESP.restart(); /**< Reboot the ESP32 */
           break;
       }
 
       if (cfgStatus == CFG_ERR_NOT_FOUND) {
-          Serial.println("Config not found.");
+          ESP_LOGI(TAG, "[NVS] Erase: Config not found.");
           break;
       }
 
       if (cfgStatus == CFG_ERR_MUTEX) {
-          Serial.printf("Flash busy - Retry %d/3...\n", retries + 1);
+          ESP_LOGI(TAG, "[NVS] Erase: Flash busy - Retry %d/3...", retries + 1);
           vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
       }
 
   } while ((cfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
 
   if (cfgStatus == CFG_ERR_MUTEX) {
-      Serial.println("Critical Error: Could not access NVS (Mutex Timeout)");
+      ESP_LOGE(TAG, "[NVS] Critical Error: Could not access NVS (Mutex Timeout)");
   }
 }
 
@@ -335,7 +354,7 @@ ConfigStatus saveConfigNvs()
     const uint64_t elapsedTime = (uint64_t)esp_timer_get_time() - startTime;
 
     /* print elapsed time */
-    Serial.printf("[NVS] Save complete. Elapsed time: %lu us\n", elapsedTime);
+    ESP_LOGI(TAG, "[NVS] Save complete. Elapsed time: %lu us", elapsedTime);
 
     return CFG_OK;
 }
@@ -407,7 +426,7 @@ ConfigStatus loadConfigNvs(nodeInfo_t& node)
 
     /* Validate CRC */
     if ((crc != storedCrc)) {
-        Serial.printf("[INIT] CRC mismatch: %d != %d\n", crc, storedCrc);    
+        ESP_LOGD(TAG, "[INIT] CRC mismatch: %d != %d", crc, storedCrc);    
 
         return CFG_ERR_CRC;
     }
@@ -508,51 +527,51 @@ void handleReadCfgNVS()
   /* Record start time */
   const uint64_t startTime = (uint64_t)esp_timer_get_time();
 
-  Serial.println("[INIT] Loading config from NVS...");
+  ESP_LOGI(TAG, "[NVS] Loading config from NVS...");
   nodeInfo_t& node = *nodeGetInfo();
 
   do {
     loadCfgStatus = loadConfigNvs(node);
 
     if (loadCfgStatus == CFG_OK) {
-      Serial.println("[INIT] Config loaded successfully.");
+      ESP_LOGI(TAG, "[NVS] Config loaded successfully.");
       FLAG_VALID_CONFIG = true;
       break;
     }
 
     if (loadCfgStatus = CFG_VERS_ERROR) {
-      Serial.println("[INIT] Config version mismatch - NVS load aborted.");
+      ESP_LOGW(TAG, "[NVS] Config version mismatch - NVS load aborted.");
       break;
     }
 
     if (loadCfgStatus == CFG_ERR_CRC) {
-      Serial.println("[INIT] Config CRC mismatch - NVS load aborted.");
+      ESP_LOGW(TAG, "[NVS] Config CRC mismatch - NVS load aborted.");
       break;
     }
 
     if (loadCfgStatus == CFG_ERR_CRC_MISS) {
-      Serial.println("[INIT] Config CRC not found in NVS - NVS load aborted.");
+      ESP_LOGW(TAG, "[NVS] Config CRC not found in NVS - NVS load aborted.");
       break;
     }
 
     if (loadCfgStatus == CFG_ERR_NOT_FOUND) {
-      Serial.println("[INIT] Config data not found in NVS - NVS load aborted.");
+      ESP_LOGW(TAG, "[NVS] Config data not found in NVS - NVS load aborted.");
       break;
     }
 
     if (loadCfgStatus == CFG_ERR_MUTEX) {
-      Serial.printf("[INIT] Flash busy - Retry %d/3...\n", retries + 1);
+      ESP_LOGW(TAG, "[NVS] Flash busy - Retry %d/3...", retries + 1);
       vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
     }
 
   } while ((loadCfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
 
   if (loadCfgStatus == CFG_ERR_MUTEX) {
-    Serial.println("[INIT] Flash busy, mutex timeout - NVS load aborted.");
+    ESP_LOGW(TAG, "[NVS] Flash busy, mutex timeout - NVS load aborted.");
   }
 
   const uint64_t loadTime = (uint64_t)esp_timer_get_time() - startTime;
-  Serial.printf("[INIT] Config load took %d ms\n", (loadTime / 1000));
+  ESP_LOGI(TAG, "[NVS] Config load took %d ms", (loadTime / 1000));
 }
 
 bool removeSubmodule(const uint8_t index)

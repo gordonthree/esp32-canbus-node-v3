@@ -20,6 +20,10 @@
 #include "node_state.h"           // nodeGetPersonality()
 #include "personality_table.h"    // personalityDef_t
 
+#include "esp_log.h"
+
+static const char *TAG = "pwm_hw";
+
 /* --------------------------------------------------------------------------
  *  LEDC Resource Tracking Private Variables
  * -------------------------------------------------------------------------- */
@@ -107,7 +111,7 @@ void pwmInitChannel(uint8_t index, subModule_t* sub)
 
     ledc_channel_config(&chCfg);
 
-    Serial.printf("Submod %d: PWM Init (Pin %d, Timer %d, Channel %d)\n",
+    ESP_LOGI(TAG, "[PWM] Submod %d: PWM Init (Pin %d, Timer %d, Channel %d)",
                   index, pin, tm, ch);
 }
 

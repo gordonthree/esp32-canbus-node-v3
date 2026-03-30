@@ -26,6 +26,10 @@
 #include "node_state.h"           // nodeGetPersonality()
 #include "personality_table.h"    // personalityDef_t
 
+#include "esp_log.h"
+
+static const char *TAG = "hardware_init";
+
 /* --------------------------------------------------------------------------
  *  Private Function Prototypes
  * -------------------------------------------------------------------------- */
@@ -89,7 +93,7 @@ static void initGPIOInput(uint8_t index, subModule_t* sub)
 
     gpio_config(&cfg);
 
-    Serial.printf("[INIT] Submod %d: Digital Input Init (Pin %d)\n",
+    ESP_LOGI(TAG, "[INIT] Submod %d: Digital Input Init (Pin %d)",
                   index, p->gpioPin);
 }
 
@@ -112,7 +116,7 @@ static void initGpioOutput(uint8_t index, subModule_t* sub)
 
     /* Do NOT set the output level here — task_output owns runtime behavior. */
 
-    Serial.printf("[INIT] Submod %d: Digital Output Init (Pin %d)\n",
+    ESP_LOGI(TAG, "[INIT] Submod %d: Digital Output Init (Pin %d)",
                   index, p->gpioPin);
 }
 
@@ -134,7 +138,7 @@ static void initAnalogInput(uint8_t index, subModule_t* sub)
 
     gpio_config(&cfg);
 
-    Serial.printf("[INIT] Submod %d: Analog Input Init (Pin %d)\n",
+    ESP_LOGI(TAG, "[INIT] Submod %d: Analog Input Init (Pin %d)",
                   index, p->gpioPin);
 }
 

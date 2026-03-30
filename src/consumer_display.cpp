@@ -61,7 +61,7 @@ static void setDisplayMode(can_msg_t *msg, uint8_t displayMode) {
     (uint32_t)displayMode
   );  
 
-  ESP_LOGI(TAG, "Display %d Mode: %d\n", subIdx, displayMode);
+  ESP_LOGI(TAG, "Display %d Mode: %d", subIdx, displayMode);
 }
 
 
