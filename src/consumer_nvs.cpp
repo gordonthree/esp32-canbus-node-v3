@@ -40,6 +40,29 @@ void handleNvsConfig(can_msg_t *msg)
     switch (msg->identifier)
     {
 
+    case CFG_SET_LOGLEVEL_ID: /** Master requesting log level change */
+    {
+        esp_log_level_t logLevel = (esp_log_level_t)msg->data[4];
+        
+        if (logLevel > ESP_LOG_VERBOSE) {
+            logLevel = ESP_LOG_VERBOSE;
+        }
+        /* typedef enum {
+        /* ESP_LOG_NONE,       /*!< No log output */
+        /* ESP_LOG_ERROR,      /*!< Critical errors, software module can not recover on its own */
+        /* ESP_LOG_WARN,       /*!< Error conditions from which recovery measures have been taken */
+        /* ESP_LOG_INFO,       /*!< Information messages which describe normal flow of events */
+        /* ESP_LOG_DEBUG,      /*!< Extra information which is not necessary for normal use (values, pointers, sizes, etc). */
+        /* ESP_LOG_VERBOSE     /*!< Bigger chunks of debugging information, or frequent messages which can potentially flood the output. */
+        /* } esp_log_level_t; */
+
+        esp_log_level_set("*",logLevel);
+        
+        ESP_LOGI(TAG, "[CONSUMER] Proccesing log level change request, new log level is %d.", (uint8_t)logLevel);
+
+    }
+    break;
+
     case CFG_ERASE_NVS_ID: /**< Master requesting NVS erase */
     {
         ESP_LOGI(TAG, "[CONSUMER] Proccesing NVS erase request.");
@@ -111,6 +134,12 @@ void handleNvsConfig(can_msg_t *msg)
         responseData[5] = (uint8_t)(localCrc & 0xFF);
 
         canEnqueueMessage(DATA_CONFIG_CRC_ID, responseData, DATA_CONFIG_CRC_DLC);
+    }
+    break;
+
+    default:
+    {
+        ESP_LOGW(TAG, "[CONSUMER] Unknown message ID: 0x%03X", msg->identifier);
     }
     break;
     }
