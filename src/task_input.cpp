@@ -64,13 +64,13 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
   ESP_LOGV(TAG, "[RAW] pin=%u value=%u lastRaw=%u lastChange=%u",
            pinNum,
            value,
-           isrGpio.lastRawState[pinNum],
-           isrGpio.lastChangeMs[pinNum]);
+           isrGpioGetRaw((gpio_num_t)pinNum),
+           isrGpioGetLastChange((gpio_num_t)pinNum));
 
   ESP_LOGV(TAG, "[DEBOUNCE] now=%u lastChange=%u diff=%u debounceMs=%u",
            now,
-           isrGpio.lastChangeMs[pinNum],
-           now - isrGpio.lastChangeMs[pinNum],
+           isrGpioGetLastChange((gpio_num_t)pinNum),
+           now - isrGpioGetLastChange((gpio_num_t)pinNum),
            debounceMs);
 
   /* Debounce window, skip it if debounce is disabled */
