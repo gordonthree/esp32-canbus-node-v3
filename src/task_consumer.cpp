@@ -140,7 +140,7 @@ static void buildSyntheticMessage(const router_action_t &action,
 static void prettyPrintMsg(const can_msg_t *msg)
 {
   /* Enough space for "0xFF " * 8 + null */
-  char dataBuf[3 * CAN_MAX_DLC + 1];
+  char dataBuf[5 * CAN_MAX_DLC + 1]; /* 5 bytes of string per byte + null */
   int pos = 0;
 
   for (int i = 0; i < msg->data_length_code; i++)
@@ -173,7 +173,7 @@ static void handleCanRX(can_msg_t &message)
   {
     /* general broadcast message is valid, message has no node id assigned */
     msgForUs = true; /* message is for us */
-    ESP_LOGI(TAG, "RX BROADCAST MSG: 0x%x NO DATA", message.identifier);
+    ESP_LOGD(TAG, "[CONSUMER] RX BROADCAST MSG: 0x%x NO DATA", message.identifier);
   }
   else
   {
@@ -186,6 +186,10 @@ static void handleCanRX(can_msg_t &message)
   {
     return; // message is not for us
   }
+  
+  /* debug: dump message data into a string buffer and then send to ESP_LOGD */
+  ESP_LOGD(TAG, "[CONSUMER] RX MSG PRE-ROUTER");
+  prettyPrintMsg(&message);
 
   /* prepare router library action buffer */
   router_action_t action = {0};
@@ -208,6 +212,7 @@ static void handleCanRX(can_msg_t &message)
     /* pass along original message */
     msgToConsume = message;
     /* debug: dump message data */
+    ESP_LOGD(TAG, "[CONSUMER] RX MSG POST-ROUTER");
     prettyPrintMsg(&msgToConsume);
   }
 
