@@ -12,6 +12,8 @@ static const char *TAG = "isr_gpio";
 /* Get this out of the way early */
 extern "C" void IRAM_ATTR gpio_isr_handler(void *arg);
 
+volatile uint32_t g_isr_counter = 0; // GPIO39 ISR fire count
+
 /* --------------------------------------------------------------------------
  * Global state
  * -------------------------------------------------------------------------- */
@@ -154,11 +156,24 @@ void attachDigitalInputISR(uint8_t pin, uint8_t subIdx)
     /** * Explicitly configure the GPIO using the ESP-IDF structure.
      * This ensures the pin is set to Input mode and the interrupt type is defined.
      */
+    // gpio_config_t io_conf = {};
+    // io_conf.intr_type = GPIO_INTR_ANYEDGE; /**< Trigger on both rising and falling */
+    // io_conf.pin_bit_mask = (1ULL << pin);
+    // io_conf.mode = GPIO_MODE_INPUT;
+
+    const subModule_t *sub = nodeGetSubModule(subIdx);
+    const uint8_t inputFlags = sub->config.gpioInput.flags;
+
     gpio_config_t io_conf = {};
-    io_conf.intr_type = GPIO_INTR_ANYEDGE; /**< Trigger on both rising and falling */
     io_conf.pin_bit_mask = (1ULL << pin);
     io_conf.mode = GPIO_MODE_INPUT;
 
+    // Apply inversion flag to interrupt type
+    if (inputFlags & INPUT_FLAG_INVERT) {
+        io_conf.intr_type = GPIO_INTR_NEGEDGE;   // active-low button
+    } else {
+        io_conf.intr_type = GPIO_INTR_POSEDGE;   // active-high button
+    }
     gpio_config(&io_conf);
 
     // Register pin → submodule mapping
@@ -169,13 +184,13 @@ void attachDigitalInputISR(uint8_t pin, uint8_t subIdx)
                                          gpio_isr_handler,
                                          (void *)(uintptr_t)subIdx);
 
-    ESP_LOGI(TAG, "[ISR] attachDigitalInputISR: pin=%u subIdx=%u err=%s",
-                  pin, subIdx, esp_err_to_name(err));
+    ESP_LOGI(TAG, "[ISR] gpio_isr_handler_add: pin=%u subIdx=%u err=%s",
+             pin, subIdx, esp_err_to_name(err));
 
     esp_err_t err2 = gpio_intr_enable((gpio_num_t)pin);
 
     ESP_LOGI(TAG, "[ISR] gpio_intr_enable: pin=%u subIdx=%u err=%s",
-                  pin, subIdx, esp_err_to_name(err2));
+             pin, subIdx, esp_err_to_name(err2));
 }
 
 void enableDigitalInputISR(uint8_t pin)
@@ -227,6 +242,8 @@ extern "C" void IRAM_ATTR gpio_isr_handler(void *arg)
     if (subIdx < 0 || subIdx >= MAX_SUB_MODULES)
         return;
 
+    g_isr_counter++;
+
     const subModule_t *sub = nodeGetSubModule(subIdx);                           /* retrieve submodule */
     const personalityDef_t *p = &runtimePersonalityTable[sub->personalityIndex]; /* retrieve personality */
     const uint8_t pinNum = p->gpioPin;
@@ -237,9 +254,9 @@ extern "C" void IRAM_ATTR gpio_isr_handler(void *arg)
     const uint8_t raw = sample_pin_filtered((gpio_num_t)pinNum);
     const uint32_t now = xTaskGetTickCountFromISR();
 
-    gpio_event_t evt = {// uses NEW IDENTIFIER #1
-                        .subIdx = (uint8_t)subIdx,
-                        .raw = raw};
+    gpio_event_t evt = {
+        .subIdx = (uint8_t)subIdx,
+        .raw = raw};
 
     BaseType_t hpTaskWoken = pdFALSE;
     xQueueSendFromISR(gpioEventQueue, &evt, &hpTaskWoken); // NEW IDENTIFIER #2

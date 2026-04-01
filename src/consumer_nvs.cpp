@@ -3,10 +3,14 @@
 #include "storage.h"   /**< NVS API */
 #include "task_twai.h" /**< TWAI API */
 #include "esp_log.h"
+#include "node_state.h"
+#include "driver/twai.h"
+
 static const char *TAG = "consumer_nvs";
 
 
 static void setEpochTime(uint32_t epochTime);
+static void dumpTwaiStatus(void);
 
 /**
  * @brief Receive time in seconds and write it to the ESP32 clock
@@ -40,6 +44,29 @@ void handleNvsConfig(can_msg_t *msg)
     switch (msg->identifier)
     {
 
+    case CFG_NVS_RESERVED_448_ID: /** dump twai status */
+    {
+        dumpTwaiStatus();
+        break;
+    }
+    case REQ_ROUTE_TABLE_PRT_ID: /** Master requesting route table print */
+    {
+        ESP_LOGI(TAG, "[CONSUMER] Received route table print request.");
+        prettyPrintRoutes();
+        break;
+    }
+    case REQ_NODEINFO_PRT_ID: /** Master requesting nodeInfo print */;
+    {
+        ESP_LOGI(TAG, "[CONSUMER] Received nodeInfo print request.");
+        printNodeInfo(nodeGetInfo());
+        break;
+    }
+    case DATA_ROUTE_ACK_ID: /** Node sends this message after a route is received and saved */
+    {
+        printf("[CONSUMER] Sending route commit ack.");
+        canEnqueueMessage(DATA_ROUTE_ACK_ID, msg->data, DATA_ROUTE_ACK_DLC);
+        break;
+    }
     case CFG_SET_LOGLEVEL_ID: /** Master requesting log level change */
     {
         esp_log_level_t logLevel = (esp_log_level_t)msg->data[4];
@@ -143,4 +170,43 @@ void handleNvsConfig(can_msg_t *msg)
     }
     break;
     }
+}
+
+
+/**
+ * @brief Pretty-print the TWAI controller status using ESP_LOGD.
+ *
+ * Safe to call from any task context. Not ISR-safe.
+ */
+static void dumpTwaiStatus(void)
+{
+    twai_status_info_t st;
+    esp_err_t err = twai_get_status_info(&st);
+
+    if (err != ESP_OK) {
+        ESP_LOGD(TAG, "[TWAI] twai_get_status_info failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    ESP_LOGD(TAG,
+        "[TWAI STATUS]\n"
+        "  state:            %d\n"
+        "  msgs_to_tx:       %u\n"
+        "  msgs_to_rx:       %u\n"
+        "  tx_error_counter: %u\n"
+        "  rx_error_counter: %u\n"
+        "  tx_failed_count:  %u\n"
+        "  rx_missed_count:  %u\n"
+        "  arb_lost_count:   %u\n"
+        "  bus_error_count:  %u",
+        st.state,
+        st.msgs_to_tx,
+        st.msgs_to_rx,
+        st.tx_error_counter,
+        st.rx_error_counter,
+        st.tx_failed_count,
+        st.rx_missed_count,
+        st.arb_lost_count,
+        st.bus_error_count
+    );
 }

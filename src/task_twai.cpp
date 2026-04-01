@@ -22,6 +22,13 @@ static bool can_driver_installed = false;
 static bool can_suspended = false;
 static unsigned long lastCanError = 0;
 
+/* ========================================================================== 
+  Private Declarations 
+  ========================================================================= */
+
+static void twaiInit(void);
+static void TaskTWAI(void *pvParameters);
+
 /* ========================================================================= 
   Public Variables
   ========================================================================= */
@@ -68,7 +75,7 @@ static void twaiInit(void)
   can_driver_installed = true;   
 }
 
-void TaskTWAI(void *pvParameters)
+static void TaskTWAI(void *pvParameters)
 {
   int loopCount = 0;
   
@@ -146,7 +153,16 @@ void TaskTWAI(void *pvParameters)
         if (res != ESP_OK) {
             ESP_LOGW(TAG, "[TWAI] TX failed (%d) ID=0x%03X", res, tx.identifier);
         } else {
-            ESP_LOGD(TAG, "[TWAI] TX OK ID=0x%03X", tx.identifier);
+            // ESP_LOGD(TAG, "[TWAI] TX OK ID=0x%03X", tx.identifier);
+            ESP_LOGD(TAG,
+              "TX msg: id=0x%03X extd=%d rtr=%d dlc=%u data=%02X %02X %02X %02X %02X %02X %02X %02X",
+              tx.identifier,
+              tx.extd,
+              tx.rtr,
+              tx.data_length_code,
+              tx.data[0], tx.data[1], tx.data[2], tx.data[3],
+              tx.data[4], tx.data[5], tx.data[6], tx.data[7]);
+
         }
     }
 

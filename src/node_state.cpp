@@ -202,20 +202,21 @@ void printNodeInfo(const nodeInfo_t* node)
                  node->subModule[i].introMsgDLC);
         ESP_LOGD("NODEINFO", "       submod_flags: 0x%02X",
                  node->subModule[i].submod_flags);
-        ESP_LOGD("NODEINFO", "       producer_flags: 0x%02X",
-                 node->subModule[i].producer_flags);
         ESP_LOGD("NODEINFO", "       router_flags: 0x%02X",
                  node->subModule[i].router_flags);
 
-        ESP_LOGD("NODEINFO", "       runTime:");
+        ESP_LOGD("NODEINFO", "       producer_flags: 0x%02X",
+                node->subModule[i].producer_flags);
+        ESP_LOGD("NODEINFO", "       producer_kind: %d",
+                 node->subModule[i].producer_kind);
+        ESP_LOGD("NODEINFO", "       producer_period_ms: %d",
+                 node->subModule[i].producer_period_ms);
+
+                 ESP_LOGD("NODEINFO", "       runTime:");
         ESP_LOGD("NODEINFO", "         last_change_ms: %d",
                  node->subModule[i].runTime.last_change_ms);
         ESP_LOGD("NODEINFO", "         valueU32: %d",
                  node->subModule[i].runTime.valueU32);
-        ESP_LOGD("NODEINFO", "         kind: %d",
-                 node->subModule[i].runTime.kind);
-        ESP_LOGD("NODEINFO", "         period_ms: %d",
-                 node->subModule[i].runTime.period_ms);
         ESP_LOGD("NODEINFO", "         last_published_value: %d",
                  node->subModule[i].runTime.last_published_value);
     }

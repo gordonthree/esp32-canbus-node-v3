@@ -9,7 +9,7 @@
  * @author Gordon McLellan
  */
 
- /* === Framework includes === */
+/* === Framework includes === */
 #include <Arduino.h>
 // #include <ArduinoOTA.h>
 
@@ -30,12 +30,11 @@
 // #include "driver/ledc.h" /* esp32 native LEDC PWM library */
 // #include "driver/gpio.h" /* esp32 native GPIO library */
 // #include "driver/adc.h"  /* esp32 native ADC library */
-#include "esp_err.h"     /* esp32 error handler */
+#include "esp_err.h" /* esp32 error handler */
 
 /* === FreeRTOS includes === */
 // #include <freertos/FreeRTOS.h>
 // #include <freertos/task.h>
-
 
 /* === Local includes === */
 // #include "argb_hw.h"           /**< ARGB LED control */
@@ -46,24 +45,24 @@
 // #include "node_state.h"        /**< Node and sub-module state table */
 // #include "secrets.h"           /**< WiFi credentials and such */
 
-#include "hardware_init.h"     /**< Hardware initialization routines */
-#include "isr_gpio.h"          /**< GPIO interrupt routines */
-#include "pwm_hw.h"            /**< PWM LEDC routines */
-#include "storage.h"           /**< NVS storage routines */
-#include "task_consumer.h"     /**< CAN consumer logic */
-#include "task_input.h"        /**< Task input routines */
-#include "task_ota.h"          /**< Task OTA routi6nes */
-#include "task_output.h"       /**< Task output routines */
-#include "task_producer.h"     /**< Task producer routines */
-#include "task_twai.h"         /**< Task TWAI routines */
-#include "timers.h"            /**< Timer functions */
-#include "wifi_hw.h"           /**< WiFi initialization and control */
+#include "hardware_init.h" /**< Hardware initialization routines */
+#include "isr_gpio.h"      /**< GPIO interrupt routines */
+#include "pwm_hw.h"        /**< PWM LEDC routines */
+#include "storage.h"       /**< NVS storage routines */
+#include "task_consumer.h" /**< CAN consumer logic */
+#include "task_input.h"    /**< Task input routines */
+#include "task_ota.h"      /**< Task OTA routi6nes */
+#include "task_output.h"   /**< Task output routines */
+#include "task_producer.h" /**< Task producer routines */
+#include "task_twai.h"     /**< Task TWAI routines */
+#include "timers.h"        /**< Timer functions */
+#include "wifi_hw.h"       /**< WiFi initialization and control */
 
 /* external includes */
-#include "canbus_project.h"    /**< my various CAN functions and structs */
-#include "can_router.h"        /**< CAN routing (subcriber) routines and constants */
-#include "can_producer.h"      /**< CAN producer routines and constants */
-#include "can_platform.h"      /**< Platform-specific routines and constants */
+#include "canbus_project.h" /**< my various CAN functions and structs */
+#include "can_router.h"     /**< CAN routing (subcriber) routines and constants */
+#include "can_producer.h"   /**< CAN producer routines and constants */
+#include "can_platform.h"   /**< Platform-specific routines and constants */
 
 #include "personality_table.h" /**< For initRuntimePersonalityTable */
 // #include "submodule_types.h"   /**< Sub-module type definitions */
@@ -81,15 +80,12 @@ static const char *TAG = "main";
 #include "espcyd.h"
 #endif
 
-
-
 // #define CAN_ID_MASK            (0x3F)      /**< Mask for lower 6 bits of CAN ID */
 // #define PWM_RES_BITS           (8U)        /**< 8-bit resolution for PWM */
 
 /* Real time clock macros */
-#define DEFAULT_TIMEZONE       "EST5EDT,M3.2.0,M11.1.0"
-#define ENV_VAL_OVERWRITE      (1U)
-
+#define DEFAULT_TIMEZONE "EST5EDT,M3.2.0,M11.1.0"
+#define ENV_VAL_OVERWRITE (1U)
 
 /* Default CAN transceiver pins */
 // #ifndef RX_PIN
@@ -114,15 +110,11 @@ static const char *TAG = "main";
 /* LEDC constants */
 // #define LEDC_CHANNELS_PER_TIMER (8U)   /**< ESP32: 8 channels per timer */
 
-
-
 /* Connect node state functions to producer library callback table */
 static const producerCallbacks_t producerCB = {
     .getSubModuleCount = nodeGetSubModuleCount,
-    .getSubModule      = nodeGetSubModule,
-    .getRuntime        = nodeGetRuntime
-};
-
+    .getSubModule = nodeGetSubModule,
+    .getRuntime = nodeGetRuntime};
 
 /* definitions from external libraries */
 #ifdef ESP32CYD
@@ -132,37 +124,17 @@ static const producerCallbacks_t producerCB = {
 // extern ARGBNode discoveredNodes[];
 #endif
 
-/* OTA task control */
-// volatile bool ota_enabled  = false;
-// volatile bool ota_started  = false;
-// const char*   ota_password = OTA_PASSWORD; // change this
-
-/* dynamic discovery stuff */
-
-// volatile uint16_t node_crc = 0xffff; /**< CRC-16 for the node configuration */
-// volatile int introMsgPtr = 0;  /**< Pointer for the introduction and interview process */
-
-// volatile bool FLAG_ARGB_CONFIG     = false;
-// volatile bool FLAG_VALID_CONFIG    = false; /**< Clear the flag indicating a valid configuration  */
-
-// String wifiIP;
-
-// static const char *TAG = "canesp32";
-
-// const char* ssid = SECRET_SSID;
-// const char* password = SECRET_PSK;
-// const char* hostname =AP_SSID;
-
-// volatile int i=4;
-// volatile bool ipaddFlag=true;
-
-// int period = 1000;
-// int8_t ipCnt = 0;
-
-// unsigned long time_now = 0;
-
-// volatile bool wifi_connected = false;
-// volatile uint8_t myNodeID[NODE_ID_SIZE]; /**< node ID comprised of four bytes from MAC address */
+/* ESP-IDF wrapper for ESP_LOG - supports logging from external libraries */
+// TODO: Not supported by ESP32-Arduino
+//  extern "C" void myPlatformLogger(int level, const char *fmt, va_list args)
+//  {
+//      switch (level) {
+//          case 0: ESP_LOGE("LIB", fmt, args); break;
+//          case 1: ESP_LOGW("LIB", fmt, args); break;
+//          case 2: ESP_LOGI("LIB", fmt, args); break;
+//          default: ESP_LOGD("LIB", fmt, args); break;
+//      }
+//  }
 
 /**
  * @brief Append template personalities referenced by submodules.
@@ -187,10 +159,12 @@ static int appendTemplatePersonalities(void)
     int appended = 0;
 
     /* Iterate over all submodules currently defined */
-    for (uint8_t s = 0; s < nodeGetInfo()->subModCnt; s++) {
+    for (uint8_t s = 0; s < nodeGetInfo()->subModCnt; s++)
+    {
 
         /* Skip pre-defined submodules */
-        if (s < g_personalityCount) {
+        if (s < g_personalityCount)
+        {
             ESP_LOGI(TAG, "[INIT] Skipping pre-defined submodule at index %d", s);
             continue;
         }
@@ -228,26 +202,29 @@ static int appendTemplatePersonalities(void)
          * ------------------------------------------------------------ */
         const personalityDef_t *src = NULL;
 
-        for (uint8_t i = 0; i < g_TemplateCount; i++) {
-            if (templateTable[i].personalityId == pid) {
+        for (uint8_t i = 0; i < g_TemplateCount; i++)
+        {
+            if (templateTable[i].personalityId == pid)
+            {
                 src = &templateTable[i];
                 break;
             }
         }
 
-        if (src == NULL) {
+        if (src == NULL)
+        {
             /* Template personality missing — fatal configuration error */
-            ESP_LOGW(TAG, 
-                "[ERR] appendTemplatePersonalities(): personalityId 0x%04X not found in templateTable",
-                pid
-            );
+            ESP_LOGW(TAG,
+                     "[ERR] appendTemplatePersonalities(): personalityId 0x%03X not found in templateTable",
+                     pid);
             return -1;
         }
 
         /* ------------------------------------------------------------
          * Step 3: Ensure runtime table has space for another personality.
          * ------------------------------------------------------------ */
-        if (runtimePersonalityCount >= MAX_RUNTIME_PERSONALITIES) {
+        if (runtimePersonalityCount >= MAX_RUNTIME_PERSONALITIES)
+        {
             ESP_LOGW(TAG, "[ERR] appendTemplatePersonalities(): runtime table full");
             return -1;
         }
@@ -263,24 +240,24 @@ static int appendTemplatePersonalities(void)
         /* Update submodule to reference the new runtime index */
         sub->personalityIndex = newIndex;
 
-        ESP_LOGI(TAG, 
-            "[INIT] Appended template personality 0x%03X at runtime index %d",
-            pid, newIndex
-        );
+        ESP_LOGI(TAG,
+                 "[INIT] Appended template personality 0x%03X at runtime index %d",
+                 pid, newIndex);
 
         appended++;
     }
 
-    return appended;  /* Success */
+    return appended; /* Success */
 }
 
-static void manageColorPickerList(can_msg_t *msg) {
+static void manageColorPickerList(can_msg_t *msg)
+{
 #ifndef ESP32CYD
-  return; /* exit function unless we are running on CYD board */
+    return; /* exit function unless we are running on CYD board */
 #else
     /* Constants for NVS and Byte logic to avoid magic numbers */
-    const char* NVS_NAMESPACE = "cyd_nodes";
-    const char* NVS_KEY       = "node_list";
+    const char *NVS_NAMESPACE = "cyd_nodes";
+    const char *NVS_KEY = "node_list";
 
     uint32_t cmd = msg->identifier;
 
@@ -290,53 +267,53 @@ static void manageColorPickerList(can_msg_t *msg) {
     {
         targetNodeId = ((uint32_t)msg->data[0] << 24) |
                        ((uint32_t)msg->data[1] << 16) |
-                       ((uint32_t)msg->data[2] << 8)  |
-                        (uint32_t)msg->data[3];
+                       ((uint32_t)msg->data[2] << 8) |
+                       (uint32_t)msg->data[3];
     }
 
     switch (cmd)
     {
-        case COLORPICKER_READ_NVS_ID:
+    case COLORPICKER_READ_NVS_ID:
+    {
+        Preferences prefs;
+        prefs.begin(NVS_NAMESPACE, true); /* Read-only mode */
+
+        size_t bytesAvailable = prefs.getBytesLength(NVS_KEY);
+
+        /* Calculate capacity of our existing array in bytes */
+        size_t maxArrayBytes = sizeof(argbNode_t) * MAX_ARGB_NODES;
+
+        if (bytesAvailable > 0 && bytesAvailable <= maxArrayBytes)
         {
-            Preferences prefs;
-            prefs.begin(NVS_NAMESPACE, true); /* Read-only mode */
-
-            size_t bytesAvailable = prefs.getBytesLength(NVS_KEY);
-
-            /* Calculate capacity of our existing array in bytes */
-            size_t maxArrayBytes = sizeof(argbNode_t) * MAX_ARGB_NODES;
-
-            if (bytesAvailable > 0 && bytesAvailable <= maxArrayBytes)
-            {
-                prefs.getBytes(NVS_KEY, (void*)discoveredNodes, bytesAvailable);
-                discoveredNodeCount = bytesAvailable / sizeof(argbNode_t);
-                ESP_LOGI(TAG, "ARGB: Loaded %d nodes from NVS", discoveredNodeCount);
-            }
-            prefs.end();
-            break;
+            prefs.getBytes(NVS_KEY, (void *)discoveredNodes, bytesAvailable);
+            discoveredNodeCount = bytesAvailable / sizeof(argbNode_t);
+            ESP_LOGI(TAG, "ARGB: Loaded %d nodes from NVS", discoveredNodeCount);
         }
+        prefs.end();
+        break;
+    }
 
-        case COLORPICKER_WRITE_NVS_ID:
-        {
-            Preferences prefs;
-            prefs.begin(NVS_NAMESPACE, false); /* Read-write mode */
+    case COLORPICKER_WRITE_NVS_ID:
+    {
+        Preferences prefs;
+        prefs.begin(NVS_NAMESPACE, false); /* Read-write mode */
 
-            /* Save only the active portion of the array */
-            size_t bytesToWrite = sizeof(argbNode_t) * discoveredNodeCount;
-            prefs.putBytes(NVS_KEY, (const void*)discoveredNodes, bytesToWrite);
+        /* Save only the active portion of the array */
+        size_t bytesToWrite = sizeof(argbNode_t) * discoveredNodeCount;
+        prefs.putBytes(NVS_KEY, (const void *)discoveredNodes, bytesToWrite);
 
-            prefs.end();
-            ESP_LOGI(TAG, "ARGB: Node list persisted to NVS");
-            break;
-        }
+        prefs.end();
+        ESP_LOGI(TAG, "ARGB: Node list persisted to NVS");
+        break;
+    }
 
-        case COLORPICKER_PURGE_LIST_ID:
-        {
-            memset((void*)discoveredNodes, 0, sizeof(discoveredNodes));
-            discoveredNodeCount = 0;
-            ESP_LOGI(TAG, "ARGB: List purged from memory");
-            break;
-        }
+    case COLORPICKER_PURGE_LIST_ID:
+    {
+        memset((void *)discoveredNodes, 0, sizeof(discoveredNodes));
+        discoveredNodeCount = 0;
+        ESP_LOGI(TAG, "ARGB: List purged from memory");
+        break;
+    }
 
         // case COLORPICKER_ADD_ROUTE_ID:
         // {
@@ -383,126 +360,133 @@ static void manageColorPickerList(can_msg_t *msg) {
         //     break;
         // }
 
-        case COLORPICKER_SEND_LIST_ID:
-        {
-            /* Not yet implemented */
-            /* Respond to master with current list status */
-            // twai_message_t response;
-            // response.identifier = COLORPICKER_SEND_LIST_ID;
-            // response.data_length_code = 1;
-            // response.data[0] = (uint8_t)discoveredNodeCount;
-            // twai_transmit(&response, pdMS_TO_TICKS(10));
-            break;
-        }
+    case COLORPICKER_SEND_LIST_ID:
+    {
+        /* Not yet implemented */
+        /* Respond to master with current list status */
+        // twai_message_t response;
+        // response.identifier = COLORPICKER_SEND_LIST_ID;
+        // response.data_length_code = 1;
+        // response.data[0] = (uint8_t)discoveredNodeCount;
+        // twai_transmit(&response, pdMS_TO_TICKS(10));
+        break;
+    }
 
-        default:
-            ESP_LOGW(TAG, "ARGB: Unknown picker management command: 0x%03X", cmd);
-            break;
+    default:
+        ESP_LOGW(TAG, "ARGB: Unknown picker management command: 0x%03X", cmd);
+        break;
     }
 #endif
 } /* end manageColorPickerList() */
 
-void setup() {
+void setup()
+{
 
-  /* not sure we need this? */
-//   adc_power_acquire();
+    /* not sure we need this? */
+    //   adc_power_acquire();
 
 #ifdef ESP32CYD
-  /* register callbacks */
-  // TODO: Update ESPCYD library to use new twai and output_task interface
-  //   espcyd_set_send_message_callback(canEnqueueMessage);
-  //   espcyd_set_backlight_callback(handleHardwarePwm);
+    /* register callbacks */
+    // TODO: Update ESPCYD library to use new twai and output_task interface
+    //   espcyd_set_send_message_callback(canEnqueueMessage);
+    //   espcyd_set_backlight_callback(handleHardwarePwm);
 #endif
 
-  /* setup serial port */
-  Serial.begin(115200);
-  Serial.setDebugOutput(true);
+    /* setup serial port */
+    Serial.begin(115200);
+    Serial.setDebugOutput(true);
 
-  wifiEnable(); /* start the WiFi task */
-  
+    wifiEnable(); /* start the WiFi task */
 
-  /* set up some clock parameters */
-  setenv("TZ", DEFAULT_TIMEZONE, ENV_VAL_OVERWRITE);
-  tzset();
+    /* set up some clock parameters */
+    setenv("TZ", DEFAULT_TIMEZONE, ENV_VAL_OVERWRITE);
+    tzset();
 
-  /* Initialize memory */
-  ESP_LOGI(TAG, "[INIT] Initializing memory...");
-  nodeInit(); /* Initialize the node state array */
-  pwmHwInit(); /* Initialize LEDC memory resources */
-  freeRtosInit(); /* Initialize FreeRTOS resources */ 
-  nodeReadMacAddress(); /**< Read the ESP32 station MAC address and program node.nodeID */
+    /* Initialize memory */
+    ESP_LOGI(TAG, "[INIT] Initializing memory...");
+    nodeInit();           /* Initialize the node state array */
+    pwmHwInit();          /* Initialize LEDC memory resources */
+    freeRtosInit();       /* Initialize FreeRTOS resources */
+    nodeReadMacAddress(); /* Read the ESP32 station MAC address and program node.nodeID */
 
-  /* Initialize runtime personality table (built-ins only) */
-  int rc = initRuntimePersonalityTable();
-  if (rc > 0) {
-      runtimePersonalityCount = rc;
-      ESP_LOGI(TAG, "[INIT] Initialized runtime personality table with %d personalities", rc);
-  } else {
-      ESP_LOGW(TAG, "[INIT] Error: failed to initialize runtime personality table!");
-      // TODO: recovery state
-  }
+    /* Initialize runtime personality table (built-ins only) */
+    int rc = initRuntimePersonalityTable();
+    if (rc > 0)
+    {
+        runtimePersonalityCount = rc;
+        ESP_LOGI(TAG, "[INIT] Initialized runtime personality table with %d personalities", rc);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "[INIT] Error: failed to initialize runtime personality table!");
+        // TODO: recovery state
+    }
 
-  /* Build physical submodules */
-  loadNodeDefaults();
+    /* Build physical submodules */
+    loadNodeDefaults();
 
-  /* Read the NVS data from flash */
-  handleReadCfgNVS();
+    /* Read the NVS data from flash */
+    handleReadCfgNVS();
 
-  /* Append template personalities based on user defined submodules loaded from NVS */
-  rc = appendTemplatePersonalities();
-  if (rc < 0) {
-    ESP_LOGW(TAG, "[INIT] Error: appendTemplatePersonalities() failed");
-    // TODO: enter recovery state
-  }
+    /* Append template personalities based on user defined submodules loaded from NVS */
+    rc = appendTemplatePersonalities();
+    if (rc < 0)
+    {
+        ESP_LOGW(TAG, "[INIT] Error: appendTemplatePersonalities() failed");
+        // TODO: enter recovery state
+    }
 
-  /* Install ISR service */
-  initGpioIsrService();
+    /* Install ISR service */
+    initGpioIsrService();
 
-  /* Initialize the hardware, attach ISR handlers as needed */
-  initNodeHardware();
+    /* Initialize the hardware, attach ISR handlers as needed */
+    initNodeHardware();
 
-  /** Initialize producer library callbacks */
-  producerInit(&producerCB);
+    /** Initialize producer library callbacks */
+    producerInit(&producerCB);
 
-  /* Initialize router CRC16 callback */
-  router_set_crc_callback(crc16_ccitt);
+    /* Initialize router CRC16 callback */
+    router_set_crc_callback(crc16_ccitt);
 
-  esp_log_write(ESP_LOG_INFO, "TEST", "Direct IDF call to trigger hook\n");
+    esp_log_write(ESP_LOG_INFO, "TEST", "Direct IDF call to trigger hook\n");
 
-  #ifdef ESP32CYD
-  /* Initialize CYD interface */
-  initCYD();
-  // TODO: move the calls below into the CYD library
-  analogSetAttenuation(ADC_11db);
-  pinMode(CYD_LDR, INPUT); /* Setup the LDR as an input TODO: this should be a submodule */
-  #endif
+#ifdef ESP32CYD
+    /* Initialize CYD interface */
+    initCYD();
+    // TODO: move the calls below into the CYD library
+    analogSetAttenuation(ADC_11db);
+    pinMode(CYD_LDR, INPUT); /* Setup the LDR as an input TODO: this should be a submodule */
+#endif
 
-  /* Start FreeRTOS tasks */
-//   startTaskOTA(); /* Start the OTA task */
-  startTaskTWAI(); /* Start the TWAI task */
-  startTaskInput(); /* Start the input event task */
-  startTaskOutput(); /* Start the output event task */
-  startTaskProducer(); /* Start the producer task */
-  startTaskConsumer(); /* Start the consumer task */
+    /* Start FreeRTOS tasks */
+    //   startTaskOTA(); /* Start the OTA task - OTA task controlled by WiFi Task */
+    startTaskTWAI();     /* Start the TWAI task */
+    startTaskInput();    /* Start the input event task */
+    startTaskOutput();   /* Start the output event task */
+    startTaskProducer(); /* Start the producer task */
+    startTaskConsumer(); /* Start the consumer task */
 }
-
 
 static void pollDirtyFlags(void)
 {
-    static uint32_t lastCheck = 0;   /* retains value, not global */
+    static uint32_t lastCheck = 0; /* retains value, not global */
 
     const uint32_t now = millis();
-    if (now - lastCheck < 2000) {
+    if (now - lastCheck < 2000)
+    {
         return;
     }
     lastCheck = now;
 
     /* Scan for dirty flags */
-    for (uint8_t i = 0; i < MAX_SUB_MODULES; i++) {
-        if (nodeGetSubModule(i)->submod_flags & SUBMOD_FLAG_DIRTY) {
+    for (uint8_t i = 0; i < MAX_SUB_MODULES; i++)
+    {
+        if (nodeGetSubModule(i)->submod_flags & SUBMOD_FLAG_DIRTY)
+        {
 
             /* Clear all dirty flags before saving */
-            for (uint8_t j = 0; j < MAX_SUB_MODULES; j++) {
+            for (uint8_t j = 0; j < MAX_SUB_MODULES; j++)
+            {
                 nodeGetSubModule(j)->submod_flags &= ~SUBMOD_FLAG_DIRTY;
             }
 
@@ -512,23 +496,40 @@ static void pollDirtyFlags(void)
     }
 }
 
+void loop()
+{
+    static uint32_t lastCheck;
+    uint32_t now = millis();
+    if (now - lastCheck > 500)
+    {
+        // Serial.printf("ISR Counter %u\n", g_isr_counter);
+        gpio_int_type_t intr_type;
+        esp_err_t err = gpio_get_intr_type(GPIO_NUM_4, &intr_type);
 
-void loop() {
-  /** Check for producer save request */
-  if (g_routeSaveRequested) {
-    g_routeSaveRequested = false;
-    saveRoutesToNVS();
-  }
+        int lvl = gpio_get_level(GPIO_NUM_39);
+        gpio_int_type_t t = gpio_get_intr_type(GPIO_NUM_39);
+        Serial.printf("GPIO39 level=%d  ISR=%u  intr_type=%d\n",
+                    gpio_get_level(GPIO_NUM_39),
+                    g_isr_counter,
+                    t);
+            }
+    
+        /** Check for producer save request */
+        if (g_routeSaveRequested)
+    {
+        g_routeSaveRequested = false;
+        saveRoutesToNVS();
+    }
 
-  /** Check for producer load request */
-  if (g_routeLoadRequested) {
-    g_routeLoadRequested = false;
-    loadRoutesFromNVS();
-  }
+    /** Check for producer load request */
+    if (g_routeLoadRequested)
+    {
+        g_routeLoadRequested = false;
+        loadRoutesFromNVS();
+    }
 
-  /** Check for submodule save request, internally rate limited */
-  pollDirtyFlags();
+    /** Check for submodule save request, internally rate limited */
+    pollDirtyFlags();
 
-  vTaskDelay(pdMS_TO_TICKS(100));
-
+    vTaskDelay(pdMS_TO_TICKS(100));
 }

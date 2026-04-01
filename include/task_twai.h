@@ -25,11 +25,13 @@ unsigned long twaiLastErrorTime();
 
 bool twaiIsSuspended();
 void twaiSetSuspended(bool suspended);
+
 void canEnqueueMessage(
     uint16_t msgid, 
     const uint8_t *data, 
     uint8_t dlc
   );
+  
 void canSendUint32(
     const uint32_t nodeID, 
     const uint32_t bigNumber, 

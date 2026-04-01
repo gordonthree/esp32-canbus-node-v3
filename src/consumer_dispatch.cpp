@@ -20,7 +20,7 @@ const ConsumerHandlerEntry consumerHandlerTable[] =
     /* 0x430–0x439: Network submodule configuration commands */
     { CFG_NET_RESERVED_430_ID, CFG_NET_RESERVED_439_ID, handleNetworkConfig },
 
-    /* 0x440–0x449: NVS commands */
+    /* 0x440–0x449: NVS and system commands */
     { CFG_NVS_RESERVED_440_ID, CFG_NVS_RESERVED_449_ID, handleNvsConfig },
 
     /* 0x400–0x47F: Identity/config/network/intro/epoch */
@@ -41,9 +41,15 @@ void consumeMsg(can_msg_t *msg)
         return;
     }
 
+    if (id == DATA_ROUTE_ACK_ID) {
+        ESP_LOGD(TAG, "Received DATA_ROUTE_ACK_ID");
+        handleNvsConfig(msg); /* handle through the NVS and System config module */
+        return;
+    }
+
     /* Explicitly ignore 0x300–0x31F (router handles these before consumer) */
     if (id >= 0x300 && id <= 0x31F) {
-        ESP_LOGW(TAG, "Received 0x300–0x31F (router handles these before consumer)");
+        ESP_LOGW(TAG, "Received router command 0x%03X (before consumer)", id);
         return;
     }
 

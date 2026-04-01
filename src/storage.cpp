@@ -1,17 +1,16 @@
 #include "storage.h"           /* NVS storage routines */
 #include "personality_table.h" /* Personality definitions */
-#include "can_producer.h"      /* CAN producer definitions */ 
+#include "can_producer.h"      /* CAN producer definitions */
 #include "esp_log.h"
 
-static const char* TAG = "storage";
-static const char* TAG_HEX = "HEX DUMP";
-
+static const char *TAG     = "storage";
+static const char *TAG_HEX = "HEX DUMP";
 
 // Global mutex for NVS access (declared in main.cpp)
 extern SemaphoreHandle_t flashMutex;
 
 /** Set this flag when the loaded configuration is valid (CRC matches) */
-static bool FLAG_VALID_CONFIG = false; 
+static bool FLAG_VALID_CONFIG = false;
 
 /* ============================================================================
  *  HELPERS
@@ -21,16 +20,17 @@ static bool FLAG_VALID_CONFIG = false;
  * @param ptr Pointer to the memory block
  * @param size Size of the block in bytes
  */
-void printHexDump(const void* ptr, size_t size)
+void printHexDump(const void *ptr, size_t size)
 {
-    const uint8_t* p = (const uint8_t*)ptr;
+    const uint8_t *p = (const uint8_t *)ptr;
 
     ESP_LOGD(TAG_HEX, "--- nodeInfo_t Hex Dump ---");
 
     /* One row buffer: "0000: " + 16 * "FF " + null = ~60 bytes */
     char line[80];
 
-    for (size_t i = 0; i < size; i += 16) {
+    for (size_t i = 0; i < size; i += 16)
+    {
 
         int pos = 0;
 
@@ -39,7 +39,8 @@ void printHexDump(const void* ptr, size_t size)
                         "%04X: ", (uint16_t)i);
 
         /* Write up to 16 bytes */
-        for (size_t j = 0; j < 16 && (i + j) < size; j++) {
+        for (size_t j = 0; j < 16 && (i + j) < size; j++)
+        {
             pos += snprintf(&line[pos], sizeof(line) - pos,
                             "%02X ", p[i + j]);
             if (pos >= sizeof(line))
@@ -52,8 +53,6 @@ void printHexDump(const void* ptr, size_t size)
     ESP_LOGD(TAG_HEX, "---------------------------");
 }
 
-
-
 /**
  * @brief Create a sanitized copy of a nodeInfo_t struct.
  * @details This function takes a nodeInfo_t struct as input and creates a new
@@ -65,15 +64,16 @@ void printHexDump(const void* ptr, size_t size)
 nodeInfo_t makeSanitizedNodeInfo(const nodeInfo_t *src)
 {
     /* copy the live nodeInfo_t struct */
-    nodeInfo_t out = *src; 
+    nodeInfo_t out = *src;
 
     /* zero out the volatile fields */
-    for (uint8_t i = 0; i < MAX_SUB_MODULES; i++) {
+    for (uint8_t i = 0; i < MAX_SUB_MODULES; i++)
+    {
         out.subModule[i].lastSeen = 0;
         out.subModule[i].runTime.last_change_ms = 0;
         out.subModule[i].runTime.valueU32 = 0;
         out.subModule[i].runTime.last_published_value = 0;
-        out.subModule[i].submod_flags &= ~SUBMOD_FLAG_DIRTY;  /**< strip runtime-only dirty flag */
+        out.subModule[i].submod_flags &= ~SUBMOD_FLAG_DIRTY; /**< strip runtime-only dirty flag */
     }
 
     return out;
@@ -89,20 +89,28 @@ void loadRoutesFromNVS()
         return;
 
     Preferences prefs;
-    if (prefs.begin(ROUTE_NS, true)) {
+    if (prefs.begin(ROUTE_NS, true))
+    {
         /* Check version, return 0 if not found*/
-        const uint8_t version = prefs.getUChar(ROUTE_VERSION, 0); 
-        if (version != ROUTER_VERSION) {
+        const uint8_t version = prefs.getUChar(ROUTE_VERSION, 0);
+        if (version != ROUTER_VERSION)
+        {
             prefs.end();
             xSemaphoreGive(flashMutex);
             ESP_LOGW(TAG, "[NVS] Warning: Route table version mismatch");
             return;
         }
-        if (prefs.isKey(ROUTE_KEY)) 
-            {
-                prefs.getBytes(ROUTE_KEY, g_routes, sizeof(g_routes));
-                prefs.getBytes(ROUTE_CRC_KEY, &g_routesCrc, sizeof(g_routesCrc));
-            }
+        /* Load the route table */
+        if (prefs.isKey(ROUTE_KEY))
+        {
+            prefs.getBytes(ROUTE_KEY, g_routes, sizeof(g_routes));
+        }
+
+        /* Load CRC data for the route table */
+        if (prefs.isKey(ROUTE_CRC_KEY))
+        {
+            prefs.getBytes(ROUTE_CRC_KEY, &g_routesCrc, sizeof(g_routesCrc));
+        }
         prefs.end();
     }
 
@@ -112,74 +120,79 @@ void loadRoutesFromNVS()
 void saveRoutesToNVS()
 {
 
-    /* First loop through the array and calculate the CRC 
+    /* First loop through the array and calculate the CRC
        and update the timestamp for each route entry */
 
-    for (uint8_t i = 0; i < MAX_ROUTES; i++) {
+    for (uint8_t i = 0; i < MAX_ROUTES; i++)
+    {
         /* Pointer to CRC data struct */
-        route_entry_crc_t *crc = &g_routesCrc[i]; 
-        
-        if (!crc->in_use) continue; /* skip unused entries */
-        
-        crc->ts  = getEpochTime();
+        route_entry_crc_t *crc = &g_routesCrc[i];
+
+        if (!crc->in_use)
+            continue; /* skip unused entries */
+
+        crc->ts = getEpochTime();
 
         ESP_LOGD(TAG, "[CRC] route %d CRC=0x%04X TS=%d in_use=%d",
-           i, crc->crc, crc->ts, crc->in_use);
-
+                 i, crc->crc, crc->ts, crc->in_use);
     }
 
     if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
         return;
 
     Preferences prefs;
-    if (prefs.begin(ROUTE_NS, false)) {
-        prefs.putUChar(ROUTE_VERSION, ROUTER_VERSION);                     /* Write version */
-        prefs.putBytes(ROUTE_KEY, g_routes, sizeof(g_routes));             /* Write route table */
-        prefs.putBytes(ROUTE_CRC_KEY, g_routesCrc, sizeof(g_routesCrc));   /* Write route table CRC */ 
+    if (prefs.begin(ROUTE_NS, false))
+    {
+        prefs.putUChar(ROUTE_VERSION, ROUTER_VERSION);                   /* Write version */
+        prefs.putBytes(ROUTE_KEY, g_routes, sizeof(g_routes));           /* Write route table */
+        prefs.putBytes(ROUTE_CRC_KEY, g_routesCrc, sizeof(g_routesCrc)); /* Write route table CRC */
         prefs.end();
     }
 
     xSemaphoreGive(flashMutex);
 }
 
-
 /* ============================================================================
  *  NODE CONFIG LOAD/SAVE
  * ========================================================================== */
 
- /**
-  * @brief Load default subModule configuration from the static personality
-  * library and initialize the node configuration.
-  * 
-  * Internal personalities represent node hardware (CPU temp, heap, etc.)
-  * and must be instantiated as submodules at boot.
-  * 
-  */
- void loadNodeDefaults() {
+/**
+ * @brief Load default subModule configuration from the static personality
+ * library and initialize the node configuration.
+ *
+ * Internal personalities represent node hardware (CPU temp, heap, etc.)
+ * and must be instantiated as submodules at boot.
+ *
+ */
+void loadNodeDefaults()
+{
 
-    nodeInfo_t& node = *nodeGetInfo();
+    nodeInfo_t &node = *nodeGetInfo();
 
     /** Set the number of submodules */
     node.subModCnt = g_submodules_count;
 
     /* Guardrail: personality library must define at least one submodule */
-    if (g_submodules_count == 0) {
+    if (g_submodules_count == 0)
+    {
         ESP_LOGE(TAG, "[INIT] Error: loadNodeDefaults(): submod_setup is empty (count = 0)");
         return;
     }
 
     /* Guardrail: pointer should never be NULL, but check anyway */
-    if (submod_setup == NULL) {
+    if (submod_setup == NULL)
+    {
         ESP_LOGE(TAG, "[INIT] Error: loadNodeDefaults(): submod_setup pointer is NULL");
         return;
     }
 
     /** Set the node type from personality library */
-    node.nodeTypeDLC = g_personalityNode.nodeTypeDLC; 
+    node.nodeTypeDLC = g_personalityNode.nodeTypeDLC;
     node.nodeTypeMsg = g_personalityNode.nodeTypeMsg;
-    
+
     /** Copy hardware submodules from submod_setup array */
-    for (uint8_t i = 0; i < g_submodules_count; i++) {
+    for (uint8_t i = 0; i < g_submodules_count; i++)
+    {
         node.subModule[i] = submod_setup[i];    /* copy user config from submod_setup */
         node.subModule[i].personalityIndex = i; /* assign matching index */
         node.subModule[i].personalityId =
@@ -187,15 +200,15 @@ void saveRoutesToNVS()
     }
 
     /** Add internal submodules from personality table */
-    for (uint8_t i = 0; i < runtimePersonalityCount; i++) {
-
+    for (uint8_t i = 0; i < runtimePersonalityCount; i++)
+    {
         const personalityDef_t *p = &runtimePersonalityTable[i];
 
         if (!(p->flags & BUILDER_FLAG_IS_INTERNAL))
             continue; /* skip non-internal personalities */
 
         if (node.subModCnt >= MAX_SUB_MODULES)
-            break;    /* no more space for submodules */
+            break; /* no more space for submodules */
 
         ESP_LOGI(TAG, "[INIT] Adding internal sub-module: index %d, intro msg 0x%02X", i, p->introMsgId);
 
@@ -203,37 +216,36 @@ void saveRoutesToNVS()
         subModule_t *sub = &node.subModule[node.subModCnt++];
         memset(sub, 0, sizeof(*sub));
 
-        
         sub->personalityId    = p->personalityId; /**< assign personality */
-        sub->personalityIndex = i;                /**< assign index */ 
+        sub->personalityIndex = i;                /**< assign index */
 
         /**  internal submodules usually have no user config */
         memset(sub->config.rawConfig, 0, sizeof(sub->config.rawConfig));
 
         // Use personality table for CAN reporting
-        sub->introMsgId          = p->introMsgId;
-        sub->introMsgDLC         = p->introMsgDlc;
+        sub->introMsgId  = p->introMsgId;
+        sub->introMsgDLC = p->introMsgDlc;
 
         // Mark as internal
-        sub->submod_flags       |= SUBMOD_FLAG_INTERNAL;
-        sub->producer_flags     |= PRODUCER_FLAG_ENABLED;
+        sub->submod_flags   |= SUBMOD_FLAG_INTERNAL;
+
+        // Wiring into Producer and enable publishing
+        sub->producer_flags |= PRODUCER_FLAG_PUBLISH_ENABLED | PRODUCER_FLAG_ACTIVE;
 
         // Producer defaults
-        sub->runTime.kind        = PRODUCER_KIND_PERIODIC;
-        sub->runTime.period_ms   = p->period_ms;             /* 10 seconds */
+        sub->producer_kind      = PRODUCER_KIND_PERIODIC;
+        sub->producer_period_ms = p->period_ms; /* 10 seconds */
     }
-
 
     ESP_LOGI(TAG, "[INIT] Defaults loaded, submod count: %d", node.subModCnt);
 
-    if (runtimePersonalityCount < g_submodules_count) {
-       ESP_LOGW(TAG, "[INIT] WARNING: runtimePersonalityCount less than g_submodules_count!");
+    if (runtimePersonalityCount < g_submodules_count)
+    {
+        ESP_LOGW(TAG, "[INIT] WARNING: runtimePersonalityCount less than g_submodules_count!");
     }
 
     // printNodeInfo(&node);
 }
-
-
 
 /**
  * @brief Handles the erase NVS command from the master node
@@ -243,72 +255,79 @@ void saveRoutesToNVS()
  * operation fails due to a mutex timeout, the function will
  * retry up to 3 times with a short delay in between retries.
  */
-void handleEraseCfgNVS() 
+void handleEraseCfgNVS()
 {
-  ConfigStatus cfgStatus;
-  int retries = 0;
+    ConfigStatus cfgStatus;
+    int retries = 0;
 
-  ESP_LOGI(TAG, "[NVS] Erasing config...");
+    ESP_LOGI(TAG, "[NVS] Erasing config...");
 
-  do {
-      cfgStatus = eraseConfigNvs();
+    do
+    {
+        cfgStatus = eraseConfigNvs();
 
-      if (cfgStatus == CFG_OK) {
-          ESP_LOGI(TAG, "[NVS] Config erased successfully, rebooting...");
-          vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before reboot */
-          ESP.restart(); /**< Reboot the ESP32 */
-          break;
-      }
+        if (cfgStatus == CFG_OK)
+        {
+            ESP_LOGI(TAG, "[NVS] Config erased successfully, rebooting...");
+            vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before reboot */
+            ESP.restart();                  /**< Reboot the ESP32 */
+            break;
+        }
 
-      if (cfgStatus == CFG_ERR_NOT_FOUND) {
-          ESP_LOGI(TAG, "[NVS] Erase: Config not found.");
-          break;
-      }
+        if (cfgStatus == CFG_ERR_NOT_FOUND)
+        {
+            ESP_LOGI(TAG, "[NVS] Erase: Config not found.");
+            break;
+        }
 
-      if (cfgStatus == CFG_ERR_MUTEX) {
-          ESP_LOGI(TAG, "[NVS] Erase: Flash busy - Retry %d/3...", retries + 1);
-          vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
-      }
+        if (cfgStatus == CFG_ERR_MUTEX)
+        {
+            ESP_LOGI(TAG, "[NVS] Erase: Flash busy - Retry %d/3...", retries + 1);
+            vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
+        }
 
-  } while ((cfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
+    } while ((cfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
 
-  if (cfgStatus == CFG_ERR_MUTEX) {
-      ESP_LOGE(TAG, "[NVS] Critical Error: Could not access NVS (Mutex Timeout)");
-  }
+    if (cfgStatus == CFG_ERR_MUTEX)
+    {
+        ESP_LOGE(TAG, "[NVS] Critical Error: Could not access NVS (Mutex Timeout)");
+    }
 }
-
 
 /**
  * @brief Erases the node configuration and CRC from NVS.
  * @return ConfigStatus status of the erase operation (OK, NOT_FOUND, or MUTEX).
  */
-ConfigStatus eraseConfigNvs() 
+ConfigStatus eraseConfigNvs()
 {
-  /* Attempt to acquire the flash mutex */
-  if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-    return CFG_ERR_MUTEX;
-  }
+    /* Attempt to acquire the flash mutex */
+    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
+        return CFG_ERR_MUTEX;
+    }
 
-  Preferences prefs;
-  if (!prefs.begin("node_cfg", false)) {
-    xSemaphoreGive(flashMutex);
-    return CFG_ERR_NVS_OPEN;
-  }
+    Preferences prefs;
+    if (!prefs.begin("node_cfg", false))
+    {
+        xSemaphoreGive(flashMutex);
+        return CFG_ERR_NVS_OPEN;
+    }
 
-  /* Check if the data key exists before attempting removal */
-  if (!prefs.isKey("node_data")) {
+    /* Check if the data key exists before attempting removal */
+    if (!prefs.isKey("node_data"))
+    {
+        prefs.end();
+        xSemaphoreGive(flashMutex);
+        return CFG_ERR_NOT_FOUND;
+    }
+
+    prefs.remove("node_data");
+    prefs.remove("node_crc");
+
     prefs.end();
     xSemaphoreGive(flashMutex);
-    return CFG_ERR_NOT_FOUND;
-  }
 
-  prefs.remove("node_data");
-  prefs.remove("node_crc");
-
-  prefs.end();
-  xSemaphoreGive(flashMutex);
-
-  return CFG_OK;
+    return CFG_OK;
 }
 
 /**
@@ -316,7 +335,7 @@ ConfigStatus eraseConfigNvs()
  * @param node Reference to the nodeInfo_t struct to persist.
  * @return CFG_OK on success, or CFG_ERR_MUTEX if flash is busy.
  */
-ConfigStatus saveConfigNvs() 
+ConfigStatus saveConfigNvs()
 {
     /* record start time */
     const uint64_t startTime = (uint64_t)esp_timer_get_time();
@@ -325,16 +344,18 @@ ConfigStatus saveConfigNvs()
     const nodeInfo_t sanitizedNode = makeSanitizedNodeInfo(nodeGetInfo());
 
     /* hash the sanitized nodeInfo_t struct to get the CRC key */
-    const uint16_t crc = crc16_ccitt((const uint8_t*)&sanitizedNode, sizeof(sanitizedNode));
+    const uint16_t crc = crc16_ccitt((const uint8_t *)&sanitizedNode, sizeof(sanitizedNode));
 
     /* Attempt to acquire the flash mutex */
-    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
         return CFG_ERR_MUTEX;
     }
 
     Preferences prefs;
     /* Open namespace in read/write mode */
-    if (!prefs.begin(NODE_NS, false)) {
+    if (!prefs.begin(NODE_NS, false))
+    {
         xSemaphoreGive(flashMutex);
         return CFG_ERR_NVS_OPEN; /* Return error if NVS open fails */
     }
@@ -359,7 +380,6 @@ ConfigStatus saveConfigNvs()
     return CFG_OK;
 }
 
-
 /**
  * @brief Loads the current node configuration and CRC from NVS.
  * @param[in,out] node Reference to the nodeInfo_t struct to be loaded.
@@ -369,20 +389,22 @@ ConfigStatus saveConfigNvs()
  * @retval CFG_ERR_NOT_FOUND No configuration exists in NVS.
  * @retval CFG_ERR_CRC Data found but CRC is invalid (corrupt).
  */
-ConfigStatus loadConfigNvs(nodeInfo_t& node)
+ConfigStatus loadConfigNvs(nodeInfo_t &node)
 {
-    
+
     /* Temporary storage for NVS data before CRC validation */
-    nodeInfo_t quarantineNode = {0}; 
+    nodeInfo_t quarantineNode = {0};
 
     /* Attempt to acquire the flash mutex */
-    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+    {
         return CFG_ERR_MUTEX;
     }
 
     /* Open namespace in read-only mode */
     Preferences prefs;
-    if (!prefs.begin(NODE_NS, true)) {
+    if (!prefs.begin(NODE_NS, true))
+    {
         xSemaphoreGive(flashMutex);
         return CFG_ERR_NOT_FOUND;
     }
@@ -391,21 +413,24 @@ ConfigStatus loadConfigNvs(nodeInfo_t& node)
     const uint8_t version = prefs.getUChar(NODE_VERSION, 0);
 
     /* Check version, return error if not found*/
-    if (version != NODEINFO_VERSION) {
+    if (version != NODEINFO_VERSION)
+    {
         prefs.end();
         xSemaphoreGive(flashMutex);
         return CFG_VERS_ERROR;
     }
 
     /* Check if the data key exists */
-    if (!prefs.isKey(NODE_DATA_KEY)) {
+    if (!prefs.isKey(NODE_DATA_KEY))
+    {
         prefs.end();
         xSemaphoreGive(flashMutex);
         return CFG_ERR_NOT_FOUND;
     }
 
     /* Check if the CRC key exists */
-    if (!prefs.isKey(NODE_CRC_KEY)) {
+    if (!prefs.isKey(NODE_CRC_KEY))
+    {
         prefs.end();
         xSemaphoreGive(flashMutex);
         return CFG_ERR_CRC_MISS;
@@ -422,11 +447,12 @@ ConfigStatus loadConfigNvs(nodeInfo_t& node)
     const nodeInfo_t sanitized = makeSanitizedNodeInfo(&quarantineNode);
 
     /* Calculate CRC of sanitized data */
-    const uint16_t crc = crc16_ccitt((const uint8_t*)&sanitized, sizeof(sanitized));
+    const uint16_t crc = crc16_ccitt((const uint8_t *)&sanitized, sizeof(sanitized));
 
     /* Validate CRC */
-    if ((crc != storedCrc)) {
-        ESP_LOGD(TAG, "[INIT] CRC mismatch: %d != %d", crc, storedCrc);    
+    if ((crc != storedCrc))
+    {
+        ESP_LOGD(TAG, "[INIT] CRC mismatch: %d != %d", crc, storedCrc);
 
         return CFG_ERR_CRC;
     }
@@ -441,40 +467,45 @@ ConfigStatus loadConfigNvs(nodeInfo_t& node)
  *  SUBMODULE MANAGEMENT API
  * ========================================================================== */
 
- int addSubmodule(const uint8_t personalityId,
-                 const uint8_t* configBytes,
+int addSubmodule(const uint8_t personalityId,
+                 const uint8_t *configBytes,
                  size_t configLength)
 {
-    nodeInfo_t& node = *nodeGetInfo();
+    nodeInfo_t &node = *nodeGetInfo();
 
     /* Bounds check: personalityId must exist */
-    if (personalityId >= PERSONALITY_MAX) {
+    if (personalityId >= PERSONALITY_MAX)
+    {
         return -1;
     }
 
     /* Bounds check: no room left */
-    if (node.subModCnt >= MAX_SUB_MODULES) {
+    if (node.subModCnt >= MAX_SUB_MODULES)
+    {
         return -1;
     }
 
     /* Find the first empty slot */
     int index = -1;
-    for (int i = 0; i < MAX_SUB_MODULES; i++) {
-        if (node.subModule[i].personalityIndex == 0xFF) {  // or however "empty" is defined
+    for (int i = 0; i < MAX_SUB_MODULES; i++)
+    {
+        if (node.subModule[i].personalityIndex == 0xFF)
+        { // or however "empty" is defined
             index = i;
             break;
         }
     }
 
-    if (index < 0) {
-        return -1;  // no free slot
+    if (index < 0)
+    {
+        return -1; // no free slot
     }
 
     /* Retrieve the personality template */
-    const personalityDef_t* p = &templateTable[personalityId];
+    const personalityDef_t *p = &templateTable[personalityId];
 
     /* Initialize the new submodule */
-    subModule_t* sub = &node.subModule[index];
+    subModule_t *sub = &node.subModule[index];
     memset(sub, 0, sizeof(subModule_t));
 
     /* Set the personality index equal to the template id */
@@ -485,17 +516,19 @@ ConfigStatus loadConfigNvs(nodeInfo_t& node)
     memcpy(sub->config.rawConfig, configBytes, copyLen);
 
     /* Initialize network fields if CAP_NETWORK is set */
-    if (p->capabilities & CAP_NETWORK) {
+    if (p->capabilities & CAP_NETWORK)
+    {
         /* Expecting configBytes to contain a 32-bit nodeID */
-        if (configLength >= 4) {
+        if (configLength >= 4)
+        {
             sub->networkNodeId =
                 ((uint32_t)configBytes[0] << 24) |
                 ((uint32_t)configBytes[1] << 16) |
-                ((uint32_t)configBytes[2] << 8)  |
+                ((uint32_t)configBytes[2] << 8) |
                 ((uint32_t)configBytes[3]);
         }
 
-        sub->lastSeen = 0; /* zero timestamp */
+        sub->lastSeen = 0;                                 /* zero timestamp */
         memset(sub->netConfig, 0, sizeof(sub->netConfig)); /* clear network config */
     }
 
@@ -505,10 +538,8 @@ ConfigStatus loadConfigNvs(nodeInfo_t& node)
     /* Increment count */
     node.subModCnt++;
 
-
     return index;
 }
-
 
 /**
  * @brief Attempts to load the configuration from NVS.
@@ -520,75 +551,86 @@ ConfigStatus loadConfigNvs(nodeInfo_t& node)
  * function is unable to access NVS due to a mutex timeout, it
  * loads the default configuration from the build flag node type.
  */
-void handleReadCfgNVS() 
+void handleReadCfgNVS()
 {
-  ConfigStatus loadCfgStatus;
-  int retries = 0;
-  /* Record start time */
-  const uint64_t startTime = (uint64_t)esp_timer_get_time();
+    ConfigStatus loadCfgStatus;
+    int retries = 0;
+    /* Record start time */
+    const uint64_t startTime = (uint64_t)esp_timer_get_time();
 
-  ESP_LOGI(TAG, "[NVS] Loading config from NVS...");
-  nodeInfo_t& node = *nodeGetInfo();
+    ESP_LOGI(TAG, "[NVS] Loading config from NVS...");
+    nodeInfo_t &node = *nodeGetInfo();
 
-  do {
-    loadCfgStatus = loadConfigNvs(node);
+    do
+    {
+        loadCfgStatus = loadConfigNvs(node);
 
-    if (loadCfgStatus == CFG_OK) {
-      ESP_LOGI(TAG, "[NVS] Config loaded successfully.");
-      FLAG_VALID_CONFIG = true;
-      break;
+        if (loadCfgStatus == CFG_OK)
+        {
+            ESP_LOGI(TAG, "[NVS] Config loaded successfully.");
+            FLAG_VALID_CONFIG = true;
+            break;
+        }
+
+        if (loadCfgStatus = CFG_VERS_ERROR)
+        {
+            ESP_LOGW(TAG, "[NVS] Config version mismatch - NVS load aborted.");
+            break;
+        }
+
+        if (loadCfgStatus == CFG_ERR_CRC)
+        {
+            ESP_LOGW(TAG, "[NVS] Config CRC mismatch - NVS load aborted.");
+            break;
+        }
+
+        if (loadCfgStatus == CFG_ERR_CRC_MISS)
+        {
+            ESP_LOGW(TAG, "[NVS] Config CRC not found in NVS - NVS load aborted.");
+            break;
+        }
+
+        if (loadCfgStatus == CFG_ERR_NOT_FOUND)
+        {
+            ESP_LOGW(TAG, "[NVS] Config data not found in NVS - NVS load aborted.");
+            break;
+        }
+
+        if (loadCfgStatus == CFG_ERR_MUTEX)
+        {
+            ESP_LOGW(TAG, "[NVS] Flash busy - Retry %d/3...", retries + 1);
+            vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
+        }
+
+    } while ((loadCfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
+
+    if (loadCfgStatus == CFG_ERR_MUTEX)
+    {
+        ESP_LOGW(TAG, "[NVS] Flash busy, mutex timeout - NVS load aborted.");
     }
 
-    if (loadCfgStatus = CFG_VERS_ERROR) {
-      ESP_LOGW(TAG, "[NVS] Config version mismatch - NVS load aborted.");
-      break;
-    }
-
-    if (loadCfgStatus == CFG_ERR_CRC) {
-      ESP_LOGW(TAG, "[NVS] Config CRC mismatch - NVS load aborted.");
-      break;
-    }
-
-    if (loadCfgStatus == CFG_ERR_CRC_MISS) {
-      ESP_LOGW(TAG, "[NVS] Config CRC not found in NVS - NVS load aborted.");
-      break;
-    }
-
-    if (loadCfgStatus == CFG_ERR_NOT_FOUND) {
-      ESP_LOGW(TAG, "[NVS] Config data not found in NVS - NVS load aborted.");
-      break;
-    }
-
-    if (loadCfgStatus == CFG_ERR_MUTEX) {
-      ESP_LOGW(TAG, "[NVS] Flash busy - Retry %d/3...", retries + 1);
-      vTaskDelay(pdMS_TO_TICKS(100)); /* Short sleep before retry */
-    }
-
-  } while ((loadCfgStatus == CFG_ERR_MUTEX) && (retries++ < 3));
-
-  if (loadCfgStatus == CFG_ERR_MUTEX) {
-    ESP_LOGW(TAG, "[NVS] Flash busy, mutex timeout - NVS load aborted.");
-  }
-
-  const uint64_t loadTime = (uint64_t)esp_timer_get_time() - startTime;
-  ESP_LOGI(TAG, "[NVS] Config load took %d ms", (loadTime / 1000));
+    const uint64_t loadTime = (uint64_t)esp_timer_get_time() - startTime;
+    ESP_LOGI(TAG, "[NVS] Config load took %d ms", (loadTime / 1000));
 }
 
 bool removeSubmodule(const uint8_t index)
 {
-    if (index >= MAX_SUB_MODULES) {
+    if (index >= MAX_SUB_MODULES)
+    {
         return false;
     }
 
-    nodeInfo_t& node = *nodeGetInfo();
+    nodeInfo_t &node = *nodeGetInfo();
 
     /* If the slot is already empty, nothing to do */
-    if (node.subModule[index].personalityIndex == 0xFF) {
+    if (node.subModule[index].personalityIndex == 0xFF)
+    {
         return false;
     }
 
     /* Shift remaining submodules down to keep table contiguous */
-    for (int i = index; i < (node.subModCnt - 1); i++) {
+    for (int i = index; i < (node.subModCnt - 1); i++)
+    {
         node.subModule[i] = node.subModule[i + 1];
     }
 

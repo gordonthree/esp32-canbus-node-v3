@@ -13,19 +13,20 @@
 
 
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /* ============================================================================ */
 /*  NODE STATE API
  * ============================================================================ */
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* Node state accessor functions */
 nodeInfo_t*    nodeGetInfo();
 subModule_t*   nodeGetSubModule(const uint8_t sub_idx);
 runTime_t*     nodeGetRuntime(const uint8_t sub_idx);
 uint8_t        nodeGetSubModuleCount(void);
+
 const personalityDef_t* nodeGetPersonality(uint8_t personalityIndex);
 
 /* Utility functions */
@@ -42,10 +43,6 @@ bool nodeIsValidSubmodule(uint8_t index);
 uint16_t       nodeGetCRC();
 void nodeSetCRC(uint16_t crc);
 
-/* Config flag accessor functions */
-// bool           nodeGetValidConfig();
-// void           nodeSetValidConfig(bool valid);
-
 /* Flags accessor functions */
 uint8_t* nodeGetProducerFlags(const uint8_t sub_idx) ;
 uint8_t* nodeGetSubmodFlags(const uint8_t sub_idx);
@@ -54,6 +51,15 @@ void nodeSetProducerFlags(const uint8_t sub_idx, uint8_t flags);
 void nodeSetSubmodFlags(const uint8_t sub_idx, uint8_t flags);
 void nodeSetRouterFlags(const uint8_t sub_idx, uint8_t flags);
 
+/** UPDATED: Return true if the submodule has the input flag set */
+inline bool nodeIsInputSubmodule(uint8_t sub_idx)
+{
+    const subModule_t* sub = nodeGetSubModule(sub_idx);
+    if (!sub)
+        return false;
+
+    return (sub->submod_flags & SUBMOD_FLAG_INPUT) != 0;  /**< true if input role */
+}
 
 /* ============================================================================
  *  GLOBAL FUNCTIONS
@@ -106,7 +112,7 @@ static inline uint32_t packStrobeState(uint8_t patternId, uint8_t step, bool out
  * ============================================================================ */ 
 
 
-// extern nodeInfo_t node; /**< Global node configuration */
+// extern nodeInfo_t node; /* node is now private, owned by node_state */
 
 #ifdef __cplusplus
 }
@@ -126,26 +132,12 @@ static inline uint32_t packStrobeState(uint8_t patternId, uint8_t step, bool out
 // void initHardware();
 void loadDefaults(uint16_t nodeType);
 uint32_t getEpochTime();
+
 /** Inline function to validate sub-module index */
 static inline bool isValidSubModuleIndex(uint8_t index) 
 { 
   return (index < MAX_SUB_MODULES); 
 }
-
-// void sendRouteList();
-// void setPWMDuty(twai_message_t *msg);
-// void setPWMFreq(twai_message_t *msg);
-// void txSwitchState(uint8_t* txUnitID, uint16_t txSwitchID, uint8_t swState);
-// void setSwitchMode(twai_message_t *msg);
-// void setSwitchState(twai_message_t *msg, uint8_t swState = OUT_STATE_OFF);
-// void sendCanUint32(uint32_t bigNumber, uint32_t canMsgId = DATA_EPOCH_ID, uint8_t dlc = DATA_EPOCH_DLC);
-// void setEpochTime(uint32_t epochTime);
-// void setSwBlinkDelay(twai_message_t *msg);
-// void setSwStrobePat(twai_message_t *msg);
-// void setDisplayMode(twai_message_t *msg, uint8_t displayMode = DISPLAY_MODE_OFF);
-// void handleColorCommand(twai_message_t *msg);
-// void sendIntroduction(int msgPtr = 0);
-// void handleAddNetworkSubmodule(void);
 
 /**
  * @brief Validate that a personalityId refers to a user-defined template personality.

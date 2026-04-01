@@ -126,15 +126,17 @@ static void buildSyntheticMessage(const router_action_t &action,
   packUint32ToBytes(nodeGetInfo()->nodeID, &outMsg.data[0]);
 
   // Byte 4 = submodule index
-  outMsg.data[4] = action.sub_idx;
-
+  outMsg.data[4]     = action.sub_idx;
+   
   // Byte 5..7 = parameters from router
-  outMsg.data[5] = action.param[0];
-  outMsg.data[6] = action.param[1];
-  outMsg.data[7] = action.param[2];
+  outMsg.data[5]     = action.param[0];
+  outMsg.data[6]     = action.param[1];
+  outMsg.data[7]     = action.param[2];
 
-  ESP_LOGD(TAG, "Building synthetic message 0x%03X data 0x%02X 0x%02X 0x%02X 0x%02X",
-           outMsg.identifier, outMsg.data[0], outMsg.data[1], outMsg.data[2], outMsg.data[3]);
+  outMsg.isSynthetic = true; /* mark as synthetic */
+
+  // ESP_LOGD(TAG, "Building synthetic message 0x%03X data 0x%02X 0x%02X 0x%02X 0x%02X",
+          //  outMsg.identifier, outMsg.data[0], outMsg.data[1], outMsg.data[2], outMsg.data[3]);
 }
 
 static void prettyPrintMsg(const can_msg_t *msg)
@@ -206,13 +208,15 @@ static void handleCanRX(can_msg_t &message)
     /* message router indicates we need to generate a synthetic message */
     ESP_LOGI(TAG, "[ROUTER] ACTION: 0x%03X", action.actionMsgId);
     buildSyntheticMessage(action, msgToConsume);
+    ESP_LOGD(TAG, "[CONSUMER] RX MSG POST-ROUTER:Synthetic Message Returned");
+    prettyPrintMsg(&msgToConsume);
   }
   else
   {
     /* pass along original message */
     msgToConsume = message;
     /* debug: dump message data */
-    ESP_LOGD(TAG, "[CONSUMER] RX MSG POST-ROUTER");
+    ESP_LOGD(TAG, "[CONSUMER] RX MSG POST-ROUTER:No Action");
     prettyPrintMsg(&msgToConsume);
   }
 
@@ -228,6 +232,23 @@ static void TaskConsumer(void *pvParameters)
 {
   can_msg_t msg;
 
+  ESP_LOGI(TAG, "[RTOS] Consumer task starting...");
+
+  ESP_LOGI(TAG, "[ROUTER] Loading routes from NVS...");
+  vTaskDelay(pdMS_TO_TICKS(10));
+  loadRoutesFromNVS();
+  vTaskDelay(pdMS_TO_TICKS(10));
+
+  const uint8_t routeCount = routerGetRouteCount();
+  if (routeCount > 0) {
+    ESP_LOGI(TAG, "[ROUTER] Load complete, %d routes loaded.", routerGetRouteCount());
+    prettyPrintRoutes();
+  }
+  else {
+    ESP_LOGW(TAG, "[ROUTER] No routes loaded.");
+  }
+
+  
   /* Block until TWAI driver is installed */
   while (!twaiIsDriverInstalled())
   {
