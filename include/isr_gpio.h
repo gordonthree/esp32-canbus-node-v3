@@ -62,7 +62,6 @@ struct IsrGpioState
  * Expose the globals
  * -------------------------------------------------------------------------- */
 
-extern volatile uint32_t g_isr_counter;
 
 /* --------------------------------------------------------------------------
  * Control-plane API for GPIO ISR subsystem

@@ -33,7 +33,8 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
     return;
 
   subModule_t *sub = nodeGetSubModule(subIdx);                                 /**< pointer to the submodule */
-  const personalityDef_t *p = &runtimePersonalityTable[sub->personalityIndex]; /**< pointer to the personality definition */
+  const personalityDef_t *p = 
+    nodeGetPersonality(sub->personalityIndex);       /**< pointer to the personality definition */
   const uint8_t pinNum = p->gpioPin;                                           /**< GPIO pin number */
 
   /** Test for invalid pin number */
@@ -167,7 +168,14 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
     ESP_LOGI(TAG, "[GPIO] sub=%u valueU32=%u",
              subIdx, sub->runTime.valueU32);
   } /* end of mode switch */
-}
+
+  /* Enqueue input event */
+  enqueueInputCmd(INPUT_CMD_ISR_EDGE,
+                subIdx,
+                value,      // or raw, depending on your semantics
+                now);
+
+} /* end of processGpioEvent() */
 
 static void TaskInput(void *pvParameters)
 {
@@ -181,7 +189,7 @@ static void TaskInput(void *pvParameters)
     {
       processGpioEvent(evt.subIdx, evt.raw);
     }
-    vTaskDelay(pdMS_TO_TICKS(5));
+    // vTaskDelay(pdMS_TO_TICKS(5));
   }
 }
 

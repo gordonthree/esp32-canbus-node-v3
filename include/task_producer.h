@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 void startTaskProducer(void);
+void attachGpioIsrInit(void);
 
 #ifdef __cplusplus
 }

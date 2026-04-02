@@ -12,7 +12,6 @@ static const char *TAG = "isr_gpio";
 /* Get this out of the way early */
 extern "C" void IRAM_ATTR gpio_isr_handler(void *arg);
 
-volatile uint32_t g_isr_counter = 0; // GPIO39 ISR fire count
 
 /* --------------------------------------------------------------------------
  * Global state
@@ -37,6 +36,14 @@ IsrGpioState::IsrGpioState() /* Constructor */
         clickCount[i] = 0;
     }
 }
+
+extern "C" volatile uint32_t g_isr_counter = 0;
+
+extern "C" uint32_t isrGetCounter(void)
+{
+    return g_isr_counter;
+}
+
 
 /* --------------------------------------------------------------------------
  * ISR service initialization
@@ -163,10 +170,22 @@ void attachDigitalInputISR(uint8_t pin, uint8_t subIdx)
 
     const subModule_t *sub = nodeGetSubModule(subIdx);
     const uint8_t inputFlags = sub->config.gpioInput.flags;
+    const uint8_t inputResistor = INPUT_FLAG_GET_PULL(inputFlags);
 
     gpio_config_t io_conf = {};
     io_conf.pin_bit_mask = (1ULL << pin);
     io_conf.mode = GPIO_MODE_INPUT;
+
+    if (inputResistor == INPUT_FLAG_PULL_UP) {
+        io_conf.pull_up_en =   (gpio_pullup_t)GPIO_PULLUP_ENABLE;
+        io_conf.pull_down_en = (gpio_pulldown_t)GPIO_PULLDOWN_DISABLE;
+    } else if (inputResistor == INPUT_FLAG_PULL_DOWN) {
+        io_conf.pull_up_en =   (gpio_pullup_t)GPIO_PULLDOWN_DISABLE;
+        io_conf.pull_down_en = (gpio_pulldown_t)GPIO_PULLDOWN_ENABLE;
+    } else if (inputResistor == INPUT_FLAG_PULL_FLOAT) {
+        io_conf.pull_up_en =   (gpio_pullup_t)GPIO_PULLDOWN_DISABLE;
+        io_conf.pull_down_en = (gpio_pulldown_t)GPIO_PULLDOWN_DISABLE;
+    }
 
     // Apply inversion flag to interrupt type
     if (inputFlags & INPUT_FLAG_INVERT) {
@@ -174,7 +193,14 @@ void attachDigitalInputISR(uint8_t pin, uint8_t subIdx)
     } else {
         io_conf.intr_type = GPIO_INTR_POSEDGE;   // active-high button
     }
+
+    Serial.print("DEBUG: io_conf.intr_type = ");
+    Serial.println((int)io_conf.intr_type); /**< Cast enum to int to display the raw value */
+
     gpio_config(&io_conf);
+
+    const char* inverted = 
+        inputFlags & INPUT_FLAG_INVERT ? " (inverted)" : " (non-inverted)";
 
     // Register pin → submodule mapping
     isrGpio.subIdx[pin] = subIdx;
@@ -184,8 +210,8 @@ void attachDigitalInputISR(uint8_t pin, uint8_t subIdx)
                                          gpio_isr_handler,
                                          (void *)(uintptr_t)subIdx);
 
-    ESP_LOGI(TAG, "[ISR] gpio_isr_handler_add: pin=%u subIdx=%u err=%s",
-             pin, subIdx, esp_err_to_name(err));
+    ESP_LOGI(TAG, "[ISR] gpio_isr_handler_add: pin=%u subIdx=%u err=%s %s",
+             pin, subIdx, esp_err_to_name(err), inverted);
 
     esp_err_t err2 = gpio_intr_enable((gpio_num_t)pin);
 
@@ -260,5 +286,7 @@ extern "C" void IRAM_ATTR gpio_isr_handler(void *arg)
 
     BaseType_t hpTaskWoken = pdFALSE;
     xQueueSendFromISR(gpioEventQueue, &evt, &hpTaskWoken); // NEW IDENTIFIER #2
+    // Inside your ISR
+    GPIO.status_w1tc = (1ULL << pinNum); /**< Write 1 to Clear the interrupt status bit */
     portYIELD_FROM_ISR(hpTaskWoken);
 } /* gpio_isr_handler() */

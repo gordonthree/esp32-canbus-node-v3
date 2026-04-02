@@ -29,8 +29,9 @@
 // #include "driver/twai.h" /* esp32 native TWAI CAN library */
 // #include "driver/ledc.h" /* esp32 native LEDC PWM library */
 // #include "driver/gpio.h" /* esp32 native GPIO library */
-// #include "driver/adc.h"  /* esp32 native ADC library */
+#include "driver/adc.h"  /* esp32 native ADC library */
 #include "esp_err.h" /* esp32 error handler */
+#include "soc/gpio_struct.h"
 
 /* === FreeRTOS includes === */
 // #include <freertos/FreeRTOS.h>
@@ -73,6 +74,7 @@
 // #include "esp32_defs.h"        /**< ESP32 hardware definitions for personality table */
 
 #include "esp_log.h"
+extern "C" uint32_t isrGetCounter(void);
 
 static const char *TAG = "main";
 
@@ -382,8 +384,11 @@ static void manageColorPickerList(can_msg_t *msg)
 void setup()
 {
 
-    /* not sure we need this? */
-    //   adc_power_acquire();
+    /*
+     * Keep ADC powered on all the time to prevent a weird
+     * glitch with the WiFI subsystem and GPIO pin 39 
+     */
+    adc_power_acquire();
 
 #ifdef ESP32CYD
     /* register callbacks */
@@ -436,9 +441,6 @@ void setup()
         // TODO: enter recovery state
     }
 
-    /* Install ISR service */
-    initGpioIsrService();
-
     /* Initialize the hardware, attach ISR handlers as needed */
     initNodeHardware();
 
@@ -448,7 +450,11 @@ void setup()
     /* Initialize router CRC16 callback */
     router_set_crc_callback(crc16_ccitt);
 
-    esp_log_write(ESP_LOG_INFO, "TEST", "Direct IDF call to trigger hook\n");
+    /* Install ISR service */
+    initGpioIsrService();
+
+    /* Attach GPIO ISR handlers */
+    attachGpioIsrInit();
 
 #ifdef ESP32CYD
     /* Initialize CYD interface */
@@ -459,7 +465,6 @@ void setup()
 #endif
 
     /* Start FreeRTOS tasks */
-    //   startTaskOTA(); /* Start the OTA task - OTA task controlled by WiFi Task */
     startTaskTWAI();     /* Start the TWAI task */
     startTaskInput();    /* Start the input event task */
     startTaskOutput();   /* Start the output event task */
@@ -469,14 +474,14 @@ void setup()
 
 static void pollDirtyFlags(void)
 {
-    static uint32_t lastCheck = 0; /* retains value, not global */
+    // static uint32_t lastCheck = 0; /* retains value, not global */
 
-    const uint32_t now = millis();
-    if (now - lastCheck < 2000)
-    {
-        return;
-    }
-    lastCheck = now;
+    // const uint32_t now = millis();
+    // if (now - lastCheck < 2000)
+    // {
+    //     return;
+    // }
+    // lastCheck = now;
 
     /* Scan for dirty flags */
     for (uint8_t i = 0; i < MAX_SUB_MODULES; i++)
@@ -496,6 +501,21 @@ static void pollDirtyFlags(void)
     }
 }
 
+/**
+ * Reads the physical hardware register for a given GPIO pin to see
+ * the exact interrupt type configured in the silicon.
+ */
+static void print_raw_gpio_register(int pin)
+{
+    const int target_pin = pin;                             /**< The target GPIO pin number */
+    const int raw_int_type = GPIO.pin[target_pin].int_type; /**< Direct read of the interrupt type from the GPIO peripheral struct */
+
+    Serial.print("Raw Register int_type for GPIO ");
+    Serial.print(target_pin);
+    Serial.print(": ");
+    Serial.println(raw_int_type);
+}
+
 void loop()
 {
     static uint32_t lastCheck;
@@ -504,18 +524,21 @@ void loop()
     {
         // Serial.printf("ISR Counter %u\n", g_isr_counter);
         gpio_int_type_t intr_type;
-        esp_err_t err = gpio_get_intr_type(GPIO_NUM_4, &intr_type);
+
+        const uint32_t isrCnt = isrGetCounter();
 
         int lvl = gpio_get_level(GPIO_NUM_39);
-        gpio_int_type_t t = gpio_get_intr_type(GPIO_NUM_39);
-        Serial.printf("GPIO39 level=%d  ISR=%u  intr_type=%d\n",
-                    gpio_get_level(GPIO_NUM_39),
-                    g_isr_counter,
-                    t);
-            }
-    
-        /** Check for producer save request */
-        if (g_routeSaveRequested)
+        // gpio_int_type_t t = gpio_get_intr_type(GPIO_NUM_39);
+        Serial.printf("millis=%u level=%d  ISR=%u \n",
+                      millis(),
+                      gpio_get_level(GPIO_NUM_39),
+                      isrCnt);
+
+        // print_raw_gpio_register(GPIO_NUM_39);
+    }
+
+    /** Check for producer save request */
+    if (g_routeSaveRequested)
     {
         g_routeSaveRequested = false;
         saveRoutesToNVS();

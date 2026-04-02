@@ -268,7 +268,7 @@ static void managePeriodicMessages()
  * @note This function is called once during initialization and should not be called
  * again.
  */
-static void attachGpioIsrInit(void)
+void attachGpioIsrInit(void)
 {
   /* Skip undefined submodules */
   const int count = nodeGetSubModuleCount();

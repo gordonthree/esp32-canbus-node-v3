@@ -122,6 +122,7 @@ static inline uint32_t packStrobeState(uint8_t patternId, uint8_t step, bool out
  *  Global Variables  
  * ============================================================================ */ 
 
+// extern volatile uint32_t g_isr_counter;
 
 
 
