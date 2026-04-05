@@ -44,7 +44,7 @@ void handleNvsConfig(can_msg_t *msg)
     switch (msg->identifier)
     {
 
-    case CFG_NVS_RESERVED_448_ID: /** dump twai status */
+    case REQ_TWAI_INFO_PRT_ID: /** dump twai status */
     {
         dumpTwaiStatus();
         break;

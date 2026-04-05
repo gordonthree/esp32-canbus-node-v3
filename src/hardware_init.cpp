@@ -34,6 +34,9 @@ static const char *TAG = "hardware_init";
  *  Private Function Prototypes
  * -------------------------------------------------------------------------- */
 
+static bool platformCPUTEMP(void);  /* Newer ESP32 S3, STM32, maybe others. */
+static bool platformESP32(void);   /* All ESP32 variants */
+static bool platformAny(void);     /* All platforms */
 /**
  * @brief Configure a GPIO pin as a digital input.
  * @param index Submodule index.
@@ -55,10 +58,56 @@ static void initGpioOutput(uint8_t index, subModule_t* sub);
  */
 static void initAnalogInput(uint8_t index, subModule_t* sub);
 
+/* Table of internal submodules to be discovered */
+static const discoveryEntry_t discoveryTable[] = {
+    { INTERNAL_FREE_HEAP,            platformESP32 },   /* or always true */
+    { INTERNAL_WIFI_RSSI,            platformESP32 },
+    { INTERNAL_RTOS_HIGHWATERMARK,   platformAny },
+    { INTERNAL_INTERNAL_TEMPERATURE, platformCPUTEMP },
+    { INTERNAL_RESET_REASON,         platformESP32 },
+    { INTERNAL_BROWNOUT_STATUS,      platformESP32 },
+    { INTERNAL_UPTIME_MS,            platformESP32 },   /* or always true */
+    { INTERNAL_WIFI_CHANNEL,         platformESP32 },
+    { INTERNAL_WIFI_PHY_RATE,        platformESP32 },
+    { INTERNAL_FLASH_SIZE,           platformESP32 },
+    { INTERNAL_CPU_FREQ,             platformESP32 },
+    { INTERNAL_MIN_FREE_HEAP,        platformAny },
+    { INTERNAL_MAX_FREE_HEAP,        platformAny },
+    { INTERNAL_CAN_ERROR_COUNTERS,   platformAny },
+    { INTERNAL_CAN_BUS_STATE,        platformAny },
+    { INTERNAL_FIRMWARE_VERSION,     platformAny },
+    { INTERNAL_OTA_PARTITION_INFO,   platformESP32 },
+};
 
+static const size_t discoveryTableSize = 
+    sizeof(discoveryTable) / sizeof(discoveryEntry_t);
+    
 /* --------------------------------------------------------------------------
  *  Private Function Implementations
  * -------------------------------------------------------------------------- */
+
+static bool platformESP32(void)
+{
+    bool ret = false;
+#ifdef ESP32
+    ret = true;
+#endif
+    return ret;
+}
+
+static bool platformCPUTEMP(void)
+{
+    bool ret = false;
+#ifdef ESP32S3
+    ret = true;
+#endif
+    return ret;
+}
+
+static bool platformAny(void)
+{
+    return true;
+};
 
 static void initGPIOInput(uint8_t index, subModule_t* sub)
 {
@@ -193,5 +242,25 @@ void initHardware(uint8_t index, subModule_t* sub)
 void initNodeHardware(void) {
     for (uint8_t i = 0; i < nodeGetInfo()->subModCnt; i++) {
         initHardware(i, nodeGetSubModule(i));
+    }
+}
+
+void discoverInternalSubmodules(void)
+{
+    for (size_t i = 0; i < discoveryTableSize; i++)
+    {
+        const discoveryEntry_t *d = &discoveryTable[i];
+
+        if (d->probeFn && d->probeFn())
+        {
+            int idx = addSubmodule(d->personalityId, NULL, 0);
+
+            if (idx < 0)
+            {
+                ESP_LOGW("DISCOVERY",
+                         "Failed to add internal submodule for personality %u",
+                         d->personalityId);
+            }
+        }
     }
 }

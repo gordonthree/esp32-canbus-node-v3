@@ -56,18 +56,17 @@ typedef struct {
 
 /* Input command types */
 typedef enum {
-    INPUT_CMD_ENABLE_PRODUCER,     /**< Enable producer + enable ISR */
-    INPUT_CMD_DISABLE_PRODUCER,    /**< Disable producer + disable ISR */
-    INPUT_CMD_ISR_EDGE,            /**< Raw ISR edge event */
-    INPUT_CMD_DEBOUNCE_TICK        /**< Periodic debounce update */
-} InputCmdType_t;
+    INPUT_CMD_GPIO_EVENT,     /**< GPIO ISR event has fired*/
+    INPUT_CMD_CFG_CHANGE,     /**< Configuration update flag */
+    INPUT_CMD_INTERNAL_EVENT, /**< Operational data based event */
+    INPUT_CMD_DEBOUNCE_TICK   /**< Periodic debounce update */
+} inputCommand_t ;
 
 typedef struct {
-    InputCmdType_t type;   /**< What action the input task should perform */
+    inputCommand_t type;   /**< What action the input task should perform */
     uint8_t        index;  /**< Submodule index */
-    uint8_t        edge;   /**< For ISR edges: 0 = low, 1 = high */
-    uint32_t       timestamp; /**< Optional: millis() when event occurred */
-} InputCmd_t;
+    uint32_t       timestamp; /**< timestamp when event occurred */
+} inputCommandMsg_t;
 
 /* GPIO event structure */
 typedef struct {

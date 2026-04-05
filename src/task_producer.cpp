@@ -1,9 +1,11 @@
 #include <Arduino.h>
+
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
 #include "task_twai.h"
 #include "task_producer.h"
+#include "task_input.h"
 #include "freertos.h"
 #include "submodule_types.h"
 #include "node_state.h"
@@ -22,10 +24,11 @@ static const char *TAG = "task_producer";
  * ========================================================================= */
 
 static void updateSubModules();
-static void handleProducerTick(uint32_t now);
+// static void handleProducerTick(uint32_t now);
 static void readCydLdr();
 static void managePeriodicMessages();
 static void TaskProducer(void *pvParameters);
+static void handleInputCommand(inputCommandMsg_t *cmd);
 
 /* =========================================================================
  *  Private functions
@@ -33,14 +36,16 @@ static void TaskProducer(void *pvParameters);
 
 static void updateSubModules()
 {
-  for (uint8_t i = 0; i < nodeGetInfo()->subModCnt; i++)
+  /* reconcile submodule count */
+  nodeGetActiveSubModuleCount();
+
+  FOR_EACH_ACTIVE_SUBMODULE(i, sub)
   {
-    subModule_t *sub = nodeGetSubModule(i);
-    const personalityDef_t *p = nodeGetPersonality(sub->personalityIndex);
+    const personalityDef_t *p = nodeGetActivePersonality(sub->personalityIndex);
 
     if (!p)
     {
-      ESP_LOGW(TAG, "[PRODUCER] Error: Personality lookup failed for index %u", i);
+      ESP_LOGE(TAG, "[PRODUCER] Personality lookup failed for index %u", i);
       continue;
     }
 
@@ -58,35 +63,39 @@ static void updateSubModules()
     {
     /* Addressable RGB output*/
     case PERS_ARGB_OUTPUT:
-      // TODO: Figure out how to read NeoPixelBus status?
+    { // TODO: Figure out how to read NeoPixelBus status?
       break;
-
+    }
     /* Analog RGBW output */
     case PERS_RGBW_OUTPUT:
-      // TODO
+    { // TODO
       break;
-
+    }
     /* Analog DAC output */
     case PERS_ANA_OUTPUT:
-      // TODO: Read DAC output value?
+    { // TODO: Read DAC output value?
       break;
-
+    }
     /* Digital GPIO personalities */
     case PERS_GPIO_OUTPUT:
     case PERS_GPIO_INPUT:
-      // sub->runTime.valueU32 = digitalRead(myPin); /**< Capture digital value */
+    { // sub->runTime.valueU32 = digitalRead(myPin); /**< Capture digital value */
       break;
-
+    }
       /* Analog ADC input */
     case PERS_ANALOG_INPUT:
+    {
       sub->runTime.valueU32 = analogRead(myPin); /**< Capture analog value */
       break;
+    }
 
-    case VIRT_FREE_HEAP:
+    case INTERNAL_FREE_HEAP:
+    {
       value = (uint32_t)xPortGetFreeHeapSize();
       break;
+    }
 
-    case VIRT_WIFI_RSSI:
+    case INTERNAL_WIFI_RSSI:
     {
       int rssi = wifiGetRssi(); /* get RSSI */
       if (rssi < 0)
@@ -95,59 +104,115 @@ static void updateSubModules()
       break;
     }
 
-    case VIRT_RTOS_HIGHWATERMARK:
+    case INTERNAL_RTOS_HIGHWATERMARK:
+    {
       value = (uint32_t)uxTaskGetStackHighWaterMark(NULL);
       break;
+    }
 
-    case VIRT_INTERNAL_TEMPERATURE:
+    case INTERNAL_INTERNAL_TEMPERATURE:
+    {
       value = (uint32_t)temperatureRead();
       break;
+    }
 
-    case VIRT_VREF_VOLTAGE:
-      // value = (uint32_t)readInternalVref();
-      value = 1024; // TODO: implement actual function
+    case INTERNAL_RESET_REASON:
+    {
+      value = (uint32_t)esp_reset_reason();
       break;
+    }
+
+    case INTERNAL_BROWNOUT_STATUS:
+    { // value = (uint32_t)esp_brownout_get_status();
+      break;
+    }
+    case INTERNAL_FLASH_SIZE:
+    {
+      // value = (uint32_t)esp_flash_get_size();
+      value = (16 * 1024 * 1024);
+      break;
+    }
+
+    case INTERNAL_UPTIME_MS:
+    {
+      uint64_t uptime_us = esp_timer_get_time();
+      uint32_t uptime_ms = uptime_us / 1000;
+      value = uptime_ms;
+      break;
+    }
+
+    case INTERNAL_WIFI_CHANNEL:
+    {
+      // wifi_ap_record_t ap;
+      // esp_wifi_sta_get_ap_info(&ap);
+      // uint8_t channel = ap.primary;
+      // value = (uint32_t)channel;
+      // TODO: implement actual function
+      value = 1;
+      break;
+    }
+
+    case INTERNAL_WIFI_PHY_RATE:
+    {
+      // wifi_ap_record_t ap;
+      // esp_wifi_sta_get_ap_info(&ap);
+      // uint32_t phy_rate = ap.phy_11b; // or 11g/11n flags
+      // value = phy_rate;
+      // TODO: implement actual function
+      value = 11000000;
+      break;
+    }
+
+    case INTERNAL_CPU_FREQ:
+    {
+      // value = (uint32_t)esp_clk_cpu_freq();
+      value = 240000000; // TODO: implement actual function
+      break;
+    }
+
+    case INTERNAL_VREF_VOLTAGE:
+    {
+      // value = (uint32_t)readInternalVref();
+      value = 2048; // TODO: implement actual function
+      break;
+    }
 
     default:
+    {
       ESP_LOGW(TAG, "[PRODUCER] Error: Unknown personality %u", sub->personalityId);
       // Unknown virtual personality — ignore safely
       continue;
     }
+    } /* end of switch-case */
 
     // sub->runTime.valueU32       = value;     /* update value */
     // sub->runTime.last_change_ms = millis();  /* update timestamp */
   } /* end of for loop */
 }
 
-static void handleProducerTick(uint32_t now)
+static void routerPublishEvent(producer_event_t *evt)
 {
-  /** Check for producer event */
-  producer_event_t evt = producerTick(now);
+  const uint32_t now = millis();
+  const uint8_t subIdx = evt->sub_idx;
 
-  if (evt.error)
+  /* Validate submodule index */
+  subModule_t *sub = nodeGetActiveSubModule(subIdx);
+  if (!sub)
   {
-    ESP_LOGW(TAG, "[PRODUCER] ProducerTick returned error, aborting producer processing");
-    return;
-  }
-  if (!evt.ready)
-    return;
-
-  if (evt.sub_idx >= nodeGetInfo()->subModCnt)
-  {
-    ESP_LOGW(TAG, "[PRODUCER] Error: bad sub_idx %u (max %u)",
-             evt.sub_idx, nodeGetInfo()->subModCnt - 1);
+    ESP_LOGE(TAG, "[PRODUCER] Invalid or inactive submodule at index %u", subIdx);
     return;
   }
 
-  /** Lookup personality */
-  const nodeInfo_t &node = *nodeGetInfo();
-  const subModule_t &sub = *nodeGetSubModule(evt.sub_idx);
-  const personalityDef_t *p = &runtimePersonalityTable[nodeGetSubModule(evt.sub_idx)->personalityIndex];
+  /* Safe personality lookup */
+  const personalityDef_t *p = nodeGetActivePersonality(sub->personalityIndex);
   if (!p)
   {
-    ESP_LOGW(TAG, "[PRODUCER] Error: personality lookup failed for sub %u", evt.sub_idx);
+    ESP_LOGE(TAG, "[PRODUCER] Personality lookup failed for sub %u", subIdx);
     return;
   }
+
+  /* Get our nodeID */
+  const uint32_t nodeID = nodeGetNodeID();
 
   uint8_t dlc = p->dataMsgDlc;
   if (dlc < CAN_DATAMSG_MIN_DLC)
@@ -158,15 +223,15 @@ static void handleProducerTick(uint32_t now)
   uint8_t payload[CAN_MAX_DLC] = {0}; /**< zero-initialize */
 
   /* Node ID (big-endian) */
-  payload[0] = (node.nodeID >> BYTE_SHIFT3) & BYTE_MASK;
-  payload[1] = (node.nodeID >> BYTE_SHIFT2) & BYTE_MASK;
-  payload[2] = (node.nodeID >> BYTE_SHIFT) & BYTE_MASK;
-  payload[3] = (node.nodeID) & BYTE_MASK;
+  payload[0] = (nodeID >> BYTE_SHIFT3) & BYTE_MASK;
+  payload[1] = (nodeID >> BYTE_SHIFT2) & BYTE_MASK;
+  payload[2] = (nodeID >> BYTE_SHIFT) & BYTE_MASK;
+  payload[3] = nodeID & BYTE_MASK;
 
   /* Submodule index */
-  payload[4] = evt.sub_idx;
+  payload[4] = evt->sub_idx;
 
-  const uint32_t valueU32 = evt.value;
+  const uint32_t valueU32 = evt->value;
 
   if (valueU32 <= 0xFF)
   { /* Single byte value, send it in position 5 */
@@ -175,20 +240,20 @@ static void handleProducerTick(uint32_t now)
   else if (valueU32 <= 0xFFFF)
   { /* Two-byte value */
     payload[5] = (valueU32 >> BYTE_SHIFT) & BYTE_MASK;
-    payload[6] = (valueU32)&BYTE_MASK;
+    payload[6] = valueU32 & BYTE_MASK;
   }
   else
-  { /* Three-byte value */
-    payload[5] = (valueU32 >> BYTE_SHIFT2) & BYTE_MASK;
-    payload[6] = (valueU32 >> BYTE_SHIFT) & BYTE_MASK;
-    payload[7] = (valueU32)&BYTE_MASK;
+  {                                                     /* Three-byte value */
+    payload[5] = (valueU32 >> BYTE_SHIFT2) & BYTE_MASK; /* shift 16 bits */
+    payload[6] = (valueU32 >> BYTE_SHIFT) & BYTE_MASK;  /* shift 8 bits */
+    payload[7] = valueU32 & BYTE_MASK;
   }
 
   /* Send message */
   canEnqueueMessage(p->dataMsgId, payload, dlc);
 
   ESP_LOGI(TAG, "[PRODUCER] Tx: sub %u msg 0x%03X dlc %u val %u",
-           evt.sub_idx, p->dataMsgId, dlc, evt.value);
+           subIdx, p->dataMsgId, dlc, valueU32);
 }
 
 static void readCydLdr()
@@ -251,10 +316,10 @@ static void managePeriodicMessages()
   }
 
   /** Update physical submodules */
-  updateSubModules();
+  // updateSubModules();
 
   /** Call the producer tick */
-  handleProducerTick(currentMillis);
+  // handleProducerTick(currentMillis);
 }
 
 /**
@@ -271,13 +336,10 @@ static void managePeriodicMessages()
 void attachGpioIsrInit(void)
 {
   /* Skip undefined submodules */
-  const int count = nodeGetSubModuleCount();
-
-  for (int i = 0; i < count; i++)
+  FOR_EACH_ACTIVE_SUBMODULE(i, sub)
   {
-
-    const subModule_t *sub = nodeGetSubModule(i);
-    if (!sub)
+    /* Only input submodules can have ISRs */
+    if (!nodeIsInputSubmodule(i))
       continue;
 
     /* Submodule must be active in producer logic */
@@ -292,24 +354,78 @@ void attachGpioIsrInit(void)
       continue;
     }
 
-    const personalityDef_t *p = nodeGetPersonality(i);
+    const personalityDef_t *p = nodeGetActivePersonality(i);
     if (!p)
+    {
+      ESP_LOGW(TAG, "Referenced personality is inactive or invalid %d", i);
       continue;
+    }
 
     const uint8_t pin = p->gpioPin;
     if (pin == 0) /* GPIO0 reserved on ESP32 */
       continue;
 
-    /* Only attach ISR for input submodules */
-    if (nodeIsInputSubmodule(i))
+    /* Attach ISR */
+    attachDigitalInputISR(pin, i);
+  }
+}
+
+static void handleInputCommand(inputCommandMsg_t *cmd)
+{
+  const uint8_t subIdx = cmd->index;
+
+  ESP_LOGD(TAG, "\n[PRODUCER] Input command received: %u (sub=%u)\n", (uint8_t)cmd->type, subIdx);
+
+  if (!nodeIsActiveSubmodule(subIdx))
+    return;
+
+  switch (cmd->type)
+  {
+  case INPUT_CMD_GPIO_EVENT:
+  {
+    producer_event_t evt =
+        producerHandleGpioEvent(subIdx, cmd->timestamp);
+
+    if (evt.error)
     {
-      attachDigitalInputISR(pin, i);
+      ESP_LOGW(TAG, "[PRODUCER] GPIO event handler returned an error, aborting producer processing.");
+      break;
     }
+    else if (evt.ready)
+    {
+      routerPublishEvent(&evt);
+    }
+    else
+    { /* log a debug message if the event was processed but not ready to publish */
+      ESP_LOGD(TAG, "[PRODUCER] GPIO event ignored: not ready (sub=%u)", subIdx);
+    }
+    break;
+  }
+
+  case INPUT_CMD_CFG_CHANGE:
+    // future: reload producer flags, periods, etc.
+    break;
+
+  case INPUT_CMD_INTERNAL_EVENT:
+    // future: operational alerts
+    break;
+
+  case INPUT_CMD_DEBOUNCE_TICK:
+    // probably unused now
+    break;
+
+  default:
+    ESP_LOGW(TAG, "Unknown input event: %d", cmd->type);
+    break;
   }
 }
 
 static void TaskProducer(void *pvParameters)
 {
+
+  /* Install ISR service */
+  initGpioIsrService();
+
   ESP_LOGI(TAG, "[RTOS] Producer task starting...");
 
   /* Block until TWAI driver is installed */
@@ -320,12 +436,30 @@ static void TaskProducer(void *pvParameters)
 
   ESP_LOGI(TAG, "[RTOS] Producer task started.");
 
-  attachGpioIsrInit(); /* Initialize GPIO ISR handlers */
+  /* Initialize GPIO ISR handlers */
+  attachGpioIsrInit();
+
+  /* Last time periodic messages were processed */
+  uint32_t lastPeriodicMs = millis();
 
   for (;;)
   {
-    managePeriodicMessages();      /* Publish periodic CAN messages */
-    vTaskDelay(pdMS_TO_TICKS(10)); /* 100 Hz producer tick */
+    inputCommandMsg_t cmd; /**< Input command message */
+
+    /* Wait up to 10 ms for an input command */
+    if (xQueueReceive(inputTaskQueue, &cmd, pdMS_TO_TICKS(10)) == pdTRUE)
+    {
+      /* Handle input command (GPIO event, cfg change, internal event, etc.) */
+      handleInputCommand(&cmd); /**< To be implemented separately */
+    }
+
+    /* Periodic producer work (~100 Hz) */
+    const uint32_t now = millis();
+    if ((now - lastPeriodicMs) >= 10U)
+    {
+      managePeriodicMessages(); /**< Existing periodic CAN producer */
+      lastPeriodicMs = now;
+    }
   }
 }
 

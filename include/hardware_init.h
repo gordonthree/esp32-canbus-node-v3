@@ -23,10 +23,18 @@
 #pragma once
 #include <stdint.h>
 #include "submodule_types.h"
+#include "submodule_factory.h"    /* generate internal sensor submodules */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+typedef struct {
+    uint8_t personalityId;
+    bool (*probeFn)(void);
+} discoveryEntry_t;
+
+
 
 /* --------------------------------------------------------------------------
  *  Public Dispatcher
@@ -47,6 +55,10 @@ void initHardware(uint8_t index, subModule_t* sub);
 
 /** @brief Initialize all submodule hardware */
 void initNodeHardware(void);
+
+/** @brief Probe for internal submodules */
+void discoverInternalSubmodules(void);
+
 
 #ifdef __cplusplus
 }

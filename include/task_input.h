@@ -29,7 +29,6 @@
 
 void startTaskInput();
 
-void enqueueInputCmd(InputCmdType_t type,
+void enqueueInputCmd(inputCommand_t type,
                      uint8_t        index,
-                     uint8_t        edge,
                      uint32_t       timestamp);

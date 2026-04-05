@@ -70,7 +70,7 @@ static void setSwMomDur(can_msg_t *msg)
 {
   const uint8_t switchID = msg->data[4]; /* switch ID */
   const uint8_t momDur = msg->data[5];   /* momentary duration */
-  if (!nodeIsValidSubmodule(switchID))
+  if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
 
   subModule_t *sub = nodeGetSubModule(switchID); /* get submodule reference */

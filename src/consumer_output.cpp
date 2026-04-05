@@ -13,7 +13,7 @@ static void setSwBlinkDelay(can_msg_t *msg)
 {
   const uint8_t switchID = msg->data[4]; /* switch ID */
   const uint8_t freq = msg->data[5];     /* blink delay */
-  if (!nodeIsValidSubmodule(switchID))
+  if (SUBMODULE_INDEX_INVALID(switchID))
     return;                                      /* invalid switch ID */
   subModule_t *sub = nodeGetSubModule(switchID); /* get submodule reference */
 
@@ -33,7 +33,7 @@ static void setSwStrobePat(can_msg_t *msg)
   const uint8_t switchID = msg->data[4];  /* switch ID */
   const uint8_t strobePat = msg->data[5]; /* strobe pattern */
 
-  if (!nodeIsValidSubmodule(switchID))
+  if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
 
   subModule_t *sub = nodeGetSubModule(switchID); /* get submodule reference */
@@ -55,7 +55,7 @@ static void setPWMDuty(can_msg_t *msg)
   const uint8_t switchID = msg->data[4];         /* switch ID */
   double pwmDuty = (double)(msg->data[5] * 1.0); /* pwm duty from master */
 
-  if (!nodeIsValidSubmodule(switchID))
+  if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
 
   pwmDuty = (double)(pwmDuty / 100.0);             /* convert to decimal */
@@ -80,7 +80,7 @@ static void setPWMFreq(can_msg_t *msg)
   const uint8_t switchID = msg->data[4]; /* switch ID */
   const uint8_t pwmFreq = msg->data[5];  /* pwm frequency index*/
 
-  if (!nodeIsValidSubmodule(switchID))
+  if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
 
   /* Calculate working frequency */
@@ -109,7 +109,7 @@ static void setSwitchMode(can_msg_t *msg)
   const uint8_t switchID = msg->data[4];   /* switch ID */
   const uint8_t switchMode = msg->data[5]; /* switch mode */
 
-  if (!nodeIsValidSubmodule(switchID))
+  if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
 
   subModule_t *sub = nodeGetSubModule(switchID); /* get submodule reference */
@@ -170,7 +170,7 @@ static void setSwitchState(can_msg_t *msg, uint8_t swState)
 
   const uint8_t switchID = msg->data[4]; /* switch ID */
 
-  if (!nodeIsValidSubmodule(switchID))
+  if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
 
   subModule_t *sub = nodeGetSubModule(switchID); /* get submodule reference */

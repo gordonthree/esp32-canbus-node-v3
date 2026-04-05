@@ -29,32 +29,29 @@ static void TaskInput(void *pvParameters);
 
 static void processGpioEvent(uint8_t subIdx, uint8_t raw)
 {
-  if (subIdx < 0 || subIdx >= MAX_SUB_MODULES)
+  // ESP_LOGD(TAG, "subIdx=%u raw=%u", subIdx, raw);
+  if (SUBMODULE_INDEX_INVALID(subIdx))
     return;
 
-  subModule_t *sub = nodeGetSubModule(subIdx);                                 /**< pointer to the submodule */
-  const personalityDef_t *p = 
-    nodeGetPersonality(sub->personalityIndex);       /**< pointer to the personality definition */
-  const uint8_t pinNum = p->gpioPin;                                           /**< GPIO pin number */
+  subModule_t *sub = nodeGetSubModule(subIdx); /**< pointer to the submodule */
+  const personalityDef_t *p =
+      nodeGetPersonality(sub->personalityIndex); /**< pointer to the personality definition */
+  const uint8_t pinNum = p->gpioPin;             /**< GPIO pin number */
 
   /** Test for invalid pin number */
   if (pinNum >= GPIO_NUM_MAX)
     return;
 
-  /** Test if ISR is enabled for this pin */
-  if (!isrGpioIsEnabled((gpio_num_t)pinNum))
-    return;
-
-  ESP_LOGI(TAG, "sub=%u pin=%u raw=%u", subIdx, pinNum, raw);
+  ESP_LOGD(TAG, "sub=%u pin=%u raw=%u", subIdx, pinNum, raw);
 
   const gpio_num_t pin = (gpio_num_t)pinNum; /**< GPIO pin */
   const uint32_t now = millis();             /**< timestamp in ms */
 
-  const uint8_t debounceMs = sub->config.gpioInput.debounce_ms;
-  const uint8_t flags = sub->config.gpioInput.flags;
+  const uint8_t debounceMs   = sub->config.gpioInput.debounce_ms;
+  const uint8_t flags        = sub->config.gpioInput.flags;
 
   const inputModeType_t mode = (inputModeType_t)INPUT_FLAG_GET_MODE(flags);
-  const inputInvert_t inv = (inputInvert_t)INPUT_FLAG_GET_INV(flags);
+  const inputInvert_t inv    = (inputInvert_t)INPUT_FLAG_GET_INV(flags);
 
   /* Apply inversion */
   const uint8_t value = inv ? !raw : raw; /**< Invert raw value if requested, store as output value */
@@ -68,7 +65,9 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
            isrGpioGetRaw((gpio_num_t)pinNum),
            isrGpioGetLastChange((gpio_num_t)pinNum));
 
-  ESP_LOGV(TAG, "[DEBOUNCE] now=%u lastChange=%u diff=%u debounceMs=%u",
+  ESP_LOGD(TAG, "[DEBOUNCE] sub=%u mode=%u now=%u lastChange=%u diff=%u debounceMs=%u",
+           subIdx,
+           mode,
            now,
            isrGpioGetLastChange((gpio_num_t)pinNum),
            now - isrGpioGetLastChange((gpio_num_t)pinNum),
@@ -170,10 +169,11 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
   } /* end of mode switch */
 
   /* Enqueue input event */
-  enqueueInputCmd(INPUT_CMD_ISR_EDGE,
-                subIdx,
-                value,      // or raw, depending on your semantics
-                now);
+  ESP_LOGD(TAG, "\n[INPUT-ENQUEUE] sub=%u valueU32=%u\n", subIdx, sub->runTime.valueU32);
+  enqueueInputCmd(
+      INPUT_CMD_GPIO_EVENT, /* this is a GPIO event */
+      subIdx, /* submodule index */
+      now);
 
 } /* end of processGpioEvent() */
 
@@ -209,15 +209,13 @@ void startTaskInput()
       &xInputHandle);
 }
 
-void enqueueInputCmd(InputCmdType_t type,
+void enqueueInputCmd(inputCommand_t type,
                      uint8_t index,
-                     uint8_t edge,
                      uint32_t timestamp)
 {
-  InputCmd_t cmd = {
+  inputCommandMsg_t cmd = {
       .type = type,
       .index = index,
-      .edge = edge,
       .timestamp = timestamp};
 
   xQueueSend(inputTaskQueue, &cmd, 0);

@@ -1,0 +1,19 @@
+bool isPartB = (msgData[4] & 0x80) != 0;
+uint8_t subIdx = msgData[4] & 0x7F;
+
+if (!isPartB) {
+    // Part A
+    rawConfig[0] = msgData[5];
+    rawConfig[1] = msgData[6];
+    rawConfig[2] = msgData[7];
+} else {
+    // Part B
+    uint32_t packed =
+        ((uint32_t)msgData[5] << 16) |
+        ((uint32_t)msgData[6] << 8)  |
+        ((uint32_t)msgData[7]);
+
+    dataMsgId   = (packed >> 13) & 0x7FF;
+    dlc         = (packed >> 9)  & 0x0F;
+    flags       = (packed >> 1)  & 0xFF;
+}

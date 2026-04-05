@@ -35,7 +35,7 @@
 
 /* === FreeRTOS includes === */
 // #include <freertos/FreeRTOS.h>
-// #include <freertos/task.h>
+// #include <freertos/task.h> 
 
 /* === Local includes === */
 // #include "argb_hw.h"           /**< ARGB LED control */
@@ -114,7 +114,7 @@ static const char *TAG = "main";
 
 /* Connect node state functions to producer library callback table */
 static const producerCallbacks_t producerCB = {
-    .getSubModuleCount = nodeGetSubModuleCount,
+    .getSubModuleCount = nodeGetActiveSubModuleCount,
     .getSubModule = nodeGetSubModule,
     .getRuntime = nodeGetRuntime};
 
@@ -397,6 +397,8 @@ void setup()
     //   espcyd_set_backlight_callback(handleHardwarePwm);
 #endif
 
+    delay(2500);
+    
     /* setup serial port */
     Serial.begin(115200);
     Serial.setDebugOutput(true);
@@ -451,10 +453,10 @@ void setup()
     router_set_crc_callback(crc16_ccitt);
 
     /* Install ISR service */
-    initGpioIsrService();
+    // initGpioIsrService();
 
     /* Attach GPIO ISR handlers */
-    attachGpioIsrInit();
+    // attachGpioIsrInit();
 
 #ifdef ESP32CYD
     /* Initialize CYD interface */
@@ -527,12 +529,12 @@ void loop()
 
         const uint32_t isrCnt = isrGetCounter();
 
-        int lvl = gpio_get_level(GPIO_NUM_39);
-        // gpio_int_type_t t = gpio_get_intr_type(GPIO_NUM_39);
-        Serial.printf("millis=%u level=%d  ISR=%u \n",
-                      millis(),
-                      gpio_get_level(GPIO_NUM_39),
-                      isrCnt);
+        // int lvl = gpio_get_level(GPIO_NUM_39);
+        // // gpio_int_type_t t = gpio_get_intr_type(GPIO_NUM_39);
+        // Serial.printf("millis=%u level=%d  ISR=%u \n",
+        //               millis(),
+        //               gpio_get_level(GPIO_NUM_39),
+        //               isrCnt);
 
         // print_raw_gpio_register(GPIO_NUM_39);
     }

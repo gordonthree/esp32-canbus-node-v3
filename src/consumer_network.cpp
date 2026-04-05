@@ -1,6 +1,7 @@
 #include "consumer_handler.h"
 #include "byte_conversion.h"
 #include "storage.h" /* NVS storage routines */
+#include "submodule_factory.h" /* Create and cleanup submodules */
 #include "esp_log.h"
 
 static const char *TAG = "consumer_network";
@@ -121,9 +122,8 @@ void handleNetworkConfig(can_msg_t *msg)
         {
             if (nodeGetSubModule(i)->networkNodeId == remoteNode)
             {
-                removeSubmodule(i);
-                ESP_LOGI(TAG, "[CFG] Removed network submodule for node 0x%08lX",
-                         (unsigned long)remoteNode);
+                clearSubmodule(i);
+                ESP_LOGI(TAG, "[CFG] Cleared submodule at index %u", i);
                 break;
             }
         }

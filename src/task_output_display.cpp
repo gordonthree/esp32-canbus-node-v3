@@ -2,6 +2,10 @@
 #include "task_output_gpio.h"      // calls into electrical backend
 #include "task_output_tracker.h"   // future: flash/strobe integration
 
+#include "esp_log.h"
+
+static const char* TAG = "output_display";
+
 /* --------------------------------------------------------------------------
  * Display semantic layer
  * This file interprets display modes and maps them to electrical actions.
@@ -10,6 +14,11 @@
 
 void displayApplyMode(uint8_t index, uint32_t mode)
 {
+    if (SUBMODULE_INDEX_INVALID(index))
+        {
+            ESP_LOGW(TAG, "Invalid sub module index %d", index);
+            return;
+        }
     subModule_t *sub = nodeGetSubModule(index);
     const personalityDef_t *p = nodeGetPersonality(sub->personalityIndex);
 

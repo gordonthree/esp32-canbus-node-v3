@@ -152,83 +152,141 @@ void sendRouteList()
  */
 void sendIntroduction(int msgPtr) 
 {
+  if (!nodeStateIsInitialized()) {
+    ESP_LOGW(TAG, "[PRODUCER] sendIntroduction called before node is initialized");
+    return;
+  }
+
   uint8_t  msgData[CAN_MAX_DLC];
 
   uint32_t currentTick       = millis();
-  uint32_t txMsgDLC          = CAN_MAX_DLC; /* Default to 8 bytes */
-  uint16_t txMsgID           = nodeGetNodeType();
+  uint32_t txMsgDLC          = CAN_MAX_DLC; /* Initialize to 8 bytes */
+  uint16_t txMsgID           = 0;           /* Zero-initialize */
 
-  bool     FLAG_VALID_CONFIG = nodeGetValidConfig();
-  const nodeInfo_t* node     = nodeGetInfo();
+  bool  validConfig          = nodeGetValidConfig();
+  const uint8_t subModCnt    = nodeGetActiveSubModuleCount();
+  const uint32_t nodeID      = nodeGetNodeID();
 
-  memset(&msgData, 0, sizeof(msgData)); /* wipe the buffer before using it */
+  memset(msgData, 0, sizeof(msgData)); /* wipe the buffer before using it */
 
   /* Consistent 32-bit Node ID across all intro frames */
-  packUint32ToBytes(nodeGetNodeID(), &msgData[0]);
+  packUint32ToBytes(nodeID, &msgData[0]);
 
-  ESP_LOGV("CAN", "TX INTRO: NODE 0x%08X SUBMODCNT %02u MSGPTR %d", node->nodeID, node->subModCnt, msgPtr);
+  ESP_LOGV(TAG, "[PRODUCER] TX INTRO: NODE 0x%08X SUBMODCNT %02u MSGPTR %d", nodeID, subModCnt, msgPtr);
 
-/* 0: Node Identity */
+/* Pointer 0: Send Node Identity */
   if (msgPtr == 0) {
-    // uint16_t txCrc = FLAG_VALID_CONFIG ? crc16_ccitt((const uint8_t*)&node, sizeof(node)) : CRC_INVALID_CONFIG;
-    
     /*  
      *  Check FLAG_VALID_CONFIG flag, if it is set send the CRC from a sanitized version 
      *  of the current nodeInfo_t struct. If the flag is not set send 0xFFFF 
      */
     const nodeInfo_t sanitized = makeSanitizedNodeInfo(nodeGetInfo());
-    const uint16_t txCrc       = FLAG_VALID_CONFIG
+    const uint16_t txCrc       = validConfig
           ? crc16_ccitt((const uint8_t*)&sanitized, sizeof(sanitized))
           : CRC_INVALID_CONFIG;
 
 
     txMsgID                    = nodeGetNodeType();
-    msgData[4]                 = nodeGetSubModuleCount();
+    msgData[4]                 = nodeGetActiveSubModuleCount();
     msgData[5]                 = (uint8_t)(txCrc >> 8);
     msgData[6]                 = (uint8_t)(txCrc);
 
-    ESP_LOGV("CAN", "TX INTRO: NODE 0x%08X SUBMODCNT %02u (Type: 0x%03X, CRC: 0x%04X)", node->nodeID, msgData[4], txMsgID, txCrc);
+    ESP_LOGV(TAG, "[PRODUCER] TX INTRO: NODE 0x%08X SUBMODCNT %02u (Type: 0x%03X, CRC: 0x%04X)", nodeID, msgData[4], txMsgID, txCrc);
   }
-/* >0: Sub-module Identity (Part A and Part B) */
+/* Pointer advanced past 0: Send Sub-module Identity (Part A and Part B) */
   else {
     uint8_t modIdx = (uint8_t)((msgPtr - 1) / 2); /**< Map ptr to sub-module index */
-    bool isPartB   = ((msgPtr - 1) % 2) != 0;      /**< Alternate A/B sequence */
+    bool isPartB   = ((msgPtr - 1) % 2) != 0;     /**< Alternate A/B sequence */
+
+    /* Skip if the sub-module is a network node */
+    if (nodeIsNetworkSubmodule(modIdx)) {
+        ESP_LOGD(TAG, "[PRODUCER] TX INTRO: Skipping network sub-module %d", modIdx);
+        return;
+    }
+
+    /* Pointer to the sub-module */
+    const subModule_t* sub = nodeGetActiveSubModule(modIdx);
+    if (sub == NULL) {
+        ESP_LOGE(TAG, "[PRODUCER] TX INTRO: Invalid sub-module index %d", modIdx);
+        return;
+    }
+
+    /* Pointer to the personality definition for this sub-module */
+    const personalityDef_t* p = nodeGetActivePersonality(sub->personalityIndex); 
+    if (p == NULL) {
+        ESP_LOGE(TAG, "[PRODUCER] TX INTRO: invalid Personality index %d", sub->personalityIndex);
+        return;
+    }
+
+    /* 
+     * Make sure dataMsgId is set to a valid value 
+     * 0x100 - 0x6FF is the valid range for data messages */
+    uint16_t dataMsgId  = p->dataMsgId;
+    if (dataMsgId < 0x100 || dataMsgId > 0x6FF) {
+      dataMsgId  = SW_MOM_PRESS_ID;
+    }
     
-    if (modIdx >= node->subModCnt) return;
-    const subModule_t& sub    = *nodeGetSubModule(modIdx);
-    const personalityDef_t* p = &runtimePersonalityTable[sub.personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+    /* Make sure DLC is set to a valid value */
+    uint8_t  dataMsgDlc = p->dataMsgDlc; 
+    if (dataMsgDlc < CAN_NODE_ID_LEN ||
+        dataMsgDlc > CAN_MAX_DLC) {
+      dataMsgDlc = CAN_MAX_DLC;
+    }
 
-    const uint16_t dataMsgId  = p->dataMsgId;
-    const uint8_t  dataMsgDlc = p->dataMsgDlc; 
 
-    txMsgID                   = sub.introMsgId;
+    /* Make sure txaMsgID is valid */
+    txMsgID                   = sub->introMsgId;
+    if (txMsgID < 0x700 || txMsgID > 0x77F) { /* 0x700 - 0x77F are reserved for sub-modules */
+      txMsgID = OUT_GPIO_DIGITAL_ID; /* default to GPIO output type */
+    }
+
 
     if (!isPartB) {
         /* Part A: Configuration Data */
         msgData[4] = modIdx; /**< bits 0-6: index, bit 7: 0 (Part A) */
-        msgData[5] = sub.config.rawConfig[0];
-        msgData[6] = sub.config.rawConfig[1];
-        msgData[7] = sub.config.rawConfig[2];
+        msgData[5] = sub->config.rawConfig[0];
+        msgData[6] = sub->config.rawConfig[1];
+        msgData[7] = sub->config.rawConfig[2];
     } else {
         /* Part B: Telemetry/Operational Data */
-        msgData[4] = modIdx | SUBMOD_PART_B_FLAG; /**< Set bit 7 to indicate Part B */
-        msgData[5] = (uint8_t)(dataMsgId >> 8);
-        msgData[6] = (uint8_t)(dataMsgId);
-        /* Pack DLC (4 bits) and SaveState (1 bit) into byte 7 */
-        msgData[7] = (dataMsgDlc & 0x0F) | (sub.submod_flags ? SUBMOD_PART_B_FLAG : 0x00);
-    }
+        uint32_t packed = 0; /* zero-initialize */
+
+        /* bits 23–13: 11‑bit dataMsgId */
+        packed |= ((uint32_t)dataMsgId & 0x7FF) << 13; /* shift 13 bits */
+
+        /* bits 12–9: 4‑bit DLC */
+        packed |= ((uint32_t)dataMsgDlc & 0x0F) << 9; /* shift 9 bits */
+
+        /* bits 8–1: full 8‑bit submod_flags */
+        packed |= ((uint32_t)sub->submod_flags & 0xFF) << 1; /* shift 1 bit */
+
+        /* bit 0: unused (0) — we no longer need it */
+        
+
+        /* Write into bytes 5–7 */
+        msgData[5] = (packed >> 16) & 0xFF;
+        msgData[6] = (packed >> 8)  & 0xFF;
+        msgData[7] = (packed)       & 0xFF;
+
+        /* Submodule index with bit 7 = 1 for Part B */
+        msgData[4] = modIdx | 0x80;
+  
+      }
 
     if (txMsgID == 0) {
         return;  /* error condition, msg ID is invalid, exit the routine */
     }
 
-    ESP_LOGI(TAG, "TX INTRO: MOD 0x%03X at Idx %i (Cfg: %02X %02X %02X)",
-                  txMsgID, msgData[4], msgData[5], msgData[6], msgData[7]);
+    ESP_LOGD(TAG,
+    "TX INTRO: MOD 0x%03X at Idx %u Part %c (Data: %02X %02X %02X)",
+    txMsgID,
+    modIdx,
+    isPartB ? 'B' : 'A',
+    msgData[5], msgData[6], msgData[7]);
+
   }
   /* put the message on the bus */
   canEnqueueMessage(txMsgID, msgData, txMsgDLC);
-//   prepareMessage(txMsgID, msgData, txMsgDLC);
-
 } /* end sendIntroduction */
 
 

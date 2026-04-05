@@ -91,16 +91,17 @@ void setOutput(subModule_t *sub,
 
 void subOutHelper(const uint8_t index, const bool state)
 {
-    if (index < MAX_SUB_MODULES)
+    if (!nodeIsActiveSubmodule(index))
     {
-        subModule_t *sub = nodeGetSubModule(index);
-        const personalityDef_t* p = 
-            &runtimePersonalityTable[sub->personalityIndex];
-        if (p)
-        {
-            setOutput(sub, p, state);
-        }
+        ESP_LOGW(TAG, "Invalid sub module index %d", index);
+        return;
     }
+    
+    subModule_t *sub = nodeGetSubModule(index);
+    const personalityDef_t* p = 
+        &runtimePersonalityTable[sub->personalityIndex];
+
+    setOutput(sub, p, state);
 }
 
 

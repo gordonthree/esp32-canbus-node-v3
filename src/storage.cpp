@@ -3,7 +3,7 @@
 #include "can_producer.h"      /* CAN producer definitions */
 #include "esp_log.h"
 
-static const char *TAG     = "storage";
+static const char *TAG = "storage";
 static const char *TAG_HEX = "HEX DUMP";
 
 // Global mutex for NVS access (declared in main.cpp)
@@ -56,25 +56,56 @@ void printHexDump(const void *ptr, size_t size)
 /**
  * @brief Create a sanitized copy of a nodeInfo_t struct.
  * @details This function takes a nodeInfo_t struct as input and creates a new
- *          copy of the struct with all volatile fields such as
- *          lastSeen, valueU32, and last_published_value fields zeroed out.
+ *          copy of the struct with all volatile fields zeroed out. The function
+ *          also removes internal submodules. Finally, the function recomputes
+ *          the subModCnt field from scratch.
  * @param src Pointer to the nodeInfo_t struct to be sanitized.
  * @return A sanitized copy of the input nodeInfo_t struct.
  */
 nodeInfo_t makeSanitizedNodeInfo(const nodeInfo_t *src)
 {
-    /* copy the live nodeInfo_t struct */
+    /* copy the provided nodeInfo_t struct into working buffer */
     nodeInfo_t out = *src;
 
-    /* zero out the volatile fields */
+    /* loop through submodules */ 
     for (uint8_t i = 0; i < MAX_SUB_MODULES; i++)
     {
+        /* retrieve the personality index */
+        const uint8_t persIdx =
+            src->subModule[i].personalityIndex;
+
+        /* Skip unused entries */
+        if (persIdx == 0xFF) /* 0xFF indicates unused */
+            continue;
+
+        /* Get the personality definition */
+        const personalityDef_t *p =
+            nodeGetPersonality(persIdx);
+
+        /* for internal and network submodules,clear the entire
+           struct with 0xFF to indicate unused */
+        if (p->flags & ( BUILDER_FLAG_IS_INTERNAL ))
+        {
+            memset(&out.subModule[i], 0xFF, sizeof(subModule_t));
+            continue; /* skip to the next submodule */
+        }
+
+        /* zero out the volatile fields */
         out.subModule[i].lastSeen = 0;
-        out.subModule[i].runTime.last_change_ms = 0;
-        out.subModule[i].runTime.valueU32 = 0;
-        out.subModule[i].runTime.last_published_value = 0;
-        out.subModule[i].submod_flags &= ~SUBMOD_FLAG_DIRTY; /**< strip runtime-only dirty flag */
+        /* strip runtime-only dirty flag */
+        out.subModule[i].submod_flags &= ~SUBMOD_FLAG_DIRTY;
+        /* zero out the entire runTime struct */
+        memset(&out.subModule[i].runTime, 0, sizeof(runTime_t));
     }
+
+    /* Recompute subModCnt from scratch */
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < MAX_SUB_MODULES; i++)
+    {
+        if (out.subModule[i].personalityIndex != 0xFF)
+            count++;
+    }
+    out.subModCnt = count;
 
     return out;
 }
@@ -160,8 +191,16 @@ void saveRoutesToNVS()
  * @brief Load default subModule configuration from the static personality
  * library and initialize the node configuration.
  *
- * Internal personalities represent node hardware (CPU temp, heap, etc.)
- * and must be instantiated as submodules at boot.
+ * @details This function loads physical hardware submodules from the hardware 
+ * personality table. This table remains the authoritative definition of the 
+ * node's physical capabilities (GPIOs, ADCs, PWM, sensors, etc.).
+ *
+ * Older hardware tables may also include internal (non-physical) personalities.
+ * Support for internal personalities in the hardware table is deprecated, but
+ * retained for backward compatibility. New internal submodules should be added
+ * via the discovery system instead.
+ * 
+ * See hardware_init.h and personality_template.h for details.
  *
  */
 void loadNodeDefaults()
@@ -216,24 +255,24 @@ void loadNodeDefaults()
         subModule_t *sub = &node.subModule[node.subModCnt++];
         memset(sub, 0, sizeof(*sub));
 
-        sub->personalityId    = p->personalityId; /**< assign personality */
-        sub->personalityIndex = i;                /**< assign index */
+        sub->personalityId = p->personalityId; /**< assign personality */
+        sub->personalityIndex = i;             /**< assign index */
 
         /**  internal submodules usually have no user config */
         memset(sub->config.rawConfig, 0, sizeof(sub->config.rawConfig));
 
         // Use personality table for CAN reporting
-        sub->introMsgId  = p->introMsgId;
+        sub->introMsgId = p->introMsgId;
         sub->introMsgDLC = p->introMsgDlc;
 
         // Mark as internal
-        sub->submod_flags   |= SUBMOD_FLAG_INTERNAL;
+        sub->submod_flags |= SUBMOD_FLAG_INTERNAL;
 
         // Wiring into Producer and enable publishing
         sub->producer_flags |= PRODUCER_FLAG_PUBLISH_ENABLED | PRODUCER_FLAG_ACTIVE;
 
         // Producer defaults
-        sub->producer_kind      = PRODUCER_KIND_PERIODIC;
+        sub->producer_kind = PRODUCER_KIND_PERIODIC;
         sub->producer_period_ms = p->period_ms; /* 10 seconds */
     }
 
@@ -463,84 +502,6 @@ ConfigStatus loadConfigNvs(nodeInfo_t &node)
     return CFG_OK;
 }
 
-/* ============================================================================
- *  SUBMODULE MANAGEMENT API
- * ========================================================================== */
-
-int addSubmodule(const uint8_t personalityId,
-                 const uint8_t *configBytes,
-                 size_t configLength)
-{
-    nodeInfo_t &node = *nodeGetInfo();
-
-    /* Bounds check: personalityId must exist */
-    if (personalityId >= PERSONALITY_MAX)
-    {
-        return -1;
-    }
-
-    /* Bounds check: no room left */
-    if (node.subModCnt >= MAX_SUB_MODULES)
-    {
-        return -1;
-    }
-
-    /* Find the first empty slot */
-    int index = -1;
-    for (int i = 0; i < MAX_SUB_MODULES; i++)
-    {
-        if (node.subModule[i].personalityIndex == 0xFF)
-        { // or however "empty" is defined
-            index = i;
-            break;
-        }
-    }
-
-    if (index < 0)
-    {
-        return -1; // no free slot
-    }
-
-    /* Retrieve the personality template */
-    const personalityDef_t *p = &templateTable[personalityId];
-
-    /* Initialize the new submodule */
-    subModule_t *sub = &node.subModule[index];
-    memset(sub, 0, sizeof(subModule_t));
-
-    /* Set the personality index equal to the template id */
-    sub->personalityIndex = personalityId;
-
-    /* Copy rawConfig (3 bytes max) */
-    size_t copyLen = (configLength > 3) ? 3 : configLength;
-    memcpy(sub->config.rawConfig, configBytes, copyLen);
-
-    /* Initialize network fields if CAP_NETWORK is set */
-    if (p->capabilities & CAP_NETWORK)
-    {
-        /* Expecting configBytes to contain a 32-bit nodeID */
-        if (configLength >= 4)
-        {
-            sub->networkNodeId =
-                ((uint32_t)configBytes[0] << 24) |
-                ((uint32_t)configBytes[1] << 16) |
-                ((uint32_t)configBytes[2] << 8) |
-                ((uint32_t)configBytes[3]);
-        }
-
-        sub->lastSeen = 0;                                 /* zero timestamp */
-        memset(sub->netConfig, 0, sizeof(sub->netConfig)); /* clear network config */
-    }
-
-    /* Mark runtime flags */
-    sub->submod_flags = SUBMOD_FLAG_DIRTY;
-
-    /* Increment count */
-    node.subModCnt++;
-
-    return index;
-}
-
 /**
  * @brief Attempts to load the configuration from NVS.
  *
@@ -611,39 +572,6 @@ void handleReadCfgNVS()
 
     const uint64_t loadTime = (uint64_t)esp_timer_get_time() - startTime;
     ESP_LOGI(TAG, "[NVS] Config load took %d ms", (loadTime / 1000));
-}
-
-bool removeSubmodule(const uint8_t index)
-{
-    if (index >= MAX_SUB_MODULES)
-    {
-        return false;
-    }
-
-    nodeInfo_t &node = *nodeGetInfo();
-
-    /* If the slot is already empty, nothing to do */
-    if (node.subModule[index].personalityIndex == 0xFF)
-    {
-        return false;
-    }
-
-    /* Shift remaining submodules down to keep table contiguous */
-    for (int i = index; i < (node.subModCnt - 1); i++)
-    {
-        node.subModule[i] = node.subModule[i + 1];
-    }
-
-    /* Clear the last entry */
-    memset(&node.subModule[node.subModCnt - 1], 0xFF, sizeof(subModule_t));
-
-    /* Decrement count */
-    node.subModCnt--;
-
-    /* Persist to NVS */
-    // saveSubmodulesToNVS();
-
-    return true;
 }
 
 bool nodeGetValidConfig(void)

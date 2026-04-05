@@ -7,27 +7,47 @@
 #include "personality_table.h" /**< Node and sub-module personality table */
 // #include "consumer.h"          /**< CAN consumer routines and constants */
 
-/* ============================================================================
- *  GLOBAL VARIABLES
- * ============================================================================ */ 
-
-
-
-
-/* ============================================================================ */
-/*  NODE STATE API
- * ============================================================================ */
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/* ============================================================================
+ *  GLOBAL VARIABLES, CONSTANTS and MACROS
+ * ============================================================================ */ 
+
+ #define FOR_EACH_ACTIVE_SUBMODULE(i, sub) \
+    for (uint8_t i = 0; i < MAX_SUB_MODULES; i++) \
+        for (subModule_t *sub = nodeGetSubModule(i); \
+             sub->personalityIndex != 0xFF; \
+             sub = NULL)
+
+#define SUBMODULE_IS_ACTIVE(idx) \
+    ((idx) < MAX_SUB_MODULES && \
+     nodeGetSubModule(idx)->personalityIndex != 0xFF)
+
+#define SUBMODULE_INDEX_INVALID(idx) \
+    ((idx) >= MAX_SUB_MODULES)
+
+#define PERSONALITY_IS_ACTIVE(idx) \
+    ((idx) < MAX_RUNTIME_PERSONALITIES && \
+     nodeGetPersonality(idx)->personalityId != 0xFF)
+
+#define PERSONALITY_INDEX_INVALID(idx) \
+    ((idx) >= MAX_RUNTIME_PERSONALITIES)
+
+/* ============================================================================ */
+/*  NODE STATE API
+ * ============================================================================ */
+
 /* Node state accessor functions */
 nodeInfo_t*    nodeGetInfo();
 subModule_t*   nodeGetSubModule(const uint8_t sub_idx);
+subModule_t*   nodeGetActiveSubModule(const uint8_t sub_idx);
 runTime_t*     nodeGetRuntime(const uint8_t sub_idx);
-uint8_t        nodeGetSubModuleCount(void);
+uint8_t        nodeGetActiveSubModuleCount(void);
+void           nodeIncSubModuleCount(void);
+bool           nodeStateIsInitialized(void);
 
-const personalityDef_t* nodeGetPersonality(uint8_t personalityIndex);
 
 /* Utility functions */
 uint32_t nodeGetNodeID(void);
@@ -36,8 +56,16 @@ void nodePrintStructInfo(void) ;
 void nodeReadMacAddress(void); 
 void nodeInit(void);
 
+/* Personality functions */
+const personalityDef_t* nodeGetPersonality(uint8_t personalityIndex);
+const personalityDef_t *nodeGetActivePersonality(uint8_t personalityIndex);
+uint8_t                 nodeGetActivePersonalityCount(void);
+bool nodeIsValidPersonality(uint8_t personalityIndex);
+bool nodeIsActivePersonality(uint8_t personalityIndex);
+
 /* Validity accessor functions */
 bool nodeIsValidSubmodule(uint8_t index);
+bool nodeIsActiveSubmodule(uint8_t index);
 
 /* CRC accessor functions */
 uint16_t       nodeGetCRC();
@@ -51,14 +79,30 @@ void nodeSetProducerFlags(const uint8_t sub_idx, uint8_t flags);
 void nodeSetSubmodFlags(const uint8_t sub_idx, uint8_t flags);
 void nodeSetRouterFlags(const uint8_t sub_idx, uint8_t flags);
 
-/** UPDATED: Return true if the submodule has the input flag set */
+/** @brief Return true if the submodule has the input flag set */
 inline bool nodeIsInputSubmodule(uint8_t sub_idx)
 {
-    const subModule_t* sub = nodeGetSubModule(sub_idx);
+    const subModule_t* sub = nodeGetActiveSubModule(sub_idx);
     if (!sub)
         return false;
 
     return (sub->submod_flags & SUBMOD_FLAG_INPUT) != 0;  /**< true if input role */
+}
+
+inline bool nodeIsNetworkSubmodule(uint8_t sub_idx)
+{
+    /* get a safe pointer for the sub-module */
+    const subModule_t* sub = nodeGetActiveSubModule(sub_idx);
+    if (!sub)
+        return false;
+
+    /* get a safe pointer for the personality */
+    const personalityDef_t* pers = nodeGetActivePersonality(sub->personalityIndex);
+    if (!pers)
+        return false;
+
+    /* return true if the sub-module is a network node */
+    return (pers->flags & BUILDER_FLAG_IS_NETWORK_NODE) != 0;
 }
 
 /* ============================================================================
