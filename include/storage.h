@@ -13,7 +13,7 @@
 
 #define ROUTER_VERSION        (2U)
 #define PRODUCER_VERSION      (2U)
-#define NODEINFO_VERSION      (4U)
+#define NODEINFO_VERSION      (5U)
 
 #ifndef IGNORE_CRC_ERROR
 #define IGNORE_CRC_ERROR false

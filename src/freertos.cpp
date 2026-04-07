@@ -54,7 +54,7 @@ void freeRtosInit()
 {
     /* Initialize message queues */
     canMsgTxQueue   = xQueueCreate(CAN_TX_QUEUE_LEN, sizeof(twai_message_t));
-    canMsgRxQueue   = xQueueCreate(CAN_RX_QUEUE_LEN, sizeof(can_msg_t));
+    canMsgRxQueue   = xQueueCreate(INPUT_TASK_QUEUE_LEN, sizeof(can_msg_t));
     outputTaskQueue = xQueueCreate(OUTPUT_TASK_QUEUE_LEN, sizeof(OutputCmd_t));
     inputTaskQueue  = xQueueCreate(INPUT_TASK_QUEUE_LEN, sizeof(inputCommandMsg_t));
     gpioEventQueue  = xQueueCreate(GPIO_EVENT_QUEUE_LEN, sizeof(gpio_event_t));

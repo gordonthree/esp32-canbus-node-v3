@@ -35,7 +35,7 @@ int addSubmodule(
  * @return True if the sub-module was cleared successfully, false otherwise.
  */
 bool clearSubmodule(const uint8_t index);
-
+void clearPersonalitySlot(const uint8_t idx);
 #ifdef __cplusplus
 }
 #endif

@@ -7,26 +7,26 @@ static const char *TAG = "submod_factory";
 static void factoryAddInternal(subModule_t *sub);
 
 static void factoryAddNetwork(subModule_t *sub,
-                             const uint8_t *configBytes,
-                             size_t configLength);
+                              const uint8_t *configBytes,
+                              const size_t configLength);
 
 static int factoryFindFreeSubmoduleSlot(void);
-static int factoryValidatePersonality(uint8_t personalityId);
+static int factoryValidatePersonality(const uint8_t personalityId);
 /* ============================================================================
  *  PRIVATE FUNCTIONS
  * ========================================================================== */
 
 /**
- * @brief Validate personalityId 
+ * @brief Validate personalityId
  *
  * @param personalityId  Template personality ID to validate.
  * @return int  Index of a free submodule slot, or -1 on error.
  */
-static int factoryValidatePersonality(uint8_t personalityId)
+static int factoryValidatePersonality(const uint8_t personalityId)
 {
     nodeInfo_t *node = nodeGetInfo();
 
-    /* Validate personality ID */
+    /* Validate personality ID is in-range */
     if (personalityId >= PERSONALITY_MAX)
     {
         ESP_LOGW(TAG, "[FACTORY] Invalid personality ID: %u", personalityId);
@@ -46,7 +46,7 @@ static int factoryValidatePersonality(uint8_t personalityId)
     const int freeSlot = factoryFindFreeSubmoduleSlot();
     if (freeSlot >= 0)
     {
-        ESP_LOGD(TAG, "[FACTORY] Found free sub-module slot: %d", freeSlot);
+        ESP_LOGV(TAG, "[FACTORY] Found free sub-module slot: %d", freeSlot);
         return freeSlot;
     }
 
@@ -55,7 +55,7 @@ static int factoryValidatePersonality(uint8_t personalityId)
 }
 
 /** Add internal-type specific fields to the sub-module */
- static void factoryAddInternal(subModule_t *sub)
+static void factoryAddInternal(subModule_t *sub)
 {
 
     /* Get pointer to the personality definition for this sub-module */
@@ -65,16 +65,19 @@ static int factoryValidatePersonality(uint8_t personalityId)
     sub->introMsgId = p->introMsgId;
     sub->introMsgDLC = p->introMsgDlc;
 
+    /* Set default flags, the user can change these during runtime if desired */
+    sub->submod_flags |= SUBMOD_FLAG_INTERNAL | SUBMOD_FLAG_READ_ONLY;
+
     /* Get default producer period_ms from personality definition */
     const uint16_t period_ms = p->period_ms;
 
     /* validate period_ms */
     if (period_ms == PRODUCER_PERIOD_DISABLED)
     {
-        /* 0 == do not publish, assign safe default rate */
-        sub->producer_period_ms = PRODUCER_PERIOD_1000MS; 
-        /* active but not enabled */ 
-        sub->producer_flags = PRODUCER_FLAG_ACTIVE; 
+        /* publishing disabled, still assign safe default rate */
+        sub->producer_period_ms = PRODUCER_PERIOD_1000MS;
+        /* active but not enabled */
+        sub->producer_flags = PRODUCER_FLAG_ACTIVE;
     }
     else if (period_ms >= PRODUCER_PERIOD_10MS) /* period >= 10ms */
     {
@@ -82,38 +85,48 @@ static int factoryValidatePersonality(uint8_t personalityId)
         sub->producer_flags = PRODUCER_FLAG_ACTIVE |
                               PRODUCER_FLAG_PUBLISH_ENABLED;
     }
-
+    else /* period < 10ms */
+    {
+        ESP_LOGW(TAG, "[FACTORY] Invalid producer period %u - using %u as default.", period_ms, PRODUCER_PERIOD_1000MS);
+        /* incorrect rate; assign a safe default rate */
+        sub->producer_period_ms = PRODUCER_PERIOD_1000MS;
+        sub->producer_flags = PRODUCER_FLAG_ACTIVE |
+                              PRODUCER_FLAG_PUBLISH_ENABLED;
+    }
 }
 
 static void factoryAddNetwork(subModule_t *sub,
-                             const uint8_t *configBytes,
-                             size_t configLength)
+                              const uint8_t *configBytes,
+                              const size_t configLength)
 {
 
     const personalityDef_t *p = nodeGetPersonality(sub->personalityIndex);
 
-    /* Copy rawConfig (3 bytes max) */
-    size_t copyLen = (configLength > 3) ? 3 : configLength;
-    memcpy(sub->config.rawConfig, configBytes, copyLen);
+    /* Set default flags, the user can change these and they will persist in NVS */
+    sub->submod_flags |= SUBMOD_FLAG_NETWORK;
 
-    /* Initialize network fields if CAP_NETWORK is set */
-    if (p->capabilities & CAP_NETWORK)
+    /* Expecting configBytes to contain a 32-bit nodeID */
+    if (configLength >= 4)
     {
-        /* Expecting configBytes to contain a 32-bit nodeID */
-        if (configLength >= 4)
-        {
-            sub->networkNodeId =
-                ((uint32_t)configBytes[0] << 24) |
-                ((uint32_t)configBytes[1] << 16) |
-                ((uint32_t)configBytes[2] << 8) |
-                ((uint32_t)configBytes[3]);
-        }
-
-        /* zero timestamp */
-        sub->lastSeen = 0;                                 
-        /* clear network config */
-        memset(sub->netConfig, 0, sizeof(sub->netConfig)); 
+        sub->networkNodeId =
+            ((uint32_t)configBytes[0] << 24) |
+            ((uint32_t)configBytes[1] << 16) |
+            ((uint32_t)configBytes[2] << 8) |
+            ((uint32_t)configBytes[3]);
     }
+
+    if (configLength >= 5)
+    {
+        sub->netConfig[0] = configBytes[4];
+    }
+
+    /* 3 more bytes are available in configBytes, reserved for future use */
+
+    /* zero timestamp - reserved for future use */
+    sub->lastSeen = 0;
+
+    /* Mark the sub-module as dirty so main saves it to NVS */
+    sub->submod_flags |= SUBMOD_FLAG_DIRTY;
 }
 
 /**
@@ -123,17 +136,17 @@ static void factoryAddNetwork(subModule_t *sub,
  */
 static int factoryFindFreeSubmoduleSlot(void)
 {
-    nodeInfo_t *node = nodeGetInfo();
+    const nodeInfo_t *node = nodeGetInfo();
 
     for (int i = 0; i < MAX_SUB_MODULES; i++)
     {
         if (node->subModule[i].personalityIndex == 0xFF)
         {
-            return i;   /* success */
+            return i; /* success */
         }
     }
 
-    return -1;  /* no free slot */
+    return -1; /* no free slot */
 }
 
 /* ============================================================================
@@ -158,10 +171,11 @@ int addSubmodule(const uint8_t personalityId,
                  size_t configLength)
 {
 
-    
     /* === VALIDATION CHECKS === */
+
+    /* validate personalityId and find a free slot */
     const int result = factoryValidatePersonality(personalityId);
-    
+
     if (result < 0) /* validation failed */
         return result;
 
@@ -170,30 +184,41 @@ int addSubmodule(const uint8_t personalityId,
 
     /* === INITIALIZATION === */
 
-    /* Initialize the new submodule */
+    /* Get pointer to the new submodule */
     subModule_t *sub = nodeGetSubModule(index);
-    memset(sub, 0, sizeof(subModule_t));
 
     /* retrieve a copy of the personality template */
-    personalityDef_t pTemplate = getPersonalityTemplate(personalityId);
+    personalityDef_t pTemplate =
+        getPersonalityTemplate(personalityId);
 
-    /* Find a free slot in the runtime personality table */
-    const int personalityResult = getFreePersonalitySlot();
-    if (personalityResult < 0)
-    {
-        ESP_LOGE(TAG, "[FACTORY] Failed to find free personality slot.");
+    /* validate template */
+    if (pTemplate.personalityId == PERS_NONE)
+    { /* template not found */
+        ESP_LOGE(TAG, "[FACTORY] Failed to find personality template.");
         return -1;
     }
-    const uint8_t freeSlot = (uint8_t)personalityResult;
 
-    /* Access personality table directly, for read-write access */
-    personalityDef_t *p = &runtimePersonalityTable[freeSlot];
+    /* Access runtime personality table directly for read-write access */
+    personalityDef_t *p = &runtimePersonalityTable[index];
+
+    /* Make sure the matching slot is free */
+    if (p->personalityId != 0xFF)
+    {
+        ESP_LOGE(TAG, "[FACTORY] Matching personality slot %u is not free.", index);
+        return -1;
+    }
+
+    /* initialize new submodule */
+    memset(sub, 0, sizeof(subModule_t));
 
     /* Copy template onto runtime table */
     *p = pTemplate;
 
-    /* Set the personality index equal to the template id */
-    sub->personalityIndex = freeSlot;
+    /* Update submodule personality index */
+    sub->personalityIndex = index;
+
+    /* Update submodule personality id */
+    sub->personalityId = p->personalityId;
 
     /*
      * Route to the correct helper function based on type
@@ -209,8 +234,8 @@ int addSubmodule(const uint8_t personalityId,
         factoryAddNetwork(sub, configBytes, configLength);
     }
 
-    /* Mark runtime flags for saving to NVS */
-    sub->submod_flags = SUBMOD_FLAG_DIRTY;
+    ESP_LOGI(TAG, "\n[FACTORY] Submodule added at index %u sub.pId: %u sub.pIdx: %u pers.pId: %u\n",
+             index, sub->personalityId, sub->personalityIndex, p->personalityId);
 
     /* Increment count */
     nodeIncSubModuleCount();
@@ -222,7 +247,7 @@ bool clearSubmodule(const uint8_t index)
 {
     if (index >= MAX_SUB_MODULES)
     {
-        ESP_LOGW(TAG, "[NVS] Submodule index %d out of range", index);
+        ESP_LOGW(TAG, "[FACTORY] Submodule index %d out of range", index);
         return false;
     }
 
@@ -231,16 +256,28 @@ bool clearSubmodule(const uint8_t index)
     /* If the slot is already empty, nothing to do */
     if (sub->personalityIndex == 0xFF)
     {
-        ESP_LOGW(TAG, "[NVS] Submodule index %d already clear", index);
-        return false;
+        ESP_LOGV(TAG, "[FACTORY] Submodule index %d already clear", index);
+        return true;
     }
 
-    /* Clear the last entry, clear the memory not the pointer */
+    /* Clear the submodule; clear the memory not the pointer */
     memset(sub, 0xFF, sizeof(subModule_t));
 
-    /* Persist to NVS, eventually */
-    sub->submod_flags |= SUBMOD_FLAG_DIRTY; 
+    /* Persist to NVS, eventually, overwrite the flag field */
+    sub->submod_flags = SUBMOD_FLAG_DIRTY;
 
-    ESP_LOGD(TAG, "[NVS] Submodule index %d cleared", index);
+    ESP_LOGD(TAG, "[FACTORY] Submodule index %d cleared", index);
     return true;
+}
+
+void clearPersonalitySlot(const uint8_t idx)
+{
+    if (idx >= MAX_RUNTIME_PERSONALITIES)
+    {
+        ESP_LOGW(TAG, "[FACTORY] Personality index %d out of range", idx);
+        return;
+    }
+
+    /* Clear the personality slot */
+    memset(&runtimePersonalityTable[idx], 0xFF, sizeof(personalityDef_t));
 }

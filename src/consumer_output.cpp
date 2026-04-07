@@ -2,23 +2,22 @@
 #include "esp_log.h"
 
 static const char *TAG = "consumer_output";
-static void setSwBlinkDelay(can_msg_t *msg);
-static void setSwStrobePat(can_msg_t *msg);
-static void setPWMDuty(can_msg_t *msg);
-static void setPWMFreq(can_msg_t *msg);
-static void setSwitchMode(can_msg_t *msg);
-static void setSwitchState(can_msg_t *msg, uint8_t swState);
+static void setSwBlinkDelay(can_msg_t *msg, subModule_t *sub);
+static void setSwStrobePat(can_msg_t *msg, subModule_t *sub);
+static void setPWMDuty(can_msg_t *msg, subModule_t *sub);
+static void setPWMFreq(can_msg_t *msg, subModule_t *sub);
+static void setSwitchMode(can_msg_t *msg, subModule_t *sub);
+static void setSwitchState(can_msg_t *msg, uint8_t swState, subModule_t *sub);
 
-static void setSwBlinkDelay(can_msg_t *msg)
+static void setSwBlinkDelay(can_msg_t *msg, subModule_t *sub)
 {
   const uint8_t switchID = msg->data[4]; /* switch ID */
   const uint8_t freq = msg->data[5];     /* blink delay */
   if (SUBMODULE_INDEX_INVALID(switchID))
-    return;                                      /* invalid switch ID */
-  subModule_t *sub = nodeGetSubModule(switchID); /* get submodule reference */
+    return;                         /* invalid switch ID */
 
   const personalityDef_t *p =
-      nodeGetPersonality(sub->personalityIndex); /* Pointer to the personality definition for this sub-module */
+      nodeGetActivePersonality(sub->personalityIndex); /* Pointer to the personality definition for this sub-module */
 
   sub->config.gpioOutput.param1 = freq; /* update blink delay */
   sub->runTime.valueU32 = freq;         /* update blink delay runtime */
@@ -28,7 +27,7 @@ static void setSwBlinkDelay(can_msg_t *msg)
   ESP_LOGI(TAG, "Blink Delay: %d Switch: %d", sub->config.gpioOutput.param1, switchID);
 }
 
-static void setSwStrobePat(can_msg_t *msg)
+static void setSwStrobePat(can_msg_t *msg, subModule_t *sub)
 {
   const uint8_t switchID = msg->data[4];  /* switch ID */
   const uint8_t strobePat = msg->data[5]; /* strobe pattern */
@@ -36,9 +35,8 @@ static void setSwStrobePat(can_msg_t *msg)
   if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
 
-  subModule_t *sub = nodeGetSubModule(switchID); /* get submodule reference */
-  sub->config.gpioOutput.param2 = strobePat;     /* update strobe pattern */
-  sub->runTime.valueU32 = strobePat;             /* update strobe pattern runtime */
+  sub->config.gpioOutput.param2 = strobePat; /* update strobe pattern */
+  sub->runTime.valueU32 = strobePat;         /* update strobe pattern runtime */
 
   /* Reset strobe hardware */
   enqueueOutputCmd(
@@ -50,7 +48,7 @@ static void setSwStrobePat(can_msg_t *msg)
   ESP_LOGI(TAG, "Strobe Pattern: %d Switch: %d", sub->config.gpioOutput.param2, switchID);
 }
 
-static void setPWMDuty(can_msg_t *msg)
+static void setPWMDuty(can_msg_t *msg, subModule_t *sub)
 {
   const uint8_t switchID = msg->data[4];         /* switch ID */
   double pwmDuty = (double)(msg->data[5] * 1.0); /* pwm duty from master */
@@ -62,7 +60,6 @@ static void setPWMDuty(can_msg_t *msg)
   pwmDuty = (double)(pwmDuty * LEDC_13BIT_100PCT); /* convert to LEDC duty cycle */
 
   /* Update runtime config */
-  subModule_t *sub = nodeGetSubModule(switchID);         /* get submodule reference */
   sub->config.gpioOutput.param2 = (uint8_t)msg->data[5]; /* store duty cycle percent */
   sub->runTime.valueU32 = (uint32_t)pwmDuty;             /* store duty cycle value in runtime */
 
@@ -75,7 +72,7 @@ static void setPWMDuty(can_msg_t *msg)
   ESP_LOGI(TAG, "PWM Duty: %d Switch: %d", pwmDuty, switchID);
 }
 
-static void setPWMFreq(can_msg_t *msg)
+static void setPWMFreq(can_msg_t *msg, subModule_t *sub)
 {                                        /* 0x118 */
   const uint8_t switchID = msg->data[4]; /* switch ID */
   const uint8_t pwmFreq = msg->data[5];  /* pwm frequency index*/
@@ -86,9 +83,8 @@ static void setPWMFreq(can_msg_t *msg)
   /* Calculate working frequency */
   uint32_t workingFreq = (uint32_t)(pwmFreq * PWM_SCALING_FACTOR);
 
-  subModule_t *sub = nodeGetSubModule(switchID); /* get submodule reference */
-  sub->config.gpioOutput.param1 = pwmFreq;       /* update pwm frequency index in config */
-  sub->runTime.valueU32 = workingFreq;           /* store full pwm frequency in runtime */
+  sub->config.gpioOutput.param1 = pwmFreq; /* update pwm frequency index in config */
+  sub->runTime.valueU32 = workingFreq;     /* store full pwm frequency in runtime */
 
   /* Queue hardware update */
   enqueueOutputCmd(
@@ -104,15 +100,13 @@ static void setPWMFreq(can_msg_t *msg)
  * @param msg The message containing the switch ID and mode
  *
  */
-static void setSwitchMode(can_msg_t *msg)
+static void setSwitchMode(can_msg_t *msg, subModule_t *sub)
 {                                          /* 0x112 */
   const uint8_t switchID = msg->data[4];   /* switch ID */
   const uint8_t switchMode = msg->data[5]; /* switch mode */
 
   if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
-
-  subModule_t *sub = nodeGetSubModule(switchID); /* get submodule reference */
 
   // TODO clearPwmHardware(switchID); /* in case it was previously PWM */
 
@@ -165,15 +159,13 @@ static void setSwitchMode(can_msg_t *msg)
  * @param msg The message containing the switch ID and state
  * @param swState The state of the switch (OUT_STATE_OFF, OUT_STATE_ON, OUT_STATE_MOMENTARY)
  */
-static void setSwitchState(can_msg_t *msg, uint8_t swState)
+static void setSwitchState(can_msg_t *msg, uint8_t swState, subModule_t *sub)
 { /* SET_SWITCH_STATE_ID */
 
   const uint8_t switchID = msg->data[4]; /* switch ID */
 
   if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
-
-  subModule_t *sub = nodeGetSubModule(switchID); /* get submodule reference */
 
   /* Pointer to the personality definition for this sub-module */
   const personalityDef_t *p =
@@ -265,38 +257,45 @@ void handleOutputCommands(can_msg_t *msg)
   if (blockLocalMsg(msg))
     return;
 
+  const uint8_t subIdx = msg->data[4]; /* byte 4 holds the sub module index */
+
+  subModule_t *sub = nodeGetActiveSubModule(subIdx);
+
+  if (!sub)
+    return;
+
   switch (msg->identifier)
   {
   case SW_SET_PWM_DUTY_ID: // set output switch pwm duty
-    setPWMDuty(msg);
+    setPWMDuty(msg, sub);
     break;
 
   case SW_SET_PWM_FREQ_ID: // set output switch pwm frequency
-    setPWMFreq(msg);
+    setPWMFreq(msg, sub);
     break;
 
   case SW_SET_MODE_ID: // setup output switch modes
-    setSwitchMode(msg);
+    setSwitchMode(msg, sub);
     break;
 
   case SW_SET_OFF_ID: // set output switch off
-    setSwitchState(msg, OUT_STATE_OFF);
+    setSwitchState(msg, OUT_STATE_OFF, sub);
     break;
 
   case SW_SET_ON_ID: // set output switch on
-    setSwitchState(msg, OUT_STATE_ON);
+    setSwitchState(msg, OUT_STATE_ON, sub);
     break;
 
   case SW_MOM_PRESS_ID: // set output switch momentary press
-    setSwitchState(msg, OUT_STATE_MOMENTARY);
+    setSwitchState(msg, OUT_STATE_MOMENTARY, sub);
     break;
 
   case SW_SET_BLINK_DELAY_ID: // set output switch blink delay
-    setSwBlinkDelay(msg);
+    setSwBlinkDelay(msg, sub);
     break;
 
   case SW_SET_STROBE_PAT_ID: // set output switch strobe pattern
-    setSwStrobePat(msg);
+    setSwStrobePat(msg, sub);
     break;
 
   default:

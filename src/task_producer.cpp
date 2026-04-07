@@ -29,18 +29,48 @@ static void readCydLdr();
 static void managePeriodicMessages();
 static void TaskProducer(void *pvParameters);
 static void handleInputCommand(inputCommandMsg_t *cmd);
+static void internalSubmoduleTick(uint32_t now);
+static void canHealthLog(const canHealth_t *h);
 
 /* =========================================================================
  *  Private functions
  * ========================================================================= */
+
+static void canHealthLog(const canHealth_t *h)
+{
+    ESP_LOGI("CANHEALTH",
+        "TEC:%d REC:%d BE:%d AL:%d RXmiss:%d RXovr:%d TXfail:%d "
+        "state:%d BOFF:%u EPASS:%u RST:%u RXfull:%u TXdrop:%u",
+        h->tx_error_count,
+        h->rx_error_count,
+        h->bus_error_count,
+        h->arb_lost_count,
+        h->rx_missed_count,
+        h->rx_overrun_count,
+        h->tx_failed_count,
+        h->controller_state,
+        h->bus_off_events,
+        h->error_passive_events,
+        h->recovery_resets,
+        h->rx_queue_full_events,
+        h->tx_queue_dropped_events
+    );
+}
+
 
 static void updateSubModules()
 {
   /* reconcile submodule count */
   nodeGetActiveSubModuleCount();
 
-  FOR_EACH_ACTIVE_SUBMODULE(i, sub)
+  for (int i = 0; i < MAX_SUB_MODULES; i++)
   {
+    subModule_t *sub = nodeGetActiveSubModule(i);
+
+    if (!sub)
+      continue;
+
+    /* Lookup the personality */
     const personalityDef_t *p = nodeGetActivePersonality(sub->personalityIndex);
 
     if (!p)
@@ -85,7 +115,7 @@ static void updateSubModules()
       /* Analog ADC input */
     case PERS_ANALOG_INPUT:
     {
-      sub->runTime.valueU32 = analogRead(myPin); /**< Capture analog value */
+      value = (uint32_t)analogRead(myPin); /**< Capture analog value */
       break;
     }
 
@@ -177,16 +207,44 @@ static void updateSubModules()
       break;
     }
 
+    case INTERNAL_CAN_ERROR_COUNTERS:
+    {
+      // TODO: implement actual function
+      value = 0x14;
+      break;
+    }
+
+    case INTERNAL_CAN_BUS_STATE:
+    {
+      // TODO: implement actual function
+      value = 0xF00F;
+      break;
+    }
+
+    case INTERNAL_FIRMWARE_VERSION:
+    {
+      // TODO: implement actual function
+      value = 0x12345678;
+      break;
+    }
+
+    case INTERNAL_OTA_PARTITION_INFO:
+    {
+      // TODO: implement actual function
+      value = 0xDEADBEEF;
+      break;
+    }
+
     default:
     {
-      ESP_LOGW(TAG, "[PRODUCER] Error: Unknown personality %u", sub->personalityId);
+      ESP_LOGW(TAG, "[PRODUCER] Ignoring unknown personality %u", sub->personalityId);
       // Unknown virtual personality — ignore safely
       continue;
     }
     } /* end of switch-case */
 
-    // sub->runTime.valueU32       = value;     /* update value */
-    // sub->runTime.last_change_ms = millis();  /* update timestamp */
+    sub->runTime.valueU32       = value;     /* update value */
+    sub->runTime.last_change_ms = millis();  /* update timestamp */
   } /* end of for loop */
 }
 
@@ -252,7 +310,7 @@ static void routerPublishEvent(producer_event_t *evt)
   /* Send message */
   canEnqueueMessage(p->dataMsgId, payload, dlc);
 
-  ESP_LOGI(TAG, "[PRODUCER] Tx: sub %u msg 0x%03X dlc %u val %u",
+  ESP_LOGV(TAG, "[PRODUCER] Tx: sub %u msg 0x%03X dlc %u val %u",
            subIdx, p->dataMsgId, dlc, valueU32);
 }
 
@@ -291,14 +349,45 @@ static void readCydLdr()
 #endif
 }
 
+static void internalSubmoduleTick(uint32_t now)
+{
+  uint8_t list[MAX_SUB_MODULES];
+  uint8_t n = nodeGetInternalPeriodicProducers(list, sizeof(list));
+
+  ESP_LOGV(TAG, "[PRODUCER] Checking %u internal events", n);
+
+  for (uint8_t i = 0; i < n; i++)
+  {
+    subModule_t *sub = nodeGetSubModule(list[i]);
+    ESP_LOGV(TAG, "[PRODUCER] Checking internal event for sub %u interval %u", list[i], sub->producer_period_ms);
+
+    if (now - sub->runTime.last_published_value >= sub->producer_period_ms)
+    {
+      enqueueInputCmd(INPUT_CMD_INTERNAL_EVENT, list[i], now);
+      sub->runTime.last_published_value = now;
+
+      ESP_LOGV(TAG, "[PRODUCER] Enqueueing internal event for sub %u interval %u", list[i], sub->producer_period_ms);
+    }
+  }
+}
+
 /**
  * @brief Manages periodic transmissions in TaskTWAI
  */
 static void managePeriodicMessages()
 {
-  static uint32_t lastHeartbeat = 0;
+  static uint32_t lastInternalsTick = 0;
   static uint32_t lastIntro = 0;
+  static uint32_t lastCanHealth = 0;
+
   uint32_t currentMillis = millis();
+
+  if (currentMillis - lastInternalsTick >= 1000)
+  {
+    lastInternalsTick = currentMillis;
+    internalSubmoduleTick(currentMillis);
+    ESP_LOGV(TAG, "[PRODUCER] Scanning internal submodules");
+  }
 
   /** Introduction as Heartbeat - Every 10 Seconds
       We send this as the heartbeat to save bandwidth,
@@ -315,11 +404,17 @@ static void managePeriodicMessages()
     void introResetSequence(void);
   }
 
-  /** Update physical submodules */
-  // updateSubModules();
+  if (currentMillis - lastCanHealth >= 60000)
+  {
+    lastCanHealth = currentMillis;
+    canHealth_t *h = twaiGetCanHealth();
 
-  /** Call the producer tick */
-  // handleProducerTick(currentMillis);
+    canHealthLog(h); /* Log CAN Health every minute */
+  }
+
+  /** Run submodule data collection */
+  updateSubModules();
+
 }
 
 /**
@@ -335,9 +430,13 @@ static void managePeriodicMessages()
  */
 void attachGpioIsrInit(void)
 {
-  /* Skip undefined submodules */
-  FOR_EACH_ACTIVE_SUBMODULE(i, sub)
+  for (int i = 0; i < MAX_SUB_MODULES; i++)
   {
+    subModule_t *sub = nodeGetActiveSubModule(i);
+
+    if (!sub)
+      continue;
+
     /* Only input submodules can have ISRs */
     if (!nodeIsInputSubmodule(i))
       continue;
@@ -374,13 +473,14 @@ static void handleInputCommand(inputCommandMsg_t *cmd)
 {
   const uint8_t subIdx = cmd->index;
 
-  ESP_LOGD(TAG, "\n[PRODUCER] Input command received: %u (sub=%u)\n", (uint8_t)cmd->type, subIdx);
+  ESP_LOGV(TAG, "\n[PRODUCER] Input command received: %u (sub=%u)\n", (uint8_t)cmd->type, subIdx);
 
   if (!nodeIsActiveSubmodule(subIdx))
     return;
 
   switch (cmd->type)
   {
+  case INPUT_CMD_INTERNAL_EVENT:
   case INPUT_CMD_GPIO_EVENT:
   {
     producer_event_t evt =
@@ -404,10 +504,6 @@ static void handleInputCommand(inputCommandMsg_t *cmd)
 
   case INPUT_CMD_CFG_CHANGE:
     // future: reload producer flags, periods, etc.
-    break;
-
-  case INPUT_CMD_INTERNAL_EVENT:
-    // future: operational alerts
     break;
 
   case INPUT_CMD_DEBOUNCE_TICK:

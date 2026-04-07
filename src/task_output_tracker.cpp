@@ -2,7 +2,7 @@
 #include "task_output_gpio.h"
 #include "esp_log.h"
 
-static const char* TAG = "task_output_tracker";
+static const char *TAG = "task_output_tracker";
 
 /*
  * =========================================================================
@@ -41,7 +41,9 @@ static void handleStrobeLogic(subModule_t *sub, outputTracker_t &trk);
 
 static void handleMomentaryLogic(subModule_t *sub, outputTracker_t &trk)
 {
-    const personalityDef_t *p = &runtimePersonalityTable[sub->personalityIndex]; /**< Pointer to the personality definition for this sub-module */
+    /* Pointer to the personality definition for this sub-module */
+    const personalityDef_t *p =
+        nodeGetActivePersonality(sub->personalityIndex);
 
     if (!trk.isActive)
         return;
@@ -62,9 +64,9 @@ static void handleMomentaryLogic(subModule_t *sub, outputTracker_t &trk)
 
 static void handleStrobeLogic(subModule_t *sub, outputTracker_t &trk)
 {
-    /** Pointer to the personality definition for this sub-module */
-    const personalityDef_t *p = 
-        &runtimePersonalityTable[sub->personalityIndex]; 
+    /* Pointer to the personality definition for this sub-module */
+    const personalityDef_t *p =
+        nodeGetActivePersonality(sub->personalityIndex);
     const uint8_t outPin = p->gpioPin; /* GPIO output pin */
 
     /* If the strobe is not active, do nothing */
@@ -91,7 +93,7 @@ static void handleStrobeLogic(subModule_t *sub, outputTracker_t &trk)
     const StrobePatternDef &def = STROBE_PATTERNS[patternId];
 
     /* Invalid pattern, turn off output and exit */
-    if (!def.steps || def.count == 0) 
+    if (!def.steps || def.count == 0)
     {
         ESP_LOGW(TAG, "Empty strobe pattern %u on sub %u", patternId, sub->personalityIndex);
         trk.isActive = false;
@@ -179,7 +181,6 @@ void outputTrackerReset(const uint8_t index)
 
     trk.nextActionTime = 0;
     trk.currentStep = 0;
-
 }
 
 void outputTrackerActive(const uint8_t index, bool state)
@@ -187,7 +188,6 @@ void outputTrackerActive(const uint8_t index, bool state)
     outputTracker_t &trk = trackers[index];
 
     trk.isActive = state;
-    
 }
 
 void outputTrackerConfig(const uint8_t index, bool state)
@@ -199,14 +199,19 @@ void outputTrackerConfig(const uint8_t index, bool state)
 
 void outputTrackerTick(void)
 {
+    /* reconcile submodule count */
+    nodeGetActiveSubModuleCount();
+
     for (int i = 0; i < MAX_SUB_MODULES; i++)
     {
-        /** Reference to the current sub-module */
-        subModule_t *sub = nodeGetSubModule(i);
+        subModule_t *sub = nodeGetActiveSubModule(i);
+
+        if (!sub)
+            continue;
 
         /** Pointer to the personality definition for this sub-module */
         const personalityDef_t *p =
-            &runtimePersonalityTable[sub->personalityIndex];
+            nodeGetActivePersonality(sub->personalityIndex);
 
         /** Reference to the output tracker for this sub-module */
         outputTracker_t &trk = trackers[i];

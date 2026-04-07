@@ -168,7 +168,11 @@ void attachDigitalInputISR(uint8_t pin, uint8_t subIdx)
     // io_conf.pin_bit_mask = (1ULL << pin);
     // io_conf.mode = GPIO_MODE_INPUT;
 
-    const subModule_t *sub = nodeGetSubModule(subIdx);
+    const subModule_t *sub = nodeGetActiveSubModule(subIdx);
+    if (!sub) {
+        ESP_LOGW(TAG, "[ISR] ERROR: Submodule %d not found!", subIdx);
+        return;
+    }
     const uint8_t inputFlags = sub->config.gpioInput.flags;
     const uint8_t inputResistor = INPUT_FLAG_GET_PULL(inputFlags);
 
@@ -270,8 +274,8 @@ extern "C" void IRAM_ATTR gpio_isr_handler(void *arg)
 
     g_isr_counter++;
 
-    const subModule_t *sub = nodeGetSubModule(subIdx);                           /* retrieve submodule */
-    const personalityDef_t *p = &runtimePersonalityTable[sub->personalityIndex]; /* retrieve personality */
+    const subModule_t *sub = nodeGetActiveSubModule(subIdx);
+    const personalityDef_t *p = nodeGetActivePersonality(sub->personalityIndex);
     const uint8_t pinNum = p->gpioPin;
 
     if (pinNum >= GPIO_NUM_MAX)

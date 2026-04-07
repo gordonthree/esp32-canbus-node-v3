@@ -37,7 +37,8 @@ void initArgbHardware(uint8_t index, subModule_t *sub)
 
     if (index >= MAX_SUB_MODULES) return;
 
-    const personalityDef_t* p = &runtimePersonalityTable[sub->personalityIndex];
+    const personalityDef_t* p = 
+        nodeGetActivePersonality(sub->personalityIndex);
     if (!p) return;
 
     uint8_t  dataPin    = p->gpioPin;

@@ -15,25 +15,13 @@ extern "C" {
  *  GLOBAL VARIABLES, CONSTANTS and MACROS
  * ============================================================================ */ 
 
- #define FOR_EACH_ACTIVE_SUBMODULE(i, sub) \
-    for (uint8_t i = 0; i < MAX_SUB_MODULES; i++) \
-        for (subModule_t *sub = nodeGetSubModule(i); \
-             sub->personalityIndex != 0xFF; \
-             sub = NULL)
 
-#define SUBMODULE_IS_ACTIVE(idx) \
-    ((idx) < MAX_SUB_MODULES && \
-     nodeGetSubModule(idx)->personalityIndex != 0xFF)
+    #define SUBMODULE_INDEX_INVALID(idx) \
+        ((idx) >= MAX_SUB_MODULES)
 
-#define SUBMODULE_INDEX_INVALID(idx) \
-    ((idx) >= MAX_SUB_MODULES)
 
-#define PERSONALITY_IS_ACTIVE(idx) \
-    ((idx) < MAX_RUNTIME_PERSONALITIES && \
-     nodeGetPersonality(idx)->personalityId != 0xFF)
-
-#define PERSONALITY_INDEX_INVALID(idx) \
-    ((idx) >= MAX_RUNTIME_PERSONALITIES)
+    #define PERSONALITY_INDEX_INVALID(idx) \
+        ((idx) >= MAX_RUNTIME_PERSONALITIES)
 
 /* ============================================================================ */
 /*  NODE STATE API
@@ -67,6 +55,9 @@ bool nodeIsActivePersonality(uint8_t personalityIndex);
 bool nodeIsValidSubmodule(uint8_t index);
 bool nodeIsActiveSubmodule(uint8_t index);
 
+/* Curated list functions */
+uint8_t nodeGetInternalPeriodicProducers(uint8_t *outList, uint8_t max);
+
 /* CRC accessor functions */
 uint16_t       nodeGetCRC();
 void nodeSetCRC(uint16_t crc);
@@ -86,7 +77,7 @@ inline bool nodeIsInputSubmodule(uint8_t sub_idx)
     if (!sub)
         return false;
 
-    return (sub->submod_flags & SUBMOD_FLAG_INPUT) != 0;  /**< true if input role */
+    return (sub->submod_flags & SUBMOD_FLAG_DIRECTION) != 0;  /**< true if input role */
 }
 
 inline bool nodeIsNetworkSubmodule(uint8_t sub_idx)
@@ -104,6 +95,23 @@ inline bool nodeIsNetworkSubmodule(uint8_t sub_idx)
     /* return true if the sub-module is a network node */
     return (pers->flags & BUILDER_FLAG_IS_NETWORK_NODE) != 0;
 }
+
+inline bool nodeIsInternalSubmodule(uint8_t sub_idx)
+{
+    /* get a safe pointer for the sub-module */
+    const subModule_t* sub = nodeGetActiveSubModule(sub_idx);
+    if (!sub)
+        return false;
+
+    /* get a safe pointer for the personality */
+    const personalityDef_t* pers = nodeGetActivePersonality(sub->personalityIndex);
+    if (!pers)
+        return false;
+
+    /* return true if the sub-module is internal */
+    return (pers->flags & BUILDER_FLAG_IS_INTERNAL) != 0;
+}
+
 
 /* ============================================================================
  *  GLOBAL FUNCTIONS

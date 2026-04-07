@@ -19,8 +19,9 @@ void displayApplyMode(uint8_t index, uint32_t mode)
             ESP_LOGW(TAG, "Invalid sub module index %d", index);
             return;
         }
-    subModule_t *sub = nodeGetSubModule(index);
-    const personalityDef_t *p = nodeGetPersonality(sub->personalityIndex);
+    subModule_t *sub = nodeGetActiveSubModule(index); /* If submodule not found, exit function */
+    const personalityDef_t *p = 
+        nodeGetActivePersonality(sub->personalityIndex);
 
     switch (mode) {
 

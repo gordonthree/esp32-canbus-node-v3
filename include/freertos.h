@@ -19,6 +19,7 @@
 #define tskLowPriority           (tskIDLE_PRIORITY + 1)
 #define tskNormalPriority        (tskIDLE_PRIORITY + 2)
 #define tskHighPriority          (tskIDLE_PRIORITY + 4)
+#define tskHigherPriority        (tskIDLE_PRIORITY + 6)
 
 /* Queue send wait times */
 #define QUEUE_SHORT_WAIT         (1)             /* 1 ticks */

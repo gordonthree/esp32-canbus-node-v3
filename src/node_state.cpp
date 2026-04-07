@@ -87,7 +87,7 @@ uint16_t nodeGetNodeType()
         /* set a safe default */
         nodeTypeMsg = BOX_MULTI_IO_ID;
     }
-    
+
     return node.nodeTypeMsg;
 }
 
@@ -190,11 +190,14 @@ void nodeSetRouterFlags(const uint8_t sub_idx, uint8_t flags)
 /** @brief Count, update and return the number of active submodules */
 uint8_t nodeGetActiveSubModuleCount(void)
 {
-    /* Return 0 if there are no active submodules */
     uint8_t count = 0;
 
-    FOR_EACH_ACTIVE_SUBMODULE(i, sub)
+    for (uint8_t i = 0; i < MAX_SUB_MODULES; i++)
     {
+        subModule_t *sub = nodeGetActiveSubModule(i);
+        if (!sub)
+            continue;
+
         count++;
     }
 
@@ -237,19 +240,21 @@ bool nodeIsValidSubmodule(uint8_t index)
 /** * @brief Return true if the submodule index is valid and not empty */
 bool nodeIsActiveSubmodule(uint8_t index)
 {
-    return SUBMODULE_IS_ACTIVE(index);
+    return ((index < MAX_SUB_MODULES) &&
+           (nodeGetSubModule(index)->personalityIndex != 0xFF));
 }
 
 /** * @brief Return true if the personality index is in-bounds */
 bool nodeIsValidPersonality(uint8_t personalityIndex)
 {
-    return !(PERSONALITY_INDEX_INVALID(personalityIndex));
+    return (personalityIndex < MAX_RUNTIME_PERSONALITIES);
 }
 
 /** * @brief Return true if the personality index is active */
 bool nodeIsActivePersonality(uint8_t personalityIndex)
 {
-    return PERSONALITY_IS_ACTIVE(personalityIndex);
+    return ((personalityIndex < MAX_RUNTIME_PERSONALITIES) &&
+            (nodeGetPersonality(personalityIndex)->personalityId != 0xFF));
 }
 
 /**
@@ -301,7 +306,7 @@ void printNodeInfo(const nodeInfo_t *node)
     {
 
         const personalityDef_t *p =
-            &runtimePersonalityTable[node->subModule[i].personalityIndex];
+            nodeGetPersonality(node->subModule[i].personalityIndex); // &runtimePersonalityTable[node->subModule[i].personalityIndex]
 
         ESP_LOGD("NODEINFO", "     subModule[%d]:", i);
         ESP_LOGD("NODEINFO", "       personalityId: %d",
@@ -312,6 +317,7 @@ void printNodeInfo(const nodeInfo_t *node)
         ESP_LOGD("NODEINFO", "       (p->) dataMsgId: 0x%03X", p->dataMsgId);
         ESP_LOGD("NODEINFO", "       (p->) dataMsgDlc: %d", p->dataMsgDlc);
         ESP_LOGD("NODEINFO", "       (p->) gpio Pin: %d", p->gpioPin);
+        ESP_LOGD("NODEINFO", "       (p->) flags: 0x%02X", p->flags);
 
         if (node->subModule[i].personalityId == PERS_GPIO_INPUT)
         {
@@ -376,4 +382,50 @@ uint32_t getEpochTime()
     clock_gettime(CLOCK_REALTIME, &newTime); /* Read time from ESP32 clock*/
 
     return (uint32_t)newTime.tv_sec;
+}
+
+/* -----------------------------------------------------------
+ ** @details nodeGetInternalPeriodicProducers()
+ *
+ * Returns a curated list of submodule indices that:
+ *   - exist
+ *   - are INTERNAL
+ *   - are ACTIVE
+ *   - have PUBLISH_ENABLED
+ *   - are PERIODIC producers
+ *
+ * No timing logic here — node_state does not own clocks.
+ * ----------------------------------------------------------- */
+uint8_t nodeGetInternalPeriodicProducers(uint8_t *outList, uint8_t max)
+{
+    uint8_t count = 0;
+
+    for (uint8_t i = 0; i < MAX_SUB_MODULES; i++)
+    {
+        if (count >= max)
+            break;
+
+        subModule_t *sub = nodeGetActiveSubModule(i);
+
+        if (!sub)
+            continue;
+
+        if (!(sub->submod_flags & SUBMOD_FLAG_INTERNAL))
+            continue;
+
+        if (!(sub->producer_flags & PRODUCER_FLAG_ACTIVE))
+            continue;
+
+        if (!(sub->producer_flags & PRODUCER_FLAG_PUBLISH_ENABLED))
+            continue;
+
+        /* If producer period is too short, or producer is a one-shot, skip it */
+        if ((sub->producer_period_ms == PRODUCER_PERIOD_ONCE) ||
+            (sub->producer_period_ms <  PRODUCER_PERIOD_1000MS)) 
+            continue;            
+
+        outList[count++] = i;
+    }
+
+    return count;
 }

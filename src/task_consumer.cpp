@@ -73,7 +73,7 @@ static void setSwMomDur(can_msg_t *msg)
   if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
 
-  subModule_t *sub = nodeGetSubModule(switchID); /* get submodule reference */
+  subModule_t *sub = nodeGetActiveSubModule(switchID); /* get submodule reference */
   sub->config.gpioOutput.param1 = momDur;        /* update momentary duration */
 
   ESP_LOGI(TAG, "Momentary Duration: %d Switch: %d",
@@ -165,11 +165,6 @@ static void prettyPrintMsg(const can_msg_t *msg)
 static void handleCanRX(can_msg_t &message)
 {
   bool msgForUs = false;
-
-  /* process broadcast ARGB color command */
-  // if ((message.identifier == SET_ARGB_STRIP_COLOR_ID) || (message.identifier == SET_ARGB_BUTTON_COLOR_ID)) {
-  //   handleColorCommand(message);
-  // }
 
   if (message.data_length_code == 0)
   {

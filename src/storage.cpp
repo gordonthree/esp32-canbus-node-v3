@@ -241,6 +241,7 @@ void loadNodeDefaults()
     /** Add internal submodules from personality table */
     for (uint8_t i = 0; i < runtimePersonalityCount; i++)
     {
+        /* @note: bootstrapping - this is the proper accessor */
         const personalityDef_t *p = &runtimePersonalityTable[i];
 
         if (!(p->flags & BUILDER_FLAG_IS_INTERNAL))

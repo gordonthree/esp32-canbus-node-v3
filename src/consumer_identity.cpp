@@ -21,15 +21,24 @@ void handleIdentityConfig(can_msg_t *msg)
 
     const uint8_t modIdx = msg->data[4]; /* byte 4 holds the sub module index */
     ESP_LOGI(TAG, "Processing identity command 0x%03X for sub module %d", msg->identifier, modIdx);
+
+    /* get submodule pointer */
+    subModule_t *sub = nodeGetActiveSubModule(modIdx);
+
+    /* get personality pointer */
+    const personalityDef_t *p = nodeGetActivePersonality(sub->personalityIndex);
+
     switch (msg->identifier)
     {
     /* 0x400 */
     case ACK_INTRO_ID:
     {
+        const uint8_t subModCnt = nodeGetActiveSubModuleCount();
         ESP_LOGD(TAG, "Received introduction acknowledgement, advance pointer");
         introMsgPtr++;
-        if (introMsgPtr > (nodeGetInfo()->subModCnt * 2))
+        if (introMsgPtr >= (subModCnt * 2))
         {
+            /* we've completed the intro sequence, wrap the pointer */
             introMsgPtr = 0;
         }
         sendIntroduction(introMsgPtr);
@@ -52,7 +61,7 @@ void handleIdentityConfig(can_msg_t *msg)
             ESP_LOGW(TAG, "Submod flag update, invalid sub module index %d", modIdx);
             break;
         }
-        subModule_t *sub = nodeGetSubModule(modIdx);
+
         sub->submod_flags |= msg->data[5]; /* add flag to submod_flags */
         sub->submod_flags |= SUBMOD_FLAG_DIRTY;
         ESP_LOGI(TAG, "Update Sub %d FLAGS: 0x%03X", modIdx, sub->submod_flags);
@@ -66,7 +75,7 @@ void handleIdentityConfig(can_msg_t *msg)
             ESP_LOGW(TAG, "Submod flag update, invalid sub module index %d", modIdx);
             break;
         }
-        subModule_t *sub = nodeGetSubModule(modIdx);
+
         sub->submod_flags &= ~msg->data[5]; /* remove flag from submod_flags */
         sub->submod_flags |= SUBMOD_FLAG_DIRTY;
         ESP_LOGI(TAG, "Update Sub %d FLAGS: 0x%03X", modIdx, sub->submod_flags);
@@ -85,7 +94,6 @@ void handleIdentityConfig(can_msg_t *msg)
             ESP_LOGW(TAG, "Invalid sub module index %d", modIdx);
             break;
         }
-        subModule_t *sub = nodeGetSubModule(modIdx);
 
         sub->introMsgId = ((msg->data[5] << 8) | (msg->data[6] & 0xFF));
         sub->introMsgDLC = msg->data[7];
@@ -103,7 +111,7 @@ void handleIdentityConfig(can_msg_t *msg)
             ESP_LOGW(TAG, "Invalid sub module index %d", modIdx);
             break;
         }
-        subModule_t *sub = nodeGetSubModule(modIdx);
+
         sub->config.argb.reserved = msg->data[5];
         sub->config.argb.ledCount = msg->data[6];
         sub->config.argb.colorOrder = msg->data[7];
@@ -119,7 +127,6 @@ void handleIdentityConfig(can_msg_t *msg)
             ESP_LOGW(TAG, "Invalid sub module index %d", modIdx);
             break;
         }
-        subModule_t *sub = nodeGetSubModule(modIdx);
 
         sub->config.gpioInput.flags = msg->data[5];
         sub->config.gpioInput.debounce_ms = msg->data[6];
@@ -136,7 +143,6 @@ void handleIdentityConfig(can_msg_t *msg)
             ESP_LOGW(TAG, "Invalid sub module index %d", modIdx);
             break;
         }
-        subModule_t *sub = nodeGetSubModule(modIdx);
 
         sub->config.analogInput.overSampleFlag = msg->data[5];
         sub->config.analogInput.reserved1 = msg->data[6];
@@ -153,7 +159,6 @@ void handleIdentityConfig(can_msg_t *msg)
             ESP_LOGW(TAG, "Invalid sub module index %d", modIdx);
             break;
         }
-        subModule_t *sub = nodeGetSubModule(modIdx);
 
         sub->config.analogStrip.configIndex = msg->data[5];
         sub->config.analogStrip.reserved1 = msg->data[6];
@@ -170,7 +175,6 @@ void handleIdentityConfig(can_msg_t *msg)
             ESP_LOGW(TAG, "Invalid sub module index %d", modIdx);
             break;
         }
-        subModule_t *sub = nodeGetSubModule(modIdx);
 
         sub->config.analogOutput.outputMode = msg->data[5];
         sub->config.analogOutput.param1 = msg->data[6];
@@ -189,7 +193,6 @@ void handleIdentityConfig(can_msg_t *msg)
             ESP_LOGW(TAG, "Invalid sub module index %d", modIdx);
             break;
         }
-        subModule_t *sub = nodeGetSubModule(modIdx);
 
         sub->config.gpioOutput.mode = msg->data[5];
         sub->config.gpioOutput.param1 = msg->data[6];

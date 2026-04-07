@@ -29,13 +29,13 @@
 // #include "driver/twai.h" /* esp32 native TWAI CAN library */
 // #include "driver/ledc.h" /* esp32 native LEDC PWM library */
 // #include "driver/gpio.h" /* esp32 native GPIO library */
-#include "driver/adc.h"  /* esp32 native ADC library */
-#include "esp_err.h" /* esp32 error handler */
+#include "driver/adc.h" /* esp32 native ADC library */
+#include "esp_err.h"    /* esp32 error handler */
 #include "soc/gpio_struct.h"
 
 /* === FreeRTOS includes === */
 // #include <freertos/FreeRTOS.h>
-// #include <freertos/task.h> 
+// #include <freertos/task.h>
 
 /* === Local includes === */
 // #include "argb_hw.h"           /**< ARGB LED control */
@@ -160,9 +160,13 @@ static int appendTemplatePersonalities(void)
 {
     int appended = 0;
 
+    const uint8_t subModCnt = nodeGetActiveSubModuleCount();
+
     /* Iterate over all submodules currently defined */
-    for (uint8_t s = 0; s < nodeGetInfo()->subModCnt; s++)
+    for (uint8_t s = 0; s < subModCnt; s++)
     {
+
+        /* STEP 1: Validation */
 
         /* Skip pre-defined submodules */
         if (s < g_personalityCount)
@@ -172,31 +176,10 @@ static int appendTemplatePersonalities(void)
         }
 
         /* Get a pointer to the current submodule */
-        subModule_t *sub = nodeGetSubModule(s); // &node.subModule[s];
+        subModule_t *sub = nodeGetActiveSubModule(s);
+
         /* Get the current personalityId */
         uint16_t pid = sub->personalityId;
-
-        /* ------------------------------------------------------------
-         * Step 1: NOT NEEDED
-         *         Check if this personalityId already exists in the
-         *         runtime personality table.
-         *
-         * If found, update personalityIndex (fix stale NVS values)
-         * and continue.
-         * ------------------------------------------------------------ */
-        // bool exists = false;
-
-        // for (uint8_t i = 0; i < runtimePersonalityCount; i++) {
-        //     if (runtimePersonalityTable[i].personalityId == pid) {
-        //         // sub->personalityIndex = i;   /* correct stale index */
-        //         exists = true;
-        //         break;
-        //     }
-        // }
-
-        // if (exists) {
-        //     continue;   /* No need to append this personality */
-        // }
 
         /* ------------------------------------------------------------
          * Step 2: PersonalityId not found in runtime table.
@@ -208,6 +191,7 @@ static int appendTemplatePersonalities(void)
         {
             if (templateTable[i].personalityId == pid)
             {
+                /* Attempt to locate the template in the templateTable[] */
                 src = &templateTable[i];
                 break;
             }
@@ -234,18 +218,32 @@ static int appendTemplatePersonalities(void)
         /* ------------------------------------------------------------
          * Step 4: Append the template personality to the runtime table.
          * ------------------------------------------------------------ */
-        uint8_t newIndex = runtimePersonalityCount;
+        /* Find a free index in the personality table */
+        const int freeSlot = getFreePersonalitySlot();
 
+        if (freeSlot < 0)
+        {
+            ESP_LOGW(TAG, "[ERR] appendTemplatePersonalities(): runtimePersonalityTable is full");
+            return -1; /* early exit with error */
+        }
+
+        /* We have a free index slot, use it as the index */
+        const uint8_t newIndex = (uint8_t)freeSlot;
+
+        /* Copy the template to the runtime table */
         runtimePersonalityTable[newIndex] = *src;
-        runtimePersonalityCount++;
 
         /* Update submodule to reference the new runtime index */
         sub->personalityIndex = newIndex;
+
+        /* Mark the submodule as dirty for NVS commit */
+        sub->submod_flags |= SUBMOD_FLAG_DIRTY;
 
         ESP_LOGI(TAG,
                  "[INIT] Appended template personality 0x%03X at runtime index %d",
                  pid, newIndex);
 
+        /* Increment appended count */
         appended++;
     }
 
@@ -386,7 +384,7 @@ void setup()
 
     /*
      * Keep ADC powered on all the time to prevent a weird
-     * glitch with the WiFI subsystem and GPIO pin 39 
+     * glitch with the WiFI subsystem and GPIO pin 39
      */
     adc_power_acquire();
 
@@ -397,12 +395,15 @@ void setup()
     //   espcyd_set_backlight_callback(handleHardwarePwm);
 #endif
 
-    delay(2500);
-    
+#ifndef BAUD
+#define BAUD 115200
+#endif
+
     /* setup serial port */
-    Serial.begin(115200);
+    Serial.begin(BAUD);
     Serial.setDebugOutput(true);
 
+    delay(2500);
     wifiEnable(); /* start the WiFi task */
 
     /* set up some clock parameters */
@@ -446,7 +447,10 @@ void setup()
     /* Initialize the hardware, attach ISR handlers as needed */
     initNodeHardware();
 
-    /** Initialize producer library callbacks */
+    /* Initialize dynamic internal submodules */
+    discoverInternalSubmodules();
+
+    /* Initialize producer library callbacks */
     producerInit(&producerCB);
 
     /* Initialize router CRC16 callback */
@@ -476,14 +480,14 @@ void setup()
 
 static void pollDirtyFlags(void)
 {
-    // static uint32_t lastCheck = 0; /* retains value, not global */
+    static uint32_t lastCheck = 0; /* retains value, not global */
 
-    // const uint32_t now = millis();
-    // if (now - lastCheck < 2000)
-    // {
-    //     return;
-    // }
-    // lastCheck = now;
+    const uint32_t now = millis();
+    if (now - lastCheck < 2000)
+    {
+        return;
+    }
+    lastCheck = now;
 
     /* Scan for dirty flags */
     for (uint8_t i = 0; i < MAX_SUB_MODULES; i++)
