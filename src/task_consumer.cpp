@@ -176,7 +176,7 @@ static void handleCanRX(can_msg_t &message)
   {
     /* set flag if message is for us */
     const uint32_t targetNodeID = unpackBytestoUint32(&message.data[0]);
-    msgForUs = (targetNodeID == nodeGetInfo()->nodeID);
+    msgForUs = (targetNodeID == nodeGetNodeID());
   }
 
   if (!msgForUs)
@@ -185,8 +185,8 @@ static void handleCanRX(can_msg_t &message)
   }
   
   /* debug: dump message data into a string buffer and then send to ESP_LOGD */
-  ESP_LOGD(TAG, "[CONSUMER] RX MSG PRE-ROUTER");
-  prettyPrintMsg(&message);
+  // ESP_LOGD(TAG, "[CONSUMER] RX MSG PRE-ROUTER");
+  // prettyPrintMsg(&message);
 
   /* prepare router library action buffer */
   router_action_t action = {0};
@@ -194,7 +194,7 @@ static void handleCanRX(can_msg_t &message)
   /* zero-init consumer buffer */
   can_msg_t msgToConsume = {0};
 
-  /* hand off message to the router library */
+  /** hand off message to the router library */
   bool takeAction = checkRoutes(&message, &action);
 
   /* decide if we generate a synthetic message or use the original */
@@ -230,14 +230,12 @@ static void TaskConsumer(void *pvParameters)
   ESP_LOGI(TAG, "[RTOS] Consumer task starting...");
 
   ESP_LOGI(TAG, "[ROUTER] Loading routes from NVS...");
-  vTaskDelay(pdMS_TO_TICKS(10));
   loadRoutesFromNVS();
-  vTaskDelay(pdMS_TO_TICKS(10));
 
   const uint8_t routeCount = routerGetRouteCount();
   if (routeCount > 0) {
     ESP_LOGI(TAG, "[ROUTER] Load complete, %d routes loaded.", routerGetRouteCount());
-    prettyPrintRoutes();
+    // prettyPrintRoutes();
   }
   else {
     ESP_LOGW(TAG, "[ROUTER] No routes loaded.");
