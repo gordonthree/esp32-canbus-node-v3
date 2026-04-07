@@ -12,7 +12,7 @@ CFG_ROUTE_END_ID   = 0x302
 ROUTE_CHUNK_SIZE = 3
 ROUTE_ENTRY_SIZE = 27
 ROUTE_CHUNKS_PER_ROUTE = (ROUTE_ENTRY_SIZE + ROUTE_CHUNK_SIZE - 1) // ROUTE_CHUNK_SIZE
-NODE_ID = [0x25, 0xA5, 0x6D, 0x84]   # big-endian
+# NODE_ID = [0x25, 0xA5, 0x6D, 0x84]   # big-endian
 
 
 # -----------------------------
@@ -35,14 +35,26 @@ def ask_int(prompt, bits=32):
         except ValueError:
             print("Invalid number, try again.")
 
+# -----------------------------
+# Helper: convert uint32 -> 4-byte array (Big Endian)
+# -----------------------------
+def u32_to_be_bytes(value):
+    return [
+        (value >> 24) & 0xFF,
+        (value >> 16) & 0xFF,
+        (value >> 8)  & 0xFF,
+        (value >> 0)  & 0xFF,
+    ]
+
 
 # -----------------------------
 # Build a route_entry_t struct
 # -----------------------------
 def build_route_entry():
+    
     print("\n=== Enter Route Entry Fields ===")
 
-    source_node_id  = ask_int("source_node_id (uint32_t)", 32)
+    source_node_id  = ask_int("source_node_id (e.g. 0x25A56D84)", 32)
     source_msg_id   = ask_int("source_msg_id (uint16_t)", 16)
     source_msg_dlc  = ask_int("source_msg_dlc (uint8_t)", 8)
     source_sub_idx  = ask_int("source_sub_idx (uint8_t)", 8)
@@ -135,6 +147,10 @@ def serialize_route(route_idx, packed):
 def main():
     print("=== CAN Route Programming Tool ===")
 
+    target_node_id = ask_int("Enter target node ID (e.g. 0x25A56D84)", 32)
+    global NODE_ID
+    NODE_ID = u32_to_be_bytes(target_node_id)
+    
     route_idx = ask_int("Enter route index (0–255)", 8)
     entry = build_route_entry()
     frames = serialize_route(route_idx, entry)
@@ -145,10 +161,11 @@ def main():
 
     send = input("\nSend frames on CAN bus? (y/n): ").strip().lower()
     if send == "y":
-        bus = can.interface.Bus(channel="can0", bustype="socketcan")
-        for f in frames:
-            bus.send(f)
-        print("Frames sent.")
+        with can.Bus(interface="socketcan", channel="can0") as bus:
+            for f in frames:
+                bus.send(f)
+            print("Frames sent.")
+
 
 
 if __name__ == "__main__":
