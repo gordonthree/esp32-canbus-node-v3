@@ -26,12 +26,7 @@ static uint8_t FLAG_SEND_HEALTHCHECK  = 0;
 static uint8_t FLAG_SEND_NODECHECK    = 0;
 static uint8_t FLAG_PRINT_TIMESTAMP   = 0;
 
-/* network submodule variables and flags */
-// static bool     pendingNetNodeValid   = false;
-// static bool     pendingNetDataValid   = false;
-// static uint32_t pendingRemoteNodeId   = 0;
-// static uint8_t  pendingRemoteIndex    = 0;
-// static uint8_t  pendingPersonalityId  = 0;
+
 unsigned long previousMillis = 0;  /* will store last time a message was sent */
 
 /* ========================================================================= 
@@ -153,7 +148,7 @@ void sendRouteList()
 void sendIntroduction(int msgPtr) 
 {
   if (!nodeStateIsInitialized()) {
-    ESP_LOGW(TAG, "[PRODUCER] sendIntroduction called before node is initialized");
+    ESP_LOGE(TAG, "[PRODUCER] sendIntroduction called before node is initialized");
     return;
   }
 
@@ -200,21 +195,21 @@ void sendIntroduction(int msgPtr)
 
     /* Skip if the sub-module is a network node */
     if (nodeIsNetworkSubmodule(modIdx)) {
-        ESP_LOGD(TAG, "[PRODUCER] TX INTRO: Skipping network sub-module %d", modIdx);
+        // ESP_LOGD(TAG, "[PRODUCER] TX INTRO: Skipping network sub-module %d", modIdx);
         return;
     }
 
     /* Pointer to the sub-module */
     const subModule_t* sub = nodeGetActiveSubModule(modIdx);
     if (sub == NULL) {
-        ESP_LOGE(TAG, "[PRODUCER] TX INTRO: Invalid sub-module index %d", modIdx);
+        // ESP_LOGE(TAG, "[PRODUCER] TX INTRO: Invalid sub-module index %d", modIdx);
         return;
     }
 
     /* Pointer to the personality definition for this sub-module */
     const personalityDef_t* p = nodeGetActivePersonality(sub->personalityIndex); 
     if (p == NULL) {
-        ESP_LOGE(TAG, "[PRODUCER] TX INTRO: invalid Personality index %d", sub->personalityIndex);
+        // ESP_LOGE(TAG, "[PRODUCER] TX INTRO: invalid Personality index %d", sub->personalityIndex);
         return;
     }
 
@@ -276,15 +271,15 @@ void sendIntroduction(int msgPtr)
     if (txMsgID == 0) {
         return;  /* error condition, msg ID is invalid, exit the routine */
     }
-
-    ESP_LOGD(TAG,
-    "TX INTRO: MOD 0x%03X at Idx %u Part %c (Data: %02X %02X %02X)",
-    txMsgID,
-    modIdx,
-    isPartB ? 'B' : 'A',
-    msgData[5], msgData[6], msgData[7]);
-
   }
+    // ESP_LOGD(TAG,
+    // "[PRODUCER] TX INTRO: MOD 0x%03X at Idx %u Part %c (Data: %02X %02X %02X)",
+    // txMsgID,
+    // modIdx,
+    // isPartB ? 'B' : 'A',
+    // msgData[5], msgData[6], msgData[7]);
+
+
   /* put the message on the bus */
   canEnqueueMessage(txMsgID, msgData, txMsgDLC);
 } /* end sendIntroduction */

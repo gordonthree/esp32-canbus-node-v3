@@ -36,29 +36,29 @@ void consumeMsg(can_msg_t *msg)
 
     /* Special case: ROUTE_TAKE_NO_ACTION (0xFFFF, outside normal ranges) */
     if (id == ROUTE_TAKE_NO_ACTION) {
-        ESP_LOGD(TAG, "Received ROUTE_TAKE_NO_ACTION");
+        ESP_LOGV(TAG, "Received ROUTE_TAKE_NO_ACTION");
         /* no action */
         return;
     }
 
     if (id == DATA_ROUTE_ACK_ID) {
-        ESP_LOGD(TAG, "Received DATA_ROUTE_ACK_ID");
+        ESP_LOGV(TAG, "Received DATA_ROUTE_ACK_ID");
         handleNvsConfig(msg); /* handle through the NVS and System config module */
         return;
     }
 
     /* Explicitly ignore 0x300–0x31F (router handles these before consumer) */
     if (id >= 0x300 && id <= 0x31F) {
-        ESP_LOGW(TAG, "Received router command 0x%03X (before consumer)", id);
+        ESP_LOGV(TAG, "Received router command 0x%03X (before consumer)", id);
         return;
     }
 
     /* Range-based dispatch */
     for (uint8_t i = 0; i < consumerHandlerTableCount; i++) {
         const ConsumerHandlerEntry *entry = &consumerHandlerTable[i];
-        ESP_LOGD(TAG, "Searching for route for 0x%x", id);
+        ESP_LOGV(TAG, "Searching for route for 0x%x", id);
         if (id >= entry->startId && id <= entry->endId) {
-            ESP_LOGI(TAG, "Found handler for 0x%x at index %d", id, i);
+            ESP_LOGD(TAG, "Found handler for 0x%x at index %d", id, i);
             entry->handler(msg);
             return;
         }

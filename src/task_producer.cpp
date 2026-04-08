@@ -38,25 +38,23 @@ static void canHealthLog(const canHealth_t *h);
 
 static void canHealthLog(const canHealth_t *h)
 {
-    ESP_LOGI("CANHEALTH",
-        "TEC:%d REC:%d BE:%d AL:%d RXmiss:%d RXovr:%d TXfail:%d "
-        "state:%d BOFF:%u EPASS:%u RST:%u RXfull:%u TXdrop:%u",
-        h->tx_error_count,
-        h->rx_error_count,
-        h->bus_error_count,
-        h->arb_lost_count,
-        h->rx_missed_count,
-        h->rx_overrun_count,
-        h->tx_failed_count,
-        h->controller_state,
-        h->bus_off_events,
-        h->error_passive_events,
-        h->recovery_resets,
-        h->rx_queue_full_events,
-        h->tx_queue_dropped_events
-    );
+  ESP_LOGI("CANHEALTH",
+           "TEC:%d REC:%d BE:%d AL:%d RXmiss:%d RXovr:%d TXfail:%d "
+           "state:%d BOFF:%u EPASS:%u RST:%u RXfull:%u TXdrop:%u",
+           h->tx_error_count,
+           h->rx_error_count,
+           h->bus_error_count,
+           h->arb_lost_count,
+           h->rx_missed_count,
+           h->rx_overrun_count,
+           h->tx_failed_count,
+           h->controller_state,
+           h->bus_off_events,
+           h->error_passive_events,
+           h->recovery_resets,
+           h->rx_queue_full_events,
+           h->tx_queue_dropped_events);
 }
-
 
 static void updateSubModules()
 {
@@ -243,8 +241,8 @@ static void updateSubModules()
     }
     } /* end of switch-case */
 
-    sub->runTime.valueU32       = value;     /* update value */
-    sub->runTime.last_change_ms = millis();  /* update timestamp */
+    sub->runTime.valueU32 = value;          /* update value */
+    sub->runTime.last_change_ms = millis(); /* update timestamp */
   } /* end of for loop */
 }
 
@@ -399,6 +397,19 @@ static void managePeriodicMessages()
     sendIntroduction(0); /* send the node introduction message as heartbeat */
     // TODO: readCydLdr should be configured as a producer
     readCydLdr(); /* Read CYD LDR and send that data to the bus */
+    static UBaseType_t highWater = 0;
+
+    UBaseType_t waiting = uxQueueMessagesWaiting(canMsgRxQueue);
+    UBaseType_t free = uxQueueSpacesAvailable(canMsgRxQueue);
+
+    if (waiting > highWater)
+      highWater = waiting;
+
+    ESP_LOGI(TAG,
+             "[PRODUCER] RX Queue: waiting=%lu free=%lu highWater=%lu",
+             (unsigned long)waiting,
+             (unsigned long)free,
+             (unsigned long)highWater);
 
     /* If we are stuck mid-sequence, reset after 10s of silence */
     void introResetSequence(void);
@@ -414,7 +425,6 @@ static void managePeriodicMessages()
 
   /** Run submodule data collection */
   updateSubModules();
-
 }
 
 /**

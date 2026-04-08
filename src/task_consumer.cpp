@@ -112,14 +112,17 @@ static void buildSyntheticMessage(const router_action_t &action,
   // Start with a clean message
   memset(&outMsg, 0, sizeof(outMsg));
 
-  outMsg.identifier = action.actionMsgId;
+  /* copy CAN message ID */
+  outMsg.identifier = action.actionMsgId; 
+
+  /* copy CAN message data length code if provided, otherwise use CAN_MAX_DLC */ 
   if (action.actionMsgDlc > 0)
   {
     outMsg.data_length_code = action.actionMsgDlc;
   }
   else
   {
-    outMsg.data_length_code = CAN_MAX_DLC; // Always 8 for consumer actions
+    outMsg.data_length_code = CAN_MAX_DLC;
   }
 
   // Bytes 0–3 = NodeID (same as incoming messages)
@@ -129,95 +132,60 @@ static void buildSyntheticMessage(const router_action_t &action,
   outMsg.data[4]     = action.sub_idx;
    
   // Byte 5..7 = parameters from router
-  outMsg.data[5]     = action.param[0];
-  outMsg.data[6]     = action.param[1];
-  outMsg.data[7]     = action.param[2];
+  outMsg.data[5]     = action.param0;
+  outMsg.data[6]     = action.param1;
+  outMsg.data[7]     = action.param2;
 
   outMsg.isSynthetic = true; /* mark as synthetic */
 
-  // ESP_LOGD(TAG, "Building synthetic message 0x%03X data 0x%02X 0x%02X 0x%02X 0x%02X",
-          //  outMsg.identifier, outMsg.data[0], outMsg.data[1], outMsg.data[2], outMsg.data[3]);
-}
-
-static void prettyPrintMsg(const can_msg_t *msg)
-{
-  /* Enough space for "0xFF " * 8 + null */
-  char dataBuf[5 * CAN_MAX_DLC + 1]; /* 5 bytes of string per byte + null */
-  int pos = 0;
-
-  for (int i = 0; i < msg->data_length_code; i++)
-  {
-    pos += snprintf(&dataBuf[pos],
-                    sizeof(dataBuf) - pos,
-                    "0x%02X ",
-                    msg->data[i]);
-    if (pos >= sizeof(dataBuf))
-      break;
-  }
-
-  ESP_LOGD("CANMSG",
-           "ID: 0x%03X DLC: %d DATA: %s",
-           msg->identifier,
-           msg->data_length_code,
-           dataBuf);
+  ESP_LOGD(TAG, "Building synthetic message 0x%03X data 0x%02X 0x%02X 0x%02X 0x%02X",
+           outMsg.identifier, outMsg.data[0], outMsg.data[1], outMsg.data[2], outMsg.data[3]);
 }
 
 static void handleCanRX(can_msg_t &message)
 {
-  bool msgForUs = false;
+    /* --- ROUTER ALWAYS SEES THE MESSAGE --- */
+    router_action_t action = {0};
+    can_msg_t msgToConsume = {0};
 
-  if (message.data_length_code == 0)
-  {
-    /* general broadcast message is valid, message has no node id assigned */
-    msgForUs = true; /* message is for us */
-    ESP_LOGD(TAG, "[CONSUMER] RX BROADCAST MSG: 0x%x NO DATA", message.identifier);
-  }
-  else
-  {
-    /* set flag if message is for us */
-    const uint32_t targetNodeID = unpackBytestoUint32(&message.data[0]);
-    msgForUs = (targetNodeID == nodeGetNodeID());
-  }
+    bool takeAction = checkRoutes(&message, &action);
 
-  if (!msgForUs)
-  {
-    return; // message is not for us
-  }
-  
-  /* debug: dump message data into a string buffer and then send to ESP_LOGD */
-  // ESP_LOGD(TAG, "[CONSUMER] RX MSG PRE-ROUTER");
-  // prettyPrintMsg(&message);
+    if (takeAction)
+    {
+        /* Synthetic messages are always for this node */
+        buildSyntheticMessage(action, msgToConsume);
+        consumeMsg(&msgToConsume);
+        return; /* done */
+    }
 
-  /* prepare router library action buffer */
-  router_action_t action = {0};
+    /* --- NO ROUTER ACTION: APPLY NODE-ID FILTER HERE --- */
 
-  /* zero-init consumer buffer */
-  can_msg_t msgToConsume = {0};
+    bool msgForUs = false;
 
-  /** hand off message to the router library */
-  bool takeAction = checkRoutes(&message, &action);
+    if (message.data_length_code == 0)
+    {
+        /* broadcast frame */
+        msgForUs = true;
+    }
+    else
+    {
+        uint32_t targetNodeID = unpackBytestoUint32(&message.data[0]);
+      // Skip all 0s for now
+        // if (targetNodeID == 0x00000000)
+        //     msgForUs = true;  /* broadcast */
+        // else 
+        if (targetNodeID == nodeGetNodeID())
+            msgForUs = true;  /* addressed to us */
+    }
 
-  /* decide if we generate a synthetic message or use the original */
-  if (takeAction)
-  {
-    /* message router indicates we need to generate a synthetic message */
-    ESP_LOGI(TAG, "[ROUTER] ACTION: 0x%03X", action.actionMsgId);
-    buildSyntheticMessage(action, msgToConsume);
-    ESP_LOGD(TAG, "[CONSUMER] RX MSG POST-ROUTER:Synthetic Message Returned");
-    prettyPrintMsg(&msgToConsume);
-  }
-  else
-  {
-    /* pass along original message */
+    if (!msgForUs)
+        return;  /* drop message */
+
+    /* Pass original message to consumer */
     msgToConsume = message;
-    /* debug: dump message data */
-    ESP_LOGD(TAG, "[CONSUMER] RX MSG POST-ROUTER:No Action");
-    prettyPrintMsg(&msgToConsume);
-  }
+    consumeMsg(&msgToConsume);
+}
 
-  consumeMsg(&msgToConsume); /* pass message to consumer */
-
-} // end of void handleCanRX()
 
 /* =========================================================================
  *  Consumer Task

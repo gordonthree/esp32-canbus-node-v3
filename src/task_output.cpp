@@ -94,11 +94,6 @@ static void TaskOutput(void *pvParameters)
 
     vTaskDelay(pdMS_TO_TICKS(10)); /* 100 Hz output task */
     const uint32_t isrCnt = isrGetCounter();
-
-    // gpio_int_type_t t = gpio_get_intr_type(GPIO_NUM_39);
-    Serial.printf("millis=%u ISR=%u \n",
-                  millis(),
-                  isrCnt);
   }
 } /* end TaskOutput */
 

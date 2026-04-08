@@ -73,24 +73,16 @@ bool nodeStateIsInitialized(void)
 {
     return (node.nodeID != 0);
 }
-
+/** @brief Return a pointer to the nodeInfo_t struct */
 nodeInfo_t *nodeGetInfo() { return &node; }
+
+/** @brief Return the node ID as a 32-bit unsigned integer */
 uint32_t nodeGetNodeID() { return node.nodeID; }
+
+/** @brief Return the node type as a 16-bit unsigned integer */
 uint16_t nodeGetNodeType()
-{
-    uint16_t nodeTypeMsg = node.nodeTypeMsg;
-
-    /* Make sure nodeTypeMsg is within the correct range*/
-    if ((nodeTypeMsg < SYS_RESERVED_77A_ID) ||
-        (nodeTypeMsg > IFACE_RESERVED_79F_ID))
-    {
-        /* set a safe default */
-        nodeTypeMsg = BOX_MULTI_IO_ID;
-    }
-
-    return node.nodeTypeMsg;
-}
-
+{ return node.nodeTypeMsg; }
+        
 /* CRC accessor functions */
 uint16_t nodeGetCRC() { return nodeCRC; }
 void nodeSetCRC(uint16_t crc) { nodeCRC = crc; }
@@ -298,8 +290,8 @@ void printNodeInfo(const nodeInfo_t *node)
     ESP_LOGD("NODEINFO", "NodeInfo:");
     ESP_LOGD("NODEINFO", "  nodeID: 0x%08X", node->nodeID);
     ESP_LOGD("NODEINFO", "  nodeTypeMsg: 0x%03X", node->nodeTypeMsg);
-    ESP_LOGD("NODEINFO", "  nodeTypeDLC: %d", node->nodeTypeDLC);
-    ESP_LOGD("NODEINFO", "  subModCnt: %d", node->subModCnt);
+    ESP_LOGD("NODEINFO", "  nodeTypeDLC: %u", node->nodeTypeDLC);
+    ESP_LOGD("NODEINFO", "  subModCnt: %u", node->subModCnt);
 
     ESP_LOGD("NODEINFO", "  subModule array:");
     for (uint8_t i = 0; i < node->subModCnt; i++)
@@ -308,22 +300,22 @@ void printNodeInfo(const nodeInfo_t *node)
         const personalityDef_t *p =
             nodeGetPersonality(node->subModule[i].personalityIndex); // &runtimePersonalityTable[node->subModule[i].personalityIndex]
 
-        ESP_LOGD("NODEINFO", "     subModule[%d]:", i);
-        ESP_LOGD("NODEINFO", "       personalityId: %d",
+        ESP_LOGD("NODEINFO", "     subModule[%u]:", i);
+        ESP_LOGD("NODEINFO", "       personalityId: %u",
                  node->subModule[i].personalityId);
-        ESP_LOGD("NODEINFO", "       personalityIndex: %d",
+        ESP_LOGD("NODEINFO", "       personalityIndex: %u",
                  node->subModule[i].personalityIndex);
 
         ESP_LOGD("NODEINFO", "       (p->) dataMsgId: 0x%03X", p->dataMsgId);
-        ESP_LOGD("NODEINFO", "       (p->) dataMsgDlc: %d", p->dataMsgDlc);
-        ESP_LOGD("NODEINFO", "       (p->) gpio Pin: %d", p->gpioPin);
+        ESP_LOGD("NODEINFO", "       (p->) dataMsgDlc: %u", p->dataMsgDlc);
+        ESP_LOGD("NODEINFO", "       (p->) gpio Pin: %u", p->gpioPin);
         ESP_LOGD("NODEINFO", "       (p->) flags: 0x%02X", p->flags);
 
         if (node->subModule[i].personalityId == PERS_GPIO_INPUT)
         {
             ESP_LOGD("NODEINFO", "       gpio_input flags: 0x%02X",
                      node->subModule[i].config.gpioInput.flags);
-            ESP_LOGD("NODEINFO", "       gpio_input debounce_ms: %d",
+            ESP_LOGD("NODEINFO", "       gpio_input debounce_ms: %u",
                      node->subModule[i].config.gpioInput.debounce_ms);
             ESP_LOGD("NODEINFO", "       gpio_input reserved: 0x%02X",
                      node->subModule[i].config.gpioInput.reserved);
@@ -338,7 +330,7 @@ void printNodeInfo(const nodeInfo_t *node)
 
         ESP_LOGD("NODEINFO", "       introMsgId: 0x%03X",
                  node->subModule[i].introMsgId);
-        ESP_LOGD("NODEINFO", "       introMsgDLC: %d",
+        ESP_LOGD("NODEINFO", "       introMsgDLC: %u",
                  node->subModule[i].introMsgDLC);
         ESP_LOGD("NODEINFO", "       submod_flags: 0x%02X",
                  node->subModule[i].submod_flags);
@@ -347,17 +339,17 @@ void printNodeInfo(const nodeInfo_t *node)
 
         ESP_LOGD("NODEINFO", "       producer_flags: 0x%02X",
                  node->subModule[i].producer_flags);
-        ESP_LOGD("NODEINFO", "       producer_kind: %d",
+        ESP_LOGD("NODEINFO", "       producer_kind: %u",
                  node->subModule[i].producer_kind);
-        ESP_LOGD("NODEINFO", "       producer_period_ms: %d",
+        ESP_LOGD("NODEINFO", "       producer_period_ms: %u",
                  node->subModule[i].producer_period_ms);
 
         ESP_LOGD("NODEINFO", "       runTime:");
-        ESP_LOGD("NODEINFO", "         last_change_ms: %d",
+        ESP_LOGD("NODEINFO", "         last_change_ms: %u",
                  node->subModule[i].runTime.last_change_ms);
-        ESP_LOGD("NODEINFO", "         valueU32: %d",
+        ESP_LOGD("NODEINFO", "         valueU32: %u",
                  node->subModule[i].runTime.valueU32);
-        ESP_LOGD("NODEINFO", "         last_published_value: %d",
+        ESP_LOGD("NODEINFO", "         last_published_value: %u",
                  node->subModule[i].runTime.last_published_value);
     }
 

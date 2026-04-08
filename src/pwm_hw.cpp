@@ -77,7 +77,7 @@ void pwmHwInit(void)
 }
 void pwmInitChannel(uint8_t index, subModule_t* sub)
 {
-    const personalityDef_t* p = nodeGetPersonality(sub->personalityIndex);
+    const personalityDef_t* p = nodeGetActivePersonality(sub->personalityIndex);
     if (!p) return;
 
     const int pin = p->gpioPin;

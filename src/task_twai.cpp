@@ -140,11 +140,11 @@ static twai_action_t twaiHandleAlerts(uint32_t alerts, const twai_status_info_t 
     twaiDiag.fullResetCount++;
     health->recovery_resets++;
     health->last_event_ms = now;
-    if (twaiDiag.fullResetCount >= MAX_RECOVERY_ATTEMPTS)
-    {
-      ESP_LOGE(TAG, "[TWAI] Too many recovery attempts, stopping TWAI driver. Reboot required.");
-      return TWAI_ACTION_SHUTDOWN;
-    }
+    // if (twaiDiag.fullResetCount >= MAX_RECOVERY_ATTEMPTS)
+    // {
+    //   ESP_LOGE(TAG, "[TWAI] Too many recovery attempts, stopping TWAI driver. Reboot required.");
+    //   return TWAI_ACTION_SHUTDOWN;
+    // }
     ESP_LOGE(TAG, "[TWAI] Recovery timer expired, attempting TWAI hard reset");
     return TWAI_ACTION_HARD_RESET;
   }

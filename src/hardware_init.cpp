@@ -25,6 +25,7 @@
 #include "driver/gpio.h"       // ESP‑IDF GPIO configuration
 #include "node_state.h"        // nodeGetPersonality()
 #include "personality_table.h" // personalityDef_t
+#include "argb_hw.h"           // ARGB LED control
 
 #include "esp_log.h"
 
@@ -217,7 +218,7 @@ void initHardware(uint8_t index, const subModule_t *sub)
     /* skip submodules with no personality */
     if (!p)
     {
-        ESP_LOGD(TAG, "[INIT] Skipping submodule %d: No Personality", index);
+        ESP_LOGW(TAG, "[INIT] Submodule %d has no personality table entry", index);
         return;
     }
 
@@ -240,9 +241,14 @@ void initHardware(uint8_t index, const subModule_t *sub)
         // TODO: initAnalogOutput(index, sub);
         break;
 
-        /* PWM handled in pwm_hw.cpp */
-        /* ARGB handled in argb_hw.cpp */
+    case DISP_ARGB_BACKLIGHT_ID:
+    case DISP_ARGB_LED_STRIP_ID:
+    case DISP_ARGB_BUTTON_BACKLIGHT_ID:
+        /* ARGB implemented in argb_hw.cpp */
+        initArgbHardware(index, (subModule_t *)sub);
+        break;
 
+        /* PWM implemented in pwm_hw.cpp */
     default:
         /* No hardware init required */
         break;
@@ -258,8 +264,6 @@ void initNodeHardware(void)
         if (!sub)
             continue; /* Skip inactive submodule */
 
-
-        
         if (nodeIsNetworkSubmodule(i) || nodeIsInternalSubmodule(i))
             continue; /* Skip internal and network submodules */
 
@@ -271,7 +275,7 @@ void initNodeHardware(void)
 void discoverInternalSubmodules(void)
 {
     /** counter for internal submodules that are auto-created */
-    uint8_t count = 0; 
+    uint8_t count = 0;
 
     for (size_t i = 0; i < discoveryTableSize; i++)
     {
@@ -287,7 +291,9 @@ void discoverInternalSubmodules(void)
                 ESP_LOGW(TAG,
                          "[INIT] Failed to add internal submodule for personality %u",
                          d->personalityId);
-            } else {
+            }
+            else
+            {
                 ESP_LOGD(TAG,
                          "[INIT] Added internal submodule for personality %u",
                          d->personalityId);
