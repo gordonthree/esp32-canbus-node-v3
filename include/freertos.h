@@ -122,3 +122,6 @@ extern OutputCmd_t outputCmd;
 
 /** Initialize FreeRTOS resources */ 
 void freeRtosInit();
+
+
+void enqueueLoopback(const uint16_t msgid, const uint8_t *data, uint8_t dlc);
