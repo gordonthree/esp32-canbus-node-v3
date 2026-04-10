@@ -37,7 +37,7 @@ IsrGpioState::IsrGpioState() /* Constructor */
     }
 }
 
-extern "C" volatile uint32_t g_isr_counter = 0;
+static uint32_t g_isr_counter = 0;
 
 extern "C" uint32_t isrGetCounter(void)
 {
