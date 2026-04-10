@@ -68,3 +68,31 @@ void freeRtosInit()
     
     ESP_LOGI(TAG, "[INIT] FreeRTOS queue memory initialized.");
 }
+
+/** 
+ *  
+ *  @brief Enqueue a loopback message 
+ *  @details  Enqueue a producer message to be processed by the consumer task, for loopback
+ *  processing by the message router.
+ * 
+ *  @param[in] msgid   Message ID
+ *  @param[in] data    Pointer to message data
+ *  @param[in] dlc     Data length code
+ * 
+*/
+void enqueueLoopback(const uint16_t msgid, const uint8_t *data, uint8_t dlc)
+{
+  if (dlc > CAN_MAX_DLC)
+    dlc = CAN_MAX_DLC; /* Safety check */
+
+  can_msg_t frame = {0}; /* zero-initialize */
+  
+  frame.identifier = msgid;
+  frame.data_length_code = dlc;
+  memcpy(frame.data, data, dlc);
+
+  frame.isLocal = true;
+  frame.isSynthetic = false;
+
+  xQueueSend(canMsgRxQueue, &frame, QUEUE_NO_WAIT);
+}
