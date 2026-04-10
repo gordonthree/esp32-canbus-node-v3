@@ -58,7 +58,7 @@ void sendRouteList()
 
   // Count active routes
   for (int i = 0; i < MAX_ROUTES; i++) {
-    if (g_routesCrc[i].in_use)
+    if (routerIsRouteInUse(i))
         routeCount++;
   }
 
@@ -92,7 +92,7 @@ void sendRouteList()
 
   uint8_t chunkIdx = 0;
   for (int idx = 0; idx < MAX_ROUTES; idx++) {
-    if (g_routesCrc[idx].in_use) {
+    if (routerIsRouteInUse(idx)) {
 
       /* Update CRC value with the CRC for this route entry */
       crc = crc16_ccitt_update(crc,
