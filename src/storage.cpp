@@ -53,6 +53,7 @@ void printHexDump(const void *ptr, size_t size)
     ESP_LOGD(TAG_HEX, "---------------------------");
 }
 
+
 /**
  * @brief Create a sanitized copy of a nodeInfo_t struct.
  * @details This function takes a nodeInfo_t struct as input and creates a new
@@ -140,7 +141,8 @@ void loadRoutesFromNVS()
         /* Load CRC data for the route table */
         if (prefs.isKey(ROUTE_CRC_KEY))
         {
-            prefs.getBytes(ROUTE_CRC_KEY, &g_routesCrc, sizeof(g_routesCrc));
+            route_entry_crc_t *routeCrc = &g_routeCrc[0];
+            prefs.getBytes(ROUTE_CRC_KEY, &g_routeCrc, sizeof(g_routeCrc));
         }
         prefs.end();
     }
@@ -157,15 +159,17 @@ void saveRoutesToNVS()
     for (uint8_t i = 0; i < MAX_ROUTES; i++)
     {
         /* Pointer to CRC data struct */
-        route_entry_crc_t *crc = &g_routesCrc[i];
+        route_entry_crc_t *routeCrc = &g_routeCrc[i];
 
-        if (!crc->in_use)
+        const bool inUse = routerIsRouteInUse(i);
+
+        if (!inUse)
             continue; /* skip unused entries */
 
-        crc->ts = getEpochTime();
+        routeCrc->ts = getEpochTime();
 
-        ESP_LOGD(TAG, "[CRC] route %d CRC=0x%04X TS=%d in_use=%d",
-                 i, crc->crc, crc->ts, crc->in_use);
+        ESP_LOGD(TAG, "[CRC] route %u CRC=0x%04X TS=%lu in_use=%u",
+                 i, routeCrc->crc, routeCrc->ts, inUse);
     }
 
     if (xSemaphoreTake(flashMutex, pdMS_TO_TICKS(1000)) != pdTRUE)
@@ -176,7 +180,7 @@ void saveRoutesToNVS()
     {
         prefs.putUChar(ROUTE_VERSION, ROUTER_VERSION);                   /* Write version */
         prefs.putBytes(ROUTE_KEY, g_routes, sizeof(g_routes));           /* Write route table */
-        prefs.putBytes(ROUTE_CRC_KEY, g_routesCrc, sizeof(g_routesCrc)); /* Write route table CRC */
+        prefs.putBytes(ROUTE_CRC_KEY, g_routeCrc, sizeof(g_routeCrc));   /* Write route table CRC */ 
         prefs.end();
     }
 
