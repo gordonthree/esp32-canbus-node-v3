@@ -48,6 +48,8 @@ static const char *TAG = "task_consumer";
  * =========================================================================
  * LOCAL FUNCTION DECLARATIONS
  * =========================================================================*/
+static uint32_t my_timestamp_ms(void);
+static void routerLogAdapter(const char *msg);
 
 static void setSwMomDur(can_msg_t *msg);
 
@@ -65,6 +67,15 @@ static void handleCanRX(can_msg_t &message);
  * =========================================================================
  * LOCAL FUNCTIONS
  * =========================================================================*/
+static uint32_t my_timestamp_ms(void)
+{
+    return millis();   // or esp_timer_get_time()/1000
+}
+
+static void routerLogAdapter(const char *msg)
+{
+  ESP_LOGI("ROUTER", "%s", msg);
+}
 
 static void setSwMomDur(can_msg_t *msg)
 {
@@ -234,6 +245,13 @@ static void TaskConsumer(void *pvParameters)
 
 void startTaskConsumer(void)
 {
+  /* bind timestamp callback for can_router */
+  router_set_timestamp_callback(my_timestamp_ms);
+
+  /* bind log callback for can_router */
+  router_set_log_callback(routerLogAdapter);
+
+  /* Start the consumer task */
   xTaskCreate(
       TaskConsumer,
       "Task Consumer",
