@@ -149,7 +149,7 @@ static void buildSyntheticMessage(const router_action_t &action,
 
   outMsg.isSynthetic = true; /* mark as synthetic */
 
-  ESP_LOGD(TAG, "Building synthetic message 0x%03X data 0x%02X 0x%02X 0x%02X 0x%02X",
+  ESP_LOGV(TAG, "Building synthetic message 0x%03X data 0x%02X 0x%02X 0x%02X 0x%02X",
            outMsg.identifier, outMsg.data[0], outMsg.data[1], outMsg.data[2], outMsg.data[3]);
 }
 
