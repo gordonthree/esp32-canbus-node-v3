@@ -31,6 +31,8 @@ static void TaskProducer(void *pvParameters);
 static void handleInputCommand(inputCommandMsg_t *cmd);
 static void internalSubmoduleTick(uint32_t now);
 static void canHealthLog(const canHealth_t *h);
+static void producerPublishEvent(producer_event_t *evt);
+static void producerPublish(const uint16_t msgId, const uint8_t *payload, uint8_t dlc);
 
 /* =========================================================================
  *  Private functions
@@ -246,7 +248,23 @@ static void updateSubModules()
   } /* end of for loop */
 }
 
-static void routerPublishEvent(producer_event_t *evt)
+/**
+ * @brief Publish a message to the CAN bus and perform local loopback
+ *
+ * @param[in] msgId   CAN message ID
+ * @param[in] payload Pointer to message payload data
+ * @param[in] dlc     Data length code
+ */
+static void producerPublish(const uint16_t msgId, const uint8_t *payload, uint8_t dlc)
+{
+    // 1. Send to CAN hardware
+    canEnqueueMessage(msgId, payload, dlc);
+
+    // 2. Local loopback
+    enqueueLoopback(msgId, payload, dlc);
+}
+
+static void producerPublishEvent(producer_event_t *evt)
 {
   const uint32_t now = millis();
   const uint8_t subIdx = evt->sub_idx;
@@ -306,7 +324,7 @@ static void routerPublishEvent(producer_event_t *evt)
   }
 
   /* Send message */
-  canEnqueueMessage(p->dataMsgId, payload, dlc);
+  producerPublish(p->dataMsgId, payload, dlc);
 
   ESP_LOGV(TAG, "[PRODUCER] Tx: sub %u msg 0x%03X dlc %u val %u",
            subIdx, p->dataMsgId, dlc, valueU32);
@@ -503,7 +521,7 @@ static void handleInputCommand(inputCommandMsg_t *cmd)
     }
     else if (evt.ready)
     {
-      routerPublishEvent(&evt);
+      producerPublishEvent(&evt);
     }
     else
     { /* log a debug message if the event was processed but not ready to publish */
