@@ -194,7 +194,7 @@ void attachDigitalInputISR(uint8_t pin, uint8_t subIdx)
     bool inv_flag = (inputFlags & INPUT_FLAG_INVERT) != 0;
     uint8_t mode  = INPUT_FLAG_GET_MODE(inputFlags);
 
-    if (mode == INPUT_MODE_MOMENTARY) {
+    if (mode == INPUT_MODE_MOMENTARY || mode == INPUT_MODE_NORMAL) {
         // Momentary needs both press and release
         io_conf.intr_type = GPIO_INTR_ANYEDGE;
     }
@@ -221,6 +221,9 @@ void attachDigitalInputISR(uint8_t pin, uint8_t subIdx)
 
     // Register pin → submodule mapping
     isrGpio.subIdx[pin] = subIdx;
+
+    // Remove any existing ISR configuration
+    gpio_isr_handler_remove((gpio_num_t)pin);
 
     // Attach the ISR handler
     esp_err_t err = gpio_isr_handler_add((gpio_num_t)pin,
