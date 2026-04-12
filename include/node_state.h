@@ -27,6 +27,13 @@ extern "C" {
 /*  NODE STATE API
  * ============================================================================ */
 
+/** Reusable code block for runtime state pointer. CAUTION: returns void */
+#define GET_RUNTIME_OR_RETURN_VOID(subIdx) \
+    runTime_t *rt = nodeGetRuntime(subIdx); \
+    if (!rt) \
+        return;
+
+
 /* Node state accessor functions */
 nodeInfo_t*    nodeGetInfo();
 subModule_t*   nodeGetSubModule(const uint8_t sub_idx);

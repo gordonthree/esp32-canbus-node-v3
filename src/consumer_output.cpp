@@ -16,11 +16,12 @@ static void setSwBlinkDelay(can_msg_t *msg, subModule_t *sub)
   if (SUBMODULE_INDEX_INVALID(switchID))
     return;                         /* invalid switch ID */
 
-  const personalityDef_t *p =
-      nodeGetActivePersonality(sub->personalityIndex); /* Pointer to the personality definition for this sub-module */
+  GET_RUNTIME_OR_RETURN_VOID(switchID);
+  // const personalityDef_t *p =
+  //     nodeGetActivePersonality(sub->personalityIndex); /* Pointer to the personality definition for this sub-module */
 
   sub->config.gpioOutput.param1 = freq; /* update blink delay */
-  sub->runTime.valueU32 = freq;         /* update blink delay runtime */
+  rt->valueU32 = freq;         /* update blink delay runtime */
 
   /* no need to queue hardware update, new freq takes effect immediately */
 
@@ -35,8 +36,10 @@ static void setSwStrobePat(can_msg_t *msg, subModule_t *sub)
   if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
 
+  GET_RUNTIME_OR_RETURN_VOID(switchID);
+
   sub->config.gpioOutput.param2 = strobePat; /* update strobe pattern */
-  sub->runTime.valueU32 = strobePat;         /* update strobe pattern runtime */
+  rt->valueU32 = strobePat;         /* update strobe pattern runtime */
 
   /* Reset strobe hardware */
   enqueueOutputCmd(
@@ -56,12 +59,14 @@ static void setPWMDuty(can_msg_t *msg, subModule_t *sub)
   if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
 
+  GET_RUNTIME_OR_RETURN_VOID(switchID);
+
   pwmDuty = (double)(pwmDuty / 100.0);             /* convert to decimal */
   pwmDuty = (double)(pwmDuty * LEDC_13BIT_100PCT); /* convert to LEDC duty cycle */
 
   /* Update runtime config */
   sub->config.gpioOutput.param2 = (uint8_t)msg->data[5]; /* store duty cycle percent */
-  sub->runTime.valueU32 = (uint32_t)pwmDuty;             /* store duty cycle value in runtime */
+  rt->valueU32 = (uint32_t)pwmDuty;             /* store duty cycle value in runtime */
 
   /* Queue hardware update */
   enqueueOutputCmd(
@@ -80,11 +85,12 @@ static void setPWMFreq(can_msg_t *msg, subModule_t *sub)
   if (SUBMODULE_INDEX_INVALID(switchID))
     return; /* invalid switch ID */
 
+  GET_RUNTIME_OR_RETURN_VOID(switchID);
   /* Calculate working frequency */
   uint32_t workingFreq = (uint32_t)(pwmFreq * PWM_SCALING_FACTOR);
 
   sub->config.gpioOutput.param1 = pwmFreq; /* update pwm frequency index in config */
-  sub->runTime.valueU32 = workingFreq;     /* store full pwm frequency in runtime */
+  rt->valueU32 = workingFreq;     /* store full pwm frequency in runtime */
 
   /* Queue hardware update */
   enqueueOutputCmd(
@@ -110,6 +116,7 @@ static void setSwitchMode(can_msg_t *msg, subModule_t *sub)
 
   // TODO clearPwmHardware(switchID); /* in case it was previously PWM */
 
+  
   ESP_LOGI(TAG, "Switch %d set to mode %d", switchID, switchMode);
 
   switch (switchMode)

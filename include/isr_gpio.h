@@ -143,7 +143,7 @@ uint32_t isrGpioGetLastClickMs(gpio_num_t pin);
 uint32_t isrGpioGetPressStartMs(gpio_num_t pin);
 uint8_t  isrGpioGetClickCount(gpio_num_t pin);
 
-
+uint32_t isrGetCounter(void);
 
 #ifdef __cplusplus
 }

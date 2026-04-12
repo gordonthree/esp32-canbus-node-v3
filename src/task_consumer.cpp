@@ -159,7 +159,7 @@ static void handleCanRX(can_msg_t &message)
     router_action_t action = {0};
     can_msg_t msgToConsume = {0};
 
-    bool takeAction = checkRoutes(&message, &action);
+    bool takeAction = checkRoutes(&message, nodeGetNodeID(), &action);
 
     if (takeAction)
     {
@@ -204,17 +204,17 @@ static void handleCanRX(can_msg_t &message)
 
 static void TaskConsumer(void *pvParameters)
 {
-  can_msg_t msg;
+  can_msg_t msg = {0};
 
   ESP_LOGI(TAG, "[RTOS] Consumer task starting...");
 
   ESP_LOGI(TAG, "[ROUTER] Loading routes from NVS...");
+
   loadRoutesFromNVS();
 
-  const uint8_t routeCount = routerGetRouteCount();
+  const uint8_t routeCount = routerGetActiveRouteCount();
   if (routeCount > 0) {
-    ESP_LOGI(TAG, "[ROUTER] Load complete, %d routes loaded.", routerGetRouteCount());
-    // prettyPrintRoutes();
+    ESP_LOGI(TAG, "[ROUTER] Load complete, %u active routes.", routeCount);
   }
   else {
     ESP_LOGW(TAG, "[ROUTER] No routes loaded.");

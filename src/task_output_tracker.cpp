@@ -30,8 +30,8 @@ static outputTracker_t trackers[MAX_SUB_MODULES];
  * =========================================================================
  */
 
-static void handleMomentaryLogic(subModule_t *sub, outputTracker_t &trk);
-static void handleStrobeLogic(subModule_t *sub, outputTracker_t &trk);
+static void handleMomentaryLogic(const uint8_t sub_idx, outputTracker_t &trk);
+static void handleStrobeLogic(const uint8_t sub_idx, outputTracker_t &trk);
 
 /*
  * =========================================================================
@@ -39,8 +39,10 @@ static void handleStrobeLogic(subModule_t *sub, outputTracker_t &trk);
  * =========================================================================
  */
 
-static void handleMomentaryLogic(subModule_t *sub, outputTracker_t &trk)
+static void handleMomentaryLogic(const uint8_t sub_idx, outputTracker_t &trk)
 {
+    subModule_t *sub = nodeGetActiveSubModule(sub_idx);
+    
     /* Pointer to the personality definition for this sub-module */
     const personalityDef_t *p =
         nodeGetActivePersonality(sub->personalityIndex);
@@ -51,22 +53,27 @@ static void handleMomentaryLogic(subModule_t *sub, outputTracker_t &trk)
     /* If timer still running → keep output HIGH */
     if (millis() < trk.nextActionTime)
     {
-        setOutput(sub, p, true);
+        setOutput(sub_idx, true);
         return;
     }
 
     /* Timer expired → turn output OFF */
     ESP_LOGD(TAG, "Momentary expired: sub=%u", sub->personalityIndex);
 
-    setOutput(sub, p, false);
+    setOutput(sub_idx, false);
     trk.isActive = false;
 }
 
-static void handleStrobeLogic(subModule_t *sub, outputTracker_t &trk)
+static void handleStrobeLogic(const uint8_t sub_idx, outputTracker_t &trk)
 {
+    subModule_t *sub = nodeGetActiveSubModule(sub_idx);
+
+    GET_RUNTIME_OR_RETURN_VOID(sub_idx);
+
     /* Pointer to the personality definition for this sub-module */
     const personalityDef_t *p =
         nodeGetActivePersonality(sub->personalityIndex);
+
     const uint8_t outPin = p->gpioPin; /* GPIO output pin */
 
     /* If the strobe is not active, do nothing */
@@ -85,7 +92,7 @@ static void handleStrobeLogic(subModule_t *sub, outputTracker_t &trk)
     {
         ESP_LOGW(TAG, "Invalid strobe pattern %u on sub %u", patternId, sub->personalityIndex);
         trk.isActive = false;
-        setOutput(sub, p, false);
+        setOutput(sub_idx, false);
         return;
     }
 
@@ -97,7 +104,7 @@ static void handleStrobeLogic(subModule_t *sub, outputTracker_t &trk)
     {
         ESP_LOGW(TAG, "Empty strobe pattern %u on sub %u", patternId, sub->personalityIndex);
         trk.isActive = false;
-        setOutput(sub, p, false);
+        setOutput(sub_idx, false);
         return;
     }
 
@@ -112,7 +119,7 @@ static void handleStrobeLogic(subModule_t *sub, outputTracker_t &trk)
     const bool state = (trk.currentStep % 2 == 0);
 
     /* Set the GPIO output state */
-    setOutput(sub, p, state);
+    setOutput(sub_idx, state);
 
     /* Schedule the next step */
     trk.nextActionTime = millis() + pattern[trk.currentStep];
@@ -120,8 +127,9 @@ static void handleStrobeLogic(subModule_t *sub, outputTracker_t &trk)
     ESP_LOGV(TAG, "Strobe step: sub=%u step=%u state=%d",
              sub->personalityIndex, trk.currentStep, state);
 
+    
     /* Record the GPIO state in runTime */
-    sub->runTime.valueU32 = packStrobeState(
+    rt->valueU32 = packStrobeState(
         sub->config.gpioOutput.param2, // pattern ID
         trk.currentStep,               // step index
         state                          // GPIO state
@@ -228,11 +236,11 @@ void outputTrackerTick(void)
         switch (sub->config.gpioOutput.mode)
         {
         case OUT_MODE_MOMENTARY:
-            handleMomentaryLogic(sub, trk);
+            handleMomentaryLogic(i, trk);
             break;
 
         case OUT_MODE_STROBE:
-            handleStrobeLogic(sub, trk);
+            handleStrobeLogic(i, trk);
             break;
 
         case OUT_MODE_BLINK:
@@ -246,7 +254,7 @@ void outputTrackerTick(void)
         case OUT_MODE_ALWAYS_ON:
             if (!trk.hasBeenSet)
             {
-                setOutput(sub, p, true);
+                setOutput(i, true);
                 trk.hasBeenSet = true;
                 ESP_LOGD(TAG, "Always ON: sub=%u", sub->personalityIndex);
             }
@@ -255,7 +263,7 @@ void outputTrackerTick(void)
         case OUT_MODE_ALWAYS_OFF:
             if (!trk.hasBeenSet)
             {
-                setOutput(sub, p, false);
+                setOutput(i, false);
                 trk.hasBeenSet = true;
                 ESP_LOGD(TAG, "Always OFF: sub=%u", sub->personalityIndex);
             }

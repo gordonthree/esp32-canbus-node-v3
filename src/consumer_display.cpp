@@ -19,6 +19,8 @@ static void handleColorCommand(const can_msg_t *msg)
     const uint8_t subIdx = msg->data[4];
     const uint8_t colorIndex = msg->data[5];
 
+    GET_RUNTIME_OR_RETURN_VOID(subIdx);
+
     if (!nodeIsValidSubmodule(subIdx))
         return;
 
@@ -36,8 +38,8 @@ static void handleColorCommand(const can_msg_t *msg)
         return; /* exit if invalid color index */
 
     /* Producer: Update the color value in runTime */
-    sub->runTime.valueU32 = packRgb(c->R, c->G, c->B);
-    sub->runTime.last_change_ms = millis();
+    rt->valueU32 = packRgb(c->R, c->G, c->B);
+    rt->last_change_ms = millis();
 
     /* Queue hardware update */
     enqueueOutputCmd(
@@ -55,14 +57,11 @@ static void setDisplayMode(can_msg_t *msg, uint8_t displayMode)
     if (!nodeIsValidSubmodule(subIdx))
         return;
 
-    subModule_t *sub = nodeGetActiveSubModule(subIdx);
-
-    if (!sub)
-        return;
+    GET_RUNTIME_OR_RETURN_VOID(subIdx);
 
     /* Producer: Update the display mode in runTime */
-    sub->runTime.valueU32 = displayMode;
-    sub->runTime.last_change_ms = millis();
+    rt->valueU32 = displayMode;
+    rt->last_change_ms = millis();
 
     enqueueOutputCmd(
         OUTPUT_CMD_SET_DISPLAY_MODE,

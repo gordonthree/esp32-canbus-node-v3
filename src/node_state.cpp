@@ -25,6 +25,9 @@ uint16_t nodeCRC = 0xFFFF; /* start with an invalid CRC */
 /** Current node configuration */
 nodeInfo_t node;
 
+/** Runtime data storage */
+runTime_t runtime_state[MAX_SUB_MODULES];
+
 /* ============================================================================
  *  PRIVATE FUNCTIONS
  * ============================================================================ */
@@ -49,6 +52,9 @@ void nodeInit(void)
 
     /* Mark all submodules as unused */
     memset(node.subModule, 0xFF, sizeof(node.subModule));
+
+    /* Mark all runtimes as unused */
+    memset(runtime_state, 0, sizeof(runtime_state));
 }
 
 /** Read the MAC address from hardware, store it in nodeInfo_t */
@@ -100,11 +106,9 @@ void nodeSetValidConfig(bool valid) { FLAG_NODE_CONFIG_VALID = valid; }
  */
 runTime_t *nodeGetRuntime(const uint8_t sub_idx)
 {
-    subModule_t *sub = nodeGetSubModule(sub_idx);
-    if (!sub)
+    if (sub_idx >= MAX_SUB_MODULES)
         return NULL;
-
-    return &sub->runTime;
+    return &runtime_state[sub_idx];
 }
 
 /**
@@ -346,11 +350,11 @@ void printNodeInfo(const nodeInfo_t *node)
 
         ESP_LOGD("NODEINFO", "       runTime:");
         ESP_LOGD("NODEINFO", "         last_change_ms: %u",
-                 node->subModule[i].runTime.last_change_ms);
+                 runtime_state[i].last_change_ms);
         ESP_LOGD("NODEINFO", "         valueU32: %u",
-                 node->subModule[i].runTime.valueU32);
+                 runtime_state[i].valueU32);
         ESP_LOGD("NODEINFO", "         last_published_value: %u",
-                 node->subModule[i].runTime.last_published_value);
+                 runtime_state[i].last_published_value);
     }
 
     ESP_LOGD("NODEINFO", "--------- nodeInfo_t ---------");

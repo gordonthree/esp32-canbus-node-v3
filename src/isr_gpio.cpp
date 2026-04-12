@@ -39,7 +39,7 @@ IsrGpioState::IsrGpioState() /* Constructor */
 
 static uint32_t g_isr_counter = 0;
 
-extern "C" uint32_t isrGetCounter(void)
+uint32_t isrGetCounter(void)
 {
     return g_isr_counter;
 }
@@ -191,12 +191,25 @@ void attachDigitalInputISR(uint8_t pin, uint8_t subIdx)
         io_conf.pull_down_en = (gpio_pulldown_t)GPIO_PULLDOWN_DISABLE;
     }
 
-    // Apply inversion flag to interrupt type
-    if (inputFlags & INPUT_FLAG_INVERT) {
-        io_conf.intr_type = GPIO_INTR_NEGEDGE;   // active-low button
-    } else {
-        io_conf.intr_type = GPIO_INTR_POSEDGE;   // active-high button
+    bool inv_flag = (inputFlags & INPUT_FLAG_INVERT) != 0;
+    uint8_t mode  = INPUT_FLAG_GET_MODE(inputFlags);
+
+    if (mode == INPUT_MODE_MOMENTARY) {
+        // Momentary needs both press and release
+        io_conf.intr_type = GPIO_INTR_ANYEDGE;
     }
+    else {
+        // All other modes only need the activation edge
+        io_conf.intr_type = inv_flag ? GPIO_INTR_NEGEDGE   // active-low press
+                                     : GPIO_INTR_POSEDGE;  // active-high press
+    }
+
+    // Apply inversion flag to interrupt type
+    // if (inputFlags & INPUT_FLAG_INVERT) {
+    //     io_conf.intr_type = GPIO_INTR_NEGEDGE;   // active-low button
+    // } else {
+    //     io_conf.intr_type = GPIO_INTR_POSEDGE;   // active-high button
+    // }
 
     Serial.print("DEBUG: io_conf.intr_type = ");
     Serial.println((int)io_conf.intr_type); /**< Cast enum to int to display the raw value */
@@ -287,6 +300,8 @@ extern "C" void IRAM_ATTR gpio_isr_handler(void *arg)
     gpio_event_t evt = {
         .subIdx = (uint8_t)subIdx,
         .raw = raw};
+
+    // ESP_EARLY_LOGD("ISR", "GPIO %u raw=%u", pinNum, raw);
 
     BaseType_t hpTaskWoken = pdFALSE;
     xQueueSendFromISR(gpioEventQueue, &evt, &hpTaskWoken); // NEW IDENTIFIER #2

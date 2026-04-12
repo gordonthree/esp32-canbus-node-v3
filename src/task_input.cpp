@@ -29,9 +29,11 @@ static void TaskInput(void *pvParameters);
 
 static void processGpioEvent(uint8_t subIdx, uint8_t raw)
 {
-  // ESP_LOGD(TAG, "subIdx=%u raw=%u", subIdx, raw);
+  // ESP_LOGD(TAG, "subIdx=%u raw=%u isr=%lu", subIdx, raw, isrGetCounter());
   if (SUBMODULE_INDEX_INVALID(subIdx))
     return;
+
+  GET_RUNTIME_OR_RETURN_VOID(subIdx);
 
   const uint32_t now = millis(); /**< timestamp in ms */
   subModule_t *sub = nodeGetActiveSubModule(subIdx); /**< pointer to the submodule */
@@ -42,7 +44,7 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
   /** Test for valid pin number */
   if (pinNum < GPIO_NUM_MAX)
   {
-    ESP_LOGV(TAG, "[INPUT] sub=%u pin=%u raw=%u", subIdx, pinNum, raw);
+    // ESP_LOGD(TAG, "[INPUT] sub=%u pin=%u raw=%u", subIdx, pinNum, raw);
 
     const gpio_num_t pin = (gpio_num_t)pinNum; /**< GPIO pin */
 
@@ -55,22 +57,22 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
     /* Apply inversion */
     const uint8_t value = inv ? !raw : raw; /**< Invert raw value if requested, store as output value */
 
-    /* Raw change detection */
+    /* Record raw state */
     isrGpioUpdateRaw(pin, value, now);
 
-    ESP_LOGV(TAG, "[RAW] pin=%u value=%u lastRaw=%u lastChange=%u",
-             pinNum,
-             value,
-             isrGpioGetRaw((gpio_num_t)pinNum),
-             isrGpioGetLastChange((gpio_num_t)pinNum));
+    // ESP_LOGV(TAG, "[RAW] pin=%u value=%u lastRaw=%u lastChange=%u",
+    //          pinNum,
+    //          value,
+    //          isrGpioGetRaw((gpio_num_t)pinNum),
+    //          isrGpioGetLastChange((gpio_num_t)pinNum));
 
-    ESP_LOGV(TAG, "[DEBOUNCE] sub=%u mode=%u now=%u lastChange=%u diff=%u debounceMs=%u",
-             subIdx,
-             mode,
-             now,
-             isrGpioGetLastChange((gpio_num_t)pinNum),
-             now - isrGpioGetLastChange((gpio_num_t)pinNum),
-             debounceMs);
+    // ESP_LOGV(TAG, "[DEBOUNCE] sub=%u mode=%u now=%u lastChange=%u diff=%u debounceMs=%u",
+    //          subIdx,
+    //          mode,
+    //          now,
+    //          isrGpioGetLastChange((gpio_num_t)pinNum),
+    //          now - isrGpioGetLastChange((gpio_num_t)pinNum),
+    //          debounceMs);
 
     /* Debounce window, skip it if debounce is disabled */
     if (debounceMs != INPUT_DEBOUNCE_DISABLED &&
@@ -87,39 +89,55 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
     // isrGpio.lastStableMs[pinNum] = now;
 
     isrGpioUpdateStable(pin, value, now);
-    ESP_LOGV(TAG, "[STABLE] sub=%u value=%u mode=%u now=%u",
-             subIdx, value, mode, now);
+    // ESP_LOGD(TAG, "[STABLE] sub=%u value=%u mode=%u now=%u",
+    //          subIdx, value, mode, now);
 
     /* ============================
      *  MODE: MOMENTARY
      * ============================ */
     if (mode == INPUT_MODE_MOMENTARY)
     {
-      sub->runTime.valueU32 = value ? MOMENTARY_ACTIVE_VALUE
-                                    : MOMENTARY_RELEASE_VALUE;
-      sub->runTime.last_change_ms = now;
-      ESP_LOGV(TAG, "[MOMENTARY] sub=%u valueU32=%u",
-               subIdx, sub->runTime.valueU32);
+      uint32_t old_value = rt->valueU32;
+      // rt->valueU32 = value ? MOMENTARY_ACTIVE_VALUE
+      //                      : MOMENTARY_RELEASE_VALUE;
+      // rt->last_change_ms = now;
+      uint32_t new_value = value ? MOMENTARY_ACTIVE_VALUE
+                           : MOMENTARY_RELEASE_VALUE;
+
+      if (rt->valueU32 == new_value) {
+          // No logical change → ignore this ISR event
+          return;
+      }
+
+      uint32_t isr_counter = isrGetCounter();
+
+      rt->valueU32 = new_value;
+      rt->last_change_ms = now;
+
+      ESP_LOGD(TAG, "[MOMENTARY] sub=%u isr=%lu raw=%lu valueU32=%lu",
+               subIdx, isr_counter, raw, rt->valueU32);
     }
     /* ============================
      *  MODE: TOGGLE
      * ============================ */
     else if (mode == INPUT_MODE_TOGGLE && value == GPIO_STATE_HIGH)
     {
-      sub->runTime.valueU32 ^= TOGGLE_BIT_MASK; // toggle bit 0
-      sub->runTime.last_change_ms = now;
-      ESP_LOGV(TAG, "[TOGGLE] sub=%u valueU32=%u",
-               subIdx, sub->runTime.valueU32);
+
+      rt->valueU32 ^= TOGGLE_BIT_MASK; // toggle bit 0
+      rt->last_change_ms = now;
+      
+      // ESP_LOGD(TAG, "[TOGGLE] sub=%u raw=%u old_value=%lu temp_value=%lu valueU32=%lu macro=0x%08X",
+      //          subIdx, raw, old_value, temp_value, rt->valueU32, TOGGLE_BIT_MASK); 
     }
     /* ============================
      *  MODE: LATCH
      * ============================ */
     else if (mode == INPUT_MODE_LATCH)
     {
-      sub->runTime.valueU32 = value ? GPIO_LATCH_ON : GPIO_LATCH_OFF;
-      sub->runTime.last_change_ms = now;
-      ESP_LOGV(TAG, "[LATCH] sub=%u valueU32=%u",
-               subIdx, sub->runTime.valueU32);
+      rt->valueU32 = value ? GPIO_LATCH_ON : GPIO_LATCH_OFF;
+      rt->last_change_ms = now;
+      ESP_LOGD(TAG, "[LATCH] sub=%u valueU32=%u",
+               subIdx, rt->valueU32);
     }
     /* ============================
      *  MODE: NORMAL BUTTON
@@ -138,40 +156,40 @@ static void processGpioEvent(uint8_t subIdx, uint8_t raw)
 
         if (pressDuration >= NORMAL_LONG_PRESS_MS)
         {
-          sub->runTime.valueU32 = GPIO_LONG_PRESS; // long press
+          rt->valueU32 = GPIO_LONG_PRESS; // long press
         }
         else
         {
           if ((now - isrGpioGetLastClickMs(pin)) < NORMAL_DOUBLE_CLICK_MS)
           {
-            sub->runTime.valueU32 = GPIO_DOUBLE_CLICK; // double click
+            rt->valueU32 = GPIO_DOUBLE_CLICK; // double click
             isrGpioUpdateClickCount(pin, 0);
           }
           else
           {
-            sub->runTime.valueU32 = GPIO_SINGLE_CLICK; // single click
+            rt->valueU32 = GPIO_SINGLE_CLICK; // single click
             isrGpioUpdateClickCount(pin, 1);
           }
           isrGpioUpdateLastClickMs(pin, now);
         }
 
-        sub->runTime.last_change_ms = now;
+        rt->last_change_ms = now;
       }
       ESP_LOGI(TAG, "[NORMAL] sub=%u valueU32=%u",
-               subIdx, sub->runTime.valueU32);
+               subIdx, rt->valueU32);
     }
     else
     {
       /* fall-through: if mode doesn't match, we just leave runTime unchanged */
       ESP_LOGD(TAG, "[GPIO] sub=%u valueU32=%u",
-               subIdx, sub->runTime.valueU32);
+               subIdx, rt->valueU32);
     } /* end of mode switch */
   } else {  /* end of pinNum check, non-gpio pin */
-    sub->runTime.valueU32 = raw;
-    sub->runTime.last_change_ms = now;
+    rt->valueU32 = raw;
+    rt->last_change_ms = now;
   }
   /* Enqueue input event */
-  ESP_LOGD(TAG, "\n[INPUT-ENQUEUE] sub=%u valueU32=%u\n", subIdx, sub->runTime.valueU32);
+  // ESP_LOGD(TAG, "[INPUT-ENQUEUE] sub=%u valueU32=%u", subIdx, rt->valueU32);
   enqueueInputCmd(
       INPUT_CMD_GPIO_EVENT, /* this is a GPIO event */
       subIdx,               /* submodule index */

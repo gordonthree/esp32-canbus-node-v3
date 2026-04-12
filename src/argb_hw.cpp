@@ -122,41 +122,57 @@ void initArgbHardware(uint8_t index, subModule_t *sub)
         {
             case 0:
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod0>*)g_argbStrips[index])->Begin();
+                if (!(sub->submod_flags & SUBMOD_FLAG_SAVE_STATE))
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod0>*)g_argbStrips[index])->ClearTo(RgbColor(0, 0, 0));
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod0>*)g_argbStrips[index])->Show();
                 break;
 
             case 1:
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod1>*)g_argbStrips[index])->Begin();
+                if (!(sub->submod_flags & SUBMOD_FLAG_SAVE_STATE))
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod1>*)g_argbStrips[index])->ClearTo(RgbColor(0, 0, 0));
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod1>*)g_argbStrips[index])->Show();
                 break;
 
             case 2:
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod2>*)g_argbStrips[index])->Begin();
+                if (!(sub->submod_flags & SUBMOD_FLAG_SAVE_STATE))
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod2>*)g_argbStrips[index])->ClearTo(RgbColor(0, 0, 0));
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod2>*)g_argbStrips[index])->Show();
                 break;
 
             case 3:
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod3>*)g_argbStrips[index])->Begin();
+                if (!(sub->submod_flags & SUBMOD_FLAG_SAVE_STATE))
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod3>*)g_argbStrips[index])->ClearTo(RgbColor(0, 0, 0));
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod3>*)g_argbStrips[index])->Show();
                 break;
 
             case 4:
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod4>*)g_argbStrips[index])->Begin();
+                if (!(sub->submod_flags & SUBMOD_FLAG_SAVE_STATE))
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod4>*)g_argbStrips[index])->ClearTo(RgbColor(0, 0, 0));
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod4>*)g_argbStrips[index])->Show();
                 break;
 
             case 5:
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod5>*)g_argbStrips[index])->Begin();
+                if (!(sub->submod_flags & SUBMOD_FLAG_SAVE_STATE))
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod5>*)g_argbStrips[index])->ClearTo(RgbColor(0, 0, 0));
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod5>*)g_argbStrips[index])->Show();
                 break;
 
             case 6:
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod6>*)g_argbStrips[index])->Begin();
+                if (!(sub->submod_flags & SUBMOD_FLAG_SAVE_STATE))
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod6>*)g_argbStrips[index])->ClearTo(RgbColor(0, 0, 0));
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod6>*)g_argbStrips[index])->Show();
                 break;
 
             case 7:
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod7>*)g_argbStrips[index])->Begin();
+                if (!(sub->submod_flags & SUBMOD_FLAG_SAVE_STATE))
+                ((NeoPixelBus<NeoGrbFeature, RmtMethod7>*)g_argbStrips[index])->ClearTo(RgbColor(0, 0, 0));
                 ((NeoPixelBus<NeoGrbFeature, RmtMethod7>*)g_argbStrips[index])->Show();
                 break;
         }

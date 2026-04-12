@@ -96,7 +96,7 @@ nodeInfo_t makeSanitizedNodeInfo(const nodeInfo_t *src)
         /* strip runtime-only dirty flag */
         out.subModule[i].submod_flags &= ~SUBMOD_FLAG_DIRTY;
         /* zero out the entire runTime struct */
-        memset(&out.subModule[i].runTime, 0, sizeof(runTime_t));
+        // memset(&out.subModule[i].runTime, 0, sizeof(runTime_t));
     }
 
     /* Recompute subModCnt from scratch */

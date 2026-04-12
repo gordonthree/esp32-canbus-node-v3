@@ -8,5 +8,5 @@ void gpioApplyPwmDuty(uint8_t index, uint32_t duty13bit);
 void gpioApplyPwmFreq(uint8_t index, uint32_t freqHz);
 
 /* Existing electrical helper */
-void setOutput(subModule_t *sub, const personalityDef_t *p, bool desiredState);
-void subOutHelper(uint8_t index, bool state);
+void setOutput(const uint8_t index, const bool desiredState);
+void subOutHelper(const uint8_t index, const bool state);

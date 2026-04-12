@@ -16,12 +16,17 @@ static const char *TAG = "task_output_gpio";
  *   - PWM duty/frequency
  * -------------------------------------------------------------------------- */
 
-void setOutput(subModule_t *sub,
-               const personalityDef_t *p,
-               bool desiredState)
+void setOutput(const uint8_t index,
+               const bool desiredState)
 {
-    gpio_num_t pin = (gpio_num_t)p->gpioPin;
+    subModule_t *sub = nodeGetActiveSubModule(index);
+    const personalityDef_t *p =
+        nodeGetActivePersonality(sub->personalityIndex);
 
+    runTime_t *runtime = nodeGetRuntime(index);
+
+    gpio_num_t pin = (gpio_num_t)p->gpioPin;
+    
     /* Apply logical inversion if required */
     bool electricalState = desiredState;
     if (p->capabilities & CAP_OUTPUT_INVERTED)
@@ -37,7 +42,7 @@ void setOutput(subModule_t *sub,
     if (!(p->capabilities & (CAP_HIZ_OFF | CAP_HIZ_ON | CAP_OUTPUT_INVERTED)))
     {
         /* Simple push‑pull output: ON = 1, OFF = 0 */
-        sub->runTime.valueU32 = electricalState ? GPIO_LEVEL_HIGH : GPIO_LEVEL_LOW;
+        runtime->valueU32 = electricalState ? GPIO_LEVEL_HIGH : GPIO_LEVEL_LOW;
     }
     else
     {
@@ -50,7 +55,7 @@ void setOutput(subModule_t *sub,
         rt.bits.inverted = (p->capabilities & CAP_OUTPUT_INVERTED) ? 1U : 0U;
         rt.bits.openDrain = (p->capabilities & CAP_OPEN_DRAIN) ? 1U : 0U;
 
-        sub->runTime.valueU32 = rt.value;
+        runtime->valueU32 = rt.value;
     }
 
     /* --------------------------------------------------------------------
@@ -100,20 +105,12 @@ void subOutHelper(const uint8_t index, const bool state)
         return;
     }
 
-    subModule_t *sub = nodeGetActiveSubModule(index);
-    const personalityDef_t *p =
-        nodeGetActivePersonality(sub->personalityIndex);
-
-    setOutput(sub, p, state);
+    setOutput(index, state);
 }
 
 void gpioApplyState(uint8_t index, uint32_t state)
 {
-    subModule_t *sub = nodeGetActiveSubModule(index);
-    const personalityDef_t *p =
-        nodeGetActivePersonality(sub->personalityIndex);
-
-    setOutput(sub, p, state != 0);
+    setOutput(index, state != 0);
 }
 
 void gpioApplyPwmDuty(uint8_t index, uint32_t duty13bit)
