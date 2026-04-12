@@ -5,6 +5,7 @@
 #include "can_dispatch.h" /* for sendIntroduction*/
 #include "crc16.h"        /* CRC16 functions */
 #include "esp_log.h"
+#include "isr_gpio.h"      /* for attachDigitalInputISR() */
 #include "node_state.h"    /* Node and sub-module state table */
 #include "task_consumer.h" /* For sendRouteList */
 #include "task_twai.h"     /* TWAI API */
@@ -101,11 +102,26 @@ void handleIdentityConfig(can_msg_t *msg) {
     /* 0x43B */
     case CFG_DIGITAL_INPUT_ID: /**< Setup digital input channel */
       {
+        uint8_t oldFlags = sub->config.gpioInput.flags;
+        uint8_t newFlags = msg->data[5];
 
-        sub->config.gpioInput.flags = msg->data[5];
+        // Mask out reserved bits so they don't trigger reinstall
+        uint8_t relevantOld = oldFlags & ~INPUT_FLAG_MASK_RESERVED;
+        uint8_t relevantNew = newFlags & ~INPUT_FLAG_MASK_RESERVED;
+
+        bool needsReattach = (relevantOld != relevantNew);
+
+        sub->config.gpioInput.flags = newFlags;
         sub->config.gpioInput.debounce_ms = msg->data[6];
         sub->config.gpioInput.reserved = msg->data[7];
         sub->submod_flags |= SUBMOD_FLAG_DIRTY;
+
+        const personalityDef_t *p =
+            nodeGetActivePersonality(sub->personalityIndex);
+
+        if (needsReattach) {
+          attachDigitalInputISR(p->gpioPin, modIdx);
+        }
       }
       break;
 
