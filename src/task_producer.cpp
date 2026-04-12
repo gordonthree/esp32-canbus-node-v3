@@ -538,10 +538,11 @@ static void handle_momentary_event(const uint32_t now) {
       continue;
 
     const uint8_t flags = sub->config.gpioInput.flags;
+    const uint8_t mode = INPUT_FLAG_GET_MODE(flags);
 
     // Only momentary mode needs periodic publishing
-    if (INPUT_FLAG_GET_MODE(flags) != INPUT_MODE_MOMENTARY)
-      continue;
+    if (mode != INPUT_MODE_MOMENTARY && mode != INPUT_MODE_LATCH)
+        continue;
 
     runTime_t *rt = nodeGetRuntime(i);
     if (!rt)
