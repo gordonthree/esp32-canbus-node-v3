@@ -31,10 +31,10 @@ def main():
         is_extended_id=False
     )
 
-    bus = can.interface.Bus(channel=CAN_INTERFACE, bustype="socketcan")
-
+    # New python-can API: use interface= and a context manager
     print(f"Sending epoch {epoch} with host ID 0x{HOST_ID:08X}")
-    bus.send(msg)
+    with can.Bus(interface="socketcan", channel=CAN_INTERFACE) as bus:
+        bus.send(msg)
     print("Message sent.")
 
 if __name__ == "__main__":
