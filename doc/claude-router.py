@@ -236,7 +236,7 @@ def main():
     # Action type
     print("\n--- Action Type ---")
     print_action_table()
-    action_val = prompt_int("action_type value", 0, 3)
+    action_val = prompt_int("action_type value", 0, 7)
 
     # Pack ea byte: action_type in bits [7:5], event_type in bits [4:0]
     ea = ((action_val & 0x07) << 5) | (event_val & 0x1F)
