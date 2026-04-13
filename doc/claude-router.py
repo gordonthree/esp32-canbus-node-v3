@@ -54,6 +54,10 @@ ACTION_TYPES = [
     (1, "ACTION_FOLLOW_BINARY",       "Follow binary value"),
     (2, "ACTION_SEND_DYNAMIC_PAYLOAD","Send synthetic message with dynamic payload"),
     (3, "ACTION_SEND_STATIC_PAYLOAD", "Send synthetic message with static payload"),
+    (4, "ACTION_USE_32BIT_PAYLOAD", "Send synthetic message with 32-bit payload"),
+    (5, "ACTION_USE_64BIT_PAYLOAD", "Send synthetic message with 64-bit payload"),
+    (6, "ACTION_RESERVED_6", "Reserved for future use"),
+    (7, "ACTION_RESERVED_7", "Reserved for future use")
 ]
 
 # ---------------------------------------------------------------------------
