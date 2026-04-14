@@ -2,8 +2,6 @@
 """
 CAN Route Table Programmer TUI
 Uses Rich for rendering and Blessed for raw keyboard input.
-
-pip install python-can rich blessed
 """
 
 import sys
@@ -854,7 +852,25 @@ def run_tui(node_id: int, routes: Dict[int, RouteEntry], bus: can.Bus):
 
     print_table()
 
-    with term.cbreak(), term.hidden_cursor():
+    # Manage Blessed raw-mode contexts manually so we can suspend them
+    # during the Q&A interview (which requires normal echo / line-buffered input).
+    import termios, tty
+    _cbreak_ctx = term.cbreak()
+    _cursor_ctx = term.hidden_cursor()
+    _cbreak_ctx.__enter__()
+    _cursor_ctx.__enter__()
+
+    def suspend_raw_mode():
+        """Leave cbreak + restore cursor visibility before Rich Prompt input."""
+        _cbreak_ctx.__exit__(None, None, None)
+        _cursor_ctx.__exit__(None, None, None)
+
+    def resume_raw_mode():
+        """Re-enter cbreak + hide cursor after Q&A interview completes."""
+        _cbreak_ctx.__enter__()
+        _cursor_ctx.__enter__()
+
+    try:
         while True:
             key = term.inkey(timeout=None)
 
@@ -871,7 +887,7 @@ def run_tui(node_id: int, routes: Dict[int, RouteEntry], bus: can.Bus):
                 break
 
             elif str(key) == "r":
-                # Reload from node
+                # Reload from node — no typing needed, stay in raw mode
                 console.print("\n[bold cyan]Requesting route table from node...[/bold cyan]")
                 result = receive_route_table(node_id, bus, console)
                 if result is not None:
@@ -892,14 +908,18 @@ def run_tui(node_id: int, routes: Dict[int, RouteEntry], bus: can.Bus):
                     print_table()
                     continue
                 entry = routes[keys[selected]]
-                updated = interview(entry, adding=False)
-                console.print()
-                console.print(render_summary_table(updated))
-                if Confirm.ask("\nSend this entry to the node?", console=console):
-                    ok = send_route_entry(node_id, updated.route_index, updated, bus, console)
-                    if ok:
-                        routes[updated.route_index] = updated
-                time.sleep(0.8)
+                suspend_raw_mode()
+                try:
+                    updated = interview(entry, adding=False)
+                    console.print()
+                    console.print(render_summary_table(updated))
+                    if Confirm.ask("\nSend this entry to the node?", console=console):
+                        ok = send_route_entry(node_id, updated.route_index, updated, bus, console)
+                        if ok:
+                            routes[updated.route_index] = updated
+                    time.sleep(0.8)
+                finally:
+                    resume_raw_mode()
                 print_table()
 
             elif str(key) == "a":
@@ -910,16 +930,19 @@ def run_tui(node_id: int, routes: Dict[int, RouteEntry], bus: can.Bus):
                     print_table()
                     continue
                 new_entry = RouteEntry(route_index=free_idx)
-                # ROUTE_FLAG_INUSE cleared (already 0 by default)
-                updated = interview(new_entry, adding=True)
-                console.print()
-                console.print(render_summary_table(updated))
-                if Confirm.ask("\nSend this entry to the node?", console=console):
-                    ok = send_route_entry(node_id, updated.route_index, updated, bus, console)
-                    if ok:
-                        routes[updated.route_index] = updated
-                time.sleep(0.8)
-                clamp_selected()
+                suspend_raw_mode()
+                try:
+                    updated = interview(new_entry, adding=True)
+                    console.print()
+                    console.print(render_summary_table(updated))
+                    if Confirm.ask("\nSend this entry to the node?", console=console):
+                        ok = send_route_entry(node_id, updated.route_index, updated, bus, console)
+                        if ok:
+                            routes[updated.route_index] = updated
+                    time.sleep(0.8)
+                    clamp_selected()
+                finally:
+                    resume_raw_mode()
                 print_table()
 
             elif str(key) == "d":
@@ -930,17 +953,25 @@ def run_tui(node_id: int, routes: Dict[int, RouteEntry], bus: can.Bus):
                     print_table()
                     continue
                 idx = keys[selected]
-                entry = routes[idx]
                 zeroed = RouteEntry(route_index=idx)  # all zeros
-                console.print(f"\n[bold red]Zero out route index {idx}?[/bold red]")
-                console.print(render_summary_table(zeroed))
-                if Confirm.ask("Send zeroed entry to node?", console=console):
-                    ok = send_route_entry(node_id, idx, zeroed, bus, console)
-                    if ok:
-                        routes[idx] = zeroed
-                time.sleep(0.8)
-                clamp_selected()
+                suspend_raw_mode()
+                try:
+                    console.print(f"\n[bold red]Zero out route index {idx}?[/bold red]")
+                    console.print(render_summary_table(zeroed))
+                    if Confirm.ask("Send zeroed entry to node?", console=console):
+                        ok = send_route_entry(node_id, idx, zeroed, bus, console)
+                        if ok:
+                            routes[idx] = zeroed
+                    time.sleep(0.8)
+                    clamp_selected()
+                finally:
+                    resume_raw_mode()
                 print_table()
+
+    finally:
+        # Always clean up Blessed contexts on exit (including Ctrl-C)
+        _cbreak_ctx.__exit__(None, None, None)
+        _cursor_ctx.__exit__(None, None, None)
 
     # On exit: save CSV
     save_csv(routes)

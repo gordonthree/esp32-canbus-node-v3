@@ -77,6 +77,10 @@ To describe the event and action types, the enum names are sufficient.
 The CAN interface is already setup and operation on the system that will be running the script, the interface name is "can0". The script 
 does not need to preform any initialization steps on the interface. 
 
+Reminder: be sure to properly handle Blessed's default mode to suppress key stroke echo in the terminal when entering the question and answer 
+interview process. The user needs to be able to see what they are typing. Also make sure typical text editing functions such as cursor left/right,
+delete and backspace work as normal.
+
 Here is the structure that defines a route table entry.
 
 typedef struct __attribute__((packed)) route_entry {
