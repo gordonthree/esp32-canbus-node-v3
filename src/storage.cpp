@@ -166,7 +166,7 @@ void saveRoutesToNVS()
         if (!inUse)
             continue; /* skip unused entries */
 
-        routeCrc->ts = getEpochTime();
+        routeCrc->ts = get_ts();
 
         ESP_LOGD(TAG, "[CRC] route %u CRC=0x%04X TS=%lu in_use=%u",
                  i, routeCrc->crc, routeCrc->ts, inUse);

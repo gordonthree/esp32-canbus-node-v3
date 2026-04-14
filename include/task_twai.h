@@ -66,3 +66,5 @@ void canSendUint32(
     const uint32_t canMsgId, 
     const uint8_t dlc
   );
+
+void twai_request_driver_restart();

@@ -14,7 +14,10 @@ extern "C" {
 /* ============================================================================
  *  GLOBAL VARIABLES, CONSTANTS and MACROS
  * ============================================================================ */ 
-
+/** TWAI bus silence threshold in milliseconds (30 seconds) */
+#define BUS_SILENCE_THRESHOLD_MS   (30000U)
+#define MAX_NEIGHBORS              (32U)
+#define NEIGHBOR_ENTRY_TIMEOUT_SEC (3U * 86400U) /**< 3 days in seconds */
 
     #define SUBMODULE_INDEX_INVALID(idx) \
         ((idx) >= MAX_SUB_MODULES)
@@ -22,6 +25,39 @@ extern "C" {
 
     #define PERSONALITY_INDEX_INVALID(idx) \
         ((idx) >= MAX_RUNTIME_PERSONALITIES)
+
+/* ============================================================================
+ *  TYPES
+ * ============================================================================ */ 
+typedef struct node_neighbors {
+    
+    bool      active;              /**< Status flag */  
+    uint32_t  node_id;             /**< Node ID */
+    uint32_t  last_seen;           /**< Timestamp of last heartbeat */
+    
+} node_neighbor_t;
+
+typedef struct node_state {
+    /* node stats */
+    bool      active;              /**< Status flag */  
+    uint32_t  node_id;             /**< Node ID */
+    uint32_t  last_epoch;          /**< Last epoch time received */
+    
+    /* timestamp source */
+    bool      use_rtc;             /**< 1 = use rtc clock, 0 = millis() */
+
+    /* canbus stats */
+    uint32_t  total_rx_count;      /**< Total number of messages received */
+    uint32_t  total_rx_drops;      /**< Total number of incoming messages dropped */
+    uint32_t  total_tx_count;      /**< Total number of messages sent */
+    uint32_t  total_tx_drops;      /**< Total number of outgoing messages dropped */
+    
+    /* twai bus watchdog */
+    uint32_t  last_rx_ts;          /**< Timestamp of last received message */
+    uint8_t   bus_watchdog_stage;  /**< Bus watchdog stage */
+    uint32_t  last_bus_reset_ts;   /**< Timestamp of last bus reset */
+
+} node_state_t;
 
 /* ============================================================================ */
 /*  NODE STATE API
@@ -36,6 +72,7 @@ extern "C" {
 
 /* Node state accessor functions */
 nodeInfo_t*    nodeGetInfo();
+node_state_t*  nodeGetState();
 subModule_t*   nodeGetSubModule(const uint8_t sub_idx);
 subModule_t*   nodeGetActiveSubModule(const uint8_t sub_idx);
 runTime_t*     nodeGetRuntime(const uint8_t sub_idx);
@@ -50,6 +87,19 @@ uint16_t nodeGetNodeType(void);
 void nodePrintStructInfo(void) ;
 void nodeReadMacAddress(void); 
 void nodeInit(void);
+void nodeIncRxDropCount(void);
+void nodeIncTxDropCount(void);
+void nodeSetRtcFlag(bool use_rtc);
+bool nodeGetRtcFlag(void);
+uint32_t get_ts(void);
+
+/* Neighbor list functions */
+void nodePruneNeighbors(uint32_t now, uint32_t timeout_ms);
+void nodeAddNeighbor(uint32_t node_id, uint32_t now);
+node_neighbor_t* nodeGetNeighbor(uint32_t node_id);
+node_neighbor_t* nodeGetNeighborTable(void);
+uint8_t nodeGetActiveNeighborCount(void);
+uint8_t nodeGetNeighborCount(void);
 
 /* Personality functions */
 const personalityDef_t* nodeGetPersonality(uint8_t personalityIndex);
@@ -191,7 +241,7 @@ static inline uint32_t packStrobeState(uint8_t patternId, uint8_t step, bool out
 
 // void initHardware();
 void loadDefaults(uint16_t nodeType);
-uint32_t getEpochTime();
+// uint32_t getEpochTime();
 
 /** Inline function to validate sub-module index */
 static inline bool isValidSubModuleIndex(uint8_t index) 

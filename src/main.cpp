@@ -525,7 +525,38 @@ static void print_raw_gpio_register(int pin)
 void loop()
 {
     static uint32_t lastCheck;
+    static uint32_t last_twai_watchdog_ts;
+
     uint32_t now = millis();
+
+    /** Check TWAI watchdog */
+    if (now - last_twai_watchdog_ts > 1000) 
+    {
+        last_twai_watchdog_ts = now; /* update last_twai_watchdog_ts */
+        node_state_t *ns = nodeGetState();
+        uint32_t silence_ms = now - ns->last_rx_ts;
+
+        /* stage 2 */
+        if ((ns->bus_watchdog_stage == 1) && 
+            (silence_ms > BUS_SILENCE_THRESHOLD_MS)) 
+        {
+            // Stage 2: second failure → reboot
+            ESP_LOGE(TAG, "Bus watchdog: second silence → rebooting");
+            esp_restart();
+        }
+
+        /* stage 1 */    
+        if ((ns->bus_watchdog_stage == 0) && 
+            (silence_ms > BUS_SILENCE_THRESHOLD_MS)) 
+            {
+            // Stage 1: reset TWAI
+            twai_request_driver_restart();
+            ns->bus_watchdog_stage = 1;
+            ns->last_bus_reset_ts = now;
+            ESP_LOGW(TAG, "Bus watchdog: TWAI reset due to silence");
+        }
+    }
+
     if (now - lastCheck > 500)
     {
         // Serial.printf("ISR Counter %u\n", g_isr_counter);

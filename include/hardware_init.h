@@ -59,6 +59,9 @@ void initNodeHardware(void);
 /** @brief Probe for internal submodules */
 void discoverInternalSubmodules(void);
 
+/** @brief Set the epoch time */
+void hwSetEpochTime(uint32_t epoch);
+
 
 #ifdef __cplusplus
 }

@@ -11,7 +11,7 @@
 #include "submodule_types.h"   /**< Sub-module type definitions */
 #include "crc16.h"             /**< CRC16 functions */
 
-#define ROUTER_VERSION        (5U)
+#define ROUTER_VERSION        (6U)
 #define PRODUCER_VERSION      (2U)
 #define NODEINFO_VERSION      (7U)
 

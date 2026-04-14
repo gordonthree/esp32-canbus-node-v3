@@ -5,6 +5,7 @@
 #include "can_dispatch.h" /* for sendIntroduction*/
 #include "crc16.h"        /* CRC16 functions */
 #include "esp_log.h"
+#include "hardware_init.h" /* For hwSetEpochTime() */
 #include "isr_gpio.h"      /* for attachDigitalInputISR() */
 #include "node_state.h"    /* Node and sub-module state table */
 #include "task_consumer.h" /* For sendRouteList */
@@ -26,8 +27,11 @@ void handleIdentityConfig(can_msg_t *msg) {
   /* get submodule pointer */
   subModule_t *sub = nodeGetActiveSubModule(modIdx);
 
-  /* get personality pointer */
-  const personalityDef_t *p = nodeGetActivePersonality(sub->personalityIndex);
+  const personalityDef_t *p = NULL;
+  if (sub != NULL) {
+    /* get personality pointer */
+    p = nodeGetActivePersonality(sub->personalityIndex);
+  }
 
   switch (msg->identifier) {
     /* 0x400 */
@@ -172,6 +176,19 @@ void handleIdentityConfig(can_msg_t *msg) {
       }
       break;
 
+    case DATA_EPOCH_ID:
+      /* epoch timestamp from controller */
+      {
+        const uint32_t epoch =
+            unpackBytestoUint32(&msg->data[4]);
+
+        ESP_LOGI(TAG, "Received epoch timestamp: %u", epoch);
+
+        /* Pass to hardware layer */
+        hwSetEpochTime(epoch);
+
+        return;
+      }
     default:
       {
         ESP_LOGI(TAG, "Unknown command 0x%03X", msg->identifier);

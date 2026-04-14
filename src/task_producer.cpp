@@ -431,8 +431,10 @@ static void managePeriodicMessages() {
     canHealth_t *h = twaiGetCanHealth();
 
     canHealthLog(h); /* Log CAN Health every minute */
-  }
 
+    /* Prune the neighbor table every minute */
+    nodePruneNeighbors(millis(), NEIGHBOR_ENTRY_TIMEOUT_SEC);
+  }
   /** Run submodule data collection */
   updateSubModules();
 }
@@ -542,7 +544,7 @@ static void handle_momentary_event(const uint32_t now) {
 
     // Only momentary mode needs periodic publishing
     if (mode != INPUT_MODE_MOMENTARY && mode != INPUT_MODE_LATCH)
-        continue;
+      continue;
 
     runTime_t *rt = nodeGetRuntime(i);
     if (!rt)

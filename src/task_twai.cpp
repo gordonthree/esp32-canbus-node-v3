@@ -5,6 +5,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include "node_state.h"
 #include "can_platform.h"
 #include "task_twai.h"
 #include "freertos.h"
@@ -195,6 +196,8 @@ static twai_action_t twaiHandleAlerts(uint32_t alerts, const twai_status_info_t 
     twai_message_t msg; /* drain rx queue */
     while (twai_receive(&msg, 0) == ESP_OK)
     { /* discard */
+      health->rx_missed_count++;
+      nodeIncRxDropCount();
     }
   }
 
@@ -221,6 +224,9 @@ static twai_action_t twaiHandleAlerts(uint32_t alerts, const twai_status_info_t 
     twai_message_t msg;
     while (twai_receive(&msg, 0) == ESP_OK)
     { /* discard */
+      /* increment drop count */
+      health->rx_missed_count++;
+      nodeIncRxDropCount();
     }
 
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -390,6 +396,7 @@ static void TaskTWAI(void *pvParameters)
   /* Initialize the TWAI driver */
   twaiInit();
 
+  node_state_t *ns = nodeGetState();
   /* Begin main can bus RX/TX loop */
   for (;;)
   {
@@ -442,6 +449,7 @@ static void TaskTWAI(void *pvParameters)
         if (xQueueSend(canMsgRxQueue, &rx, QUEUE_NO_WAIT) != pdTRUE) /* Attempt to add message to queue */
         {                                                            /* Queue full, discard message */
           twaiDiag.dropCountRx++;
+          ns->total_rx_drops++;
         }
       }
     }
@@ -468,6 +476,9 @@ static void TaskTWAI(void *pvParameters)
           {
             /* still not working, discard message */
             twaiDiag.dropCountTx++;
+            ns->total_tx_drops++;
+          } else {
+            ns->total_tx_count++;
           }
         }
       }
@@ -569,4 +580,9 @@ void startTaskTWAI(void)
 canHealth_t *twaiGetCanHealth()
 {
   return &canHealth;
+}
+
+void twai_request_driver_restart()
+{
+  twaiPerformHardReset();
 }

@@ -21,11 +21,11 @@
 
 #include "hardware_init.h"
 
-#include <Arduino.h>           // optional, safe to include for now
+#include "argb_hw.h"           // ARGB LED control
 #include "driver/gpio.h"       // ESP‑IDF GPIO configuration
 #include "node_state.h"        // nodeGetPersonality()
 #include "personality_table.h" // personalityDef_t
-#include "argb_hw.h"           // ARGB LED control
+#include <Arduino.h>           // optional, safe to include for now
 
 #include "esp_log.h"
 
@@ -43,8 +43,7 @@ static bool platformAny(void);     /* All platforms */
  * @param index Submodule index.
  * @param sub   Pointer to submodule definition.
  */
-static void initGPIOInput(uint8_t index,
-                          const subModule_t *sub,
+static void initGPIOInput(uint8_t index, const subModule_t *sub,
                           const personalityDef_t *p);
 
 /**
@@ -52,8 +51,7 @@ static void initGPIOInput(uint8_t index,
  * @param index Submodule index.
  * @param sub   Pointer to submodule definition.
  */
-static void initGpioOutput(uint8_t index,
-                           const subModule_t *sub,
+static void initGpioOutput(uint8_t index, const subModule_t *sub,
                            const personalityDef_t *p);
 
 /**
@@ -61,8 +59,7 @@ static void initGpioOutput(uint8_t index,
  * @param index Submodule index.
  * @param sub   Pointer to submodule definition.
  */
-static void initAnalogInput(uint8_t index,
-                            const subModule_t *sub,
+static void initAnalogInput(uint8_t index, const subModule_t *sub,
                             const personalityDef_t *p);
 
 /* Table of internal submodules to be discovered */
@@ -94,106 +91,90 @@ static const size_t discoveryTableSize =
  *  Private Function Implementations
  * -------------------------------------------------------------------------- */
 
-static bool platformESP32(void)
-{
-    bool ret = false;
+static bool platformESP32(void) {
+  bool ret = false;
 #ifdef ESP32
-    ret = true;
+  ret = true;
 #endif
-    return ret;
+  return ret;
 }
 
-static bool platformCPUTEMP(void)
-{
-    bool ret = false;
+static bool platformCPUTEMP(void) {
+  bool ret = false;
 #ifdef ESP32S3
-    ret = true;
+  ret = true;
 #endif
-    return ret;
+  return ret;
 }
 
-static bool platformAny(void)
-{
-    return true;
-};
+static bool platformAny(void) { return true; };
 
-static void initGPIOInput(uint8_t index,
-                          const subModule_t *sub,
-                          const personalityDef_t *p)
-{
-    const gpio_num_t pin = (gpio_num_t)p->gpioPin;
+static void initGPIOInput(uint8_t index, const subModule_t *sub,
+                          const personalityDef_t *p) {
+  const gpio_num_t pin = (gpio_num_t)p->gpioPin;
 
-    gpio_config_t cfg = {};
-    cfg.pin_bit_mask = (1ULL << pin);
-    cfg.mode = GPIO_MODE_INPUT;
-    cfg.intr_type = GPIO_INTR_DISABLE;
-    cfg.pull_up_en = GPIO_PULLUP_DISABLE;
-    cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  gpio_config_t cfg = {};
+  cfg.pin_bit_mask = (1ULL << pin);
+  cfg.mode = GPIO_MODE_INPUT;
+  cfg.intr_type = GPIO_INTR_DISABLE;
+  cfg.pull_up_en = GPIO_PULLUP_DISABLE;
+  cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
 
-    /* Configure pull resistors based on personality flags */
-    const uint8_t pull = INPUT_FLAG_GET_PULL(sub->config.gpioInput.flags);
-    switch (pull)
-    {
-    case INPUT_RES_PULLUP:
-        cfg.pull_up_en = GPIO_PULLUP_ENABLE;
-        break;
+  /* Configure pull resistors based on personality flags */
+  const uint8_t pull = INPUT_FLAG_GET_PULL(sub->config.gpioInput.flags);
+  switch (pull) {
+    case INPUT_RES_PULLUP: cfg.pull_up_en = GPIO_PULLUP_ENABLE; break;
 
-    case INPUT_RES_PULLDOWN:
-        cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
-        break;
+    case INPUT_RES_PULLDOWN: cfg.pull_down_en = GPIO_PULLDOWN_ENABLE; break;
 
     case INPUT_RES_FLOATING:
     default:
-        /* both disabled (already set) */
-        break;
-    }
+      /* both disabled (already set) */
+      break;
+  }
 
-    gpio_config(&cfg);
+  gpio_config(&cfg);
 
-    ESP_LOGI(TAG, "[INIT] Submod %d: Digital Input Init (Pin %d)",
-             index, p->gpioPin);
+  ESP_LOGI(TAG, "[INIT] Submod %d: Digital Input Init (Pin %d)", index,
+           p->gpioPin);
 }
 
-static void initGpioOutput(uint8_t index,
-                           const subModule_t *sub,
-                           const personalityDef_t *p)
-{
+static void initGpioOutput(uint8_t index, const subModule_t *sub,
+                           const personalityDef_t *p) {
 
-    const gpio_num_t pin = (gpio_num_t)p->gpioPin;
+  const gpio_num_t pin = (gpio_num_t)p->gpioPin;
 
-    gpio_config_t cfg = {};
-    cfg.pin_bit_mask = (1ULL << pin);
-    cfg.mode = GPIO_MODE_OUTPUT;
-    cfg.pull_up_en = GPIO_PULLUP_DISABLE;
-    cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    cfg.intr_type = GPIO_INTR_DISABLE;
+  gpio_config_t cfg = {};
+  cfg.pin_bit_mask = (1ULL << pin);
+  cfg.mode = GPIO_MODE_OUTPUT;
+  cfg.pull_up_en = GPIO_PULLUP_DISABLE;
+  cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  cfg.intr_type = GPIO_INTR_DISABLE;
 
-    gpio_config(&cfg);
+  gpio_config(&cfg);
 
-    /* Do NOT set the output level here — task_output owns runtime behavior. */
+  /* Do NOT set the output level here — task_output owns runtime behavior. */
 
-    ESP_LOGI(TAG, "[INIT] Submod %d: Digital Output Init (Pin %d)",
-             index, p->gpioPin);
+  ESP_LOGI(TAG, "[INIT] Submod %d: Digital Output Init (Pin %d)", index,
+           p->gpioPin);
 }
 
-static void initAnalogInput(uint8_t index,
-                            const subModule_t *sub,
-                            const personalityDef_t *p)
-{
-    const gpio_num_t pin = (gpio_num_t)p->gpioPin;
+static void initAnalogInput(uint8_t index, const subModule_t *sub,
+                            const personalityDef_t *p) {
+  const gpio_num_t pin = (gpio_num_t)p->gpioPin;
 
-    /* Disable digital path for analog input */
-    gpio_config_t cfg = {};
-    cfg.pin_bit_mask = (1ULL << pin);
-    cfg.mode = GPIO_MODE_DISABLE; // analog mode
-    cfg.pull_up_en = GPIO_PULLUP_DISABLE;
-    cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    cfg.intr_type = GPIO_INTR_DISABLE;
+  /* Disable digital path for analog input */
+  gpio_config_t cfg = {};
+  cfg.pin_bit_mask = (1ULL << pin);
+  cfg.mode = GPIO_MODE_DISABLE; // analog mode
+  cfg.pull_up_en = GPIO_PULLUP_DISABLE;
+  cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  cfg.intr_type = GPIO_INTR_DISABLE;
 
-    gpio_config(&cfg);
+  gpio_config(&cfg);
 
-    ESP_LOGI(TAG, "[INIT] Submod %d: Analog Input Init (Pin %d)",
-             index, p->gpioPin);
+  ESP_LOGI(TAG, "[INIT] Submod %d: Analog Input Init (Pin %d)", index,
+           p->gpioPin);
 }
 
 /* --------------------------------------------------------------------------
@@ -211,96 +192,102 @@ static void initAnalogInput(uint8_t index,
  * @param index Submodule index.
  * @param sub   Pointer to submodule definition.
  */
-void initHardware(uint8_t index, const subModule_t *sub)
-{
-    const personalityDef_t *p = nodeGetActivePersonality(sub->personalityIndex);
+void initHardware(uint8_t index, const subModule_t *sub) {
+  const personalityDef_t *p = nodeGetActivePersonality(sub->personalityIndex);
 
-    /* skip submodules with no personality */
-    if (!p)
-    {
-        ESP_LOGW(TAG, "[INIT] Submodule %d has no personality table entry", index);
-        return;
-    }
+  /* skip submodules with no personality */
+  if (!p) {
+    ESP_LOGW(TAG, "[INIT] Submodule %d has no personality table entry", index);
+    return;
+  }
 
-    switch (sub->introMsgId)
-    {
+  switch (sub->introMsgId) {
 
-    case INPUT_DIGITAL_GPIO_ID:
-        initGPIOInput(index, sub, p);
-        break;
+    case INPUT_DIGITAL_GPIO_ID: initGPIOInput(index, sub, p); break;
 
-    case INPUT_ANALOG_ADC_ID:
-        initAnalogInput(index, sub, p);
-        break;
+    case INPUT_ANALOG_ADC_ID: initAnalogInput(index, sub, p); break;
 
-    case OUT_GPIO_DIGITAL_ID:
-        initGpioOutput(index, sub, p);
-        break;
+    case OUT_GPIO_DIGITAL_ID: initGpioOutput(index, sub, p); break;
 
     case OUT_GPIO_DAC_ID:
-        // TODO: initAnalogOutput(index, sub);
-        break;
+      // TODO: initAnalogOutput(index, sub);
+      break;
 
     case DISP_ARGB_BACKLIGHT_ID:
     case DISP_ARGB_LED_STRIP_ID:
     case DISP_ARGB_BUTTON_BACKLIGHT_ID:
-        /* ARGB implemented in argb_hw.cpp */
-        initArgbHardware(index, (subModule_t *)sub);
-        break;
+      /* ARGB implemented in argb_hw.cpp */
+      initArgbHardware(index, (subModule_t *)sub);
+      break;
 
-        /* PWM implemented in pwm_hw.cpp */
+      /* PWM implemented in pwm_hw.cpp */
     default:
-        /* No hardware init required */
-        break;
-    }
+      /* No hardware init required */
+      break;
+  }
 }
 
-void initNodeHardware(void)
-{
-    /* Loop through the entire submodule table */
-    for (uint8_t i = 0; i < MAX_SUB_MODULES; i++)
-    {
-        const subModule_t *sub = nodeGetActiveSubModule(i);
-        if (!sub)
-            continue; /* Skip inactive submodule */
+void initNodeHardware(void) {
+  /* Loop through the entire submodule table */
+  for (uint8_t i = 0; i < MAX_SUB_MODULES; i++) {
+    const subModule_t *sub = nodeGetActiveSubModule(i);
+    if (!sub)
+      continue; /* Skip inactive submodule */
 
-        if (nodeIsNetworkSubmodule(i) || nodeIsInternalSubmodule(i))
-            continue; /* Skip internal and network submodules */
+    if (nodeIsNetworkSubmodule(i) || nodeIsInternalSubmodule(i))
+      continue; /* Skip internal and network submodules */
 
-        /* call hardware init function */
-        initHardware(i, sub);
-    }
+    /* call hardware init function */
+    initHardware(i, sub);
+  }
 }
 
-void discoverInternalSubmodules(void)
-{
-    /** counter for internal submodules that are auto-created */
-    uint8_t count = 0;
+void discoverInternalSubmodules(void) {
+  /** counter for internal submodules that are auto-created */
+  uint8_t count = 0;
 
-    for (size_t i = 0; i < discoveryTableSize; i++)
-    {
-        const discoveryEntry_t *d = &discoveryTable[i];
+  for (size_t i = 0; i < discoveryTableSize; i++) {
+    const discoveryEntry_t *d = &discoveryTable[i];
 
-        /* check for and run the probe function, if both return true proceed */
-        if (d->probeFn && d->probeFn())
-        {
-            int idx = addSubmodule(d->personalityId, NULL, 0);
+    /* check for and run the probe function, if both return true proceed */
+    if (d->probeFn && d->probeFn()) {
+      int idx = addSubmodule(d->personalityId, NULL, 0);
 
-            if (idx < 0)
-            {
-                ESP_LOGW(TAG,
-                         "[INIT] Failed to add internal submodule for personality %u",
-                         d->personalityId);
-            }
-            else
-            {
-                ESP_LOGD(TAG,
-                         "[INIT] Added internal submodule for personality %u",
-                         d->personalityId);
-                count++;
-            }
-        }
+      if (idx < 0) {
+        ESP_LOGW(TAG,
+                 "[INIT] Failed to add internal submodule for personality %u",
+                 d->personalityId);
+      } else {
+        ESP_LOGD(TAG, "[INIT] Added internal submodule for personality %u",
+                 d->personalityId);
+        count++;
+      }
     }
+  }
 
-    ESP_LOGI(TAG, "[INIT] Discovered %d internal submodules", count);
+  ESP_LOGI(TAG, "[INIT] Discovered %d internal submodules", count);
+}
+
+// hardware_init.cpp
+extern "C" void hwSetEpochTime(uint32_t epoch) {
+  struct timeval tv = {.tv_sec = (time_t)epoch, .tv_usec = 0};
+
+  node_state_t *ns = nodeGetState();
+
+  const uint32_t old_epoch = ns->last_epoch;
+
+  if (epoch > old_epoch) {
+    /* update last epoch time */
+    ns->last_epoch = epoch;
+
+    /* set the internal RTC to the provided epoch time */
+    settimeofday(&tv, nullptr);
+
+    /* tell the node to use RTC for timestamps */
+    nodeSetRtcFlag(true);
+
+    ESP_LOGI(TAG, "[RTC] Set epoch time to %u", epoch);
+  } else {
+    ESP_LOGW(TAG, "[RTC] Invalid epoch time %u", epoch);
+  }
 }
