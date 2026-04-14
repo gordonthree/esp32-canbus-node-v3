@@ -1,0 +1,474 @@
+Please confirm you received the entire message and there was no truncation.
+
+State the goals as you understand them, and list your "plan of attack" to produce the desired outcome. If there is information 
+missing that is needed to complete the goal, ask for it, do not invent or assume.
+
+The goal is:
+
+Design a TUI or text user interface style python script to program route table entires, based on the C code shared below. 
+The script should provide an option to save route table data locally via CSV file, and re-read that file at startup. Use the
+"Blessed" library or "Rich", or a combination to meet the objectives.
+
+At the beginning of the script it should prompt the user for a 32-bit remote node id, for example 0x25A56D84. A list of recently used 
+node id should also be presented, and the user can select one by entering an index number. The node id history should be saved as 
+a simple text file, separate from the route table CSV.
+
+The node id must be added to the start of every can frame the script sends to a remote node. The 32-bit value will occupy payload
+data bytes 0 to 3, using big-endian byte-ordering. The script should prompt the user with an option to query the remote node via 
+the CAN bus and request the route table. 
+
+If the user requests a route table, the script should send message identifier REQ_ROUTE_LIST (0x308) to the bus, with 
+a payload of the 4-byte remote node id.
+
+When REQ_ROUTE_LIST (0x308) is written to the bus the remote node will respond immediately and send only the active route table 
+entries. 
+
+This is the timeline of the route table transfer:
+1. The remote node will start with a header frame ROUTE_LIST_BEGIN 0x309, the first four bytes of payload are the remote node ID. Data
+byte 4 is the total number of active routes, data bytes 5 and 6 are a 16-bit big endian value for the total number of message frames
+in the transfer. 
+2. The remote node will start with the first route table entry, sending a header frame CFG_ROUTE_BEGIN 0x300. Data bytes 0-3 are node id,
+byte 4 is the route index and byte 5 is the number of data chunks per route.
+3. The next several frames will be CFG_ROUTE_DATA 0x301. Data bytes 0-3 are node id, byte 4 is the chunk index and bytes 5-7 are the
+three payload bytes for the route table data.
+4. After sending all of the data the remote node will send CFG_ROUTE_END 0x302. Data bytes 0-3 are the remote node id, byte 4 is the route
+index and byte 5 is the "commit flag", which can be ignored.
+5. The remote node will repeat steps 2 - 4 until all of the route table entries have been sent.
+6. The final frame is ROUTE_LIST_END 0x30B. It will contain the same information that was sent in step 1.
+
+When the transfer is complete the script should deserialize the data and display it in a table format for the user. The user should be 
+able to edit a table entry by selecting it using the up / down arrows on the keyboard. The keyboard command "e" will edit an entry, 
+"d" will zero-out an entry and "a" will add an entry using the next available route number index (between 0 and 79) with the the flag
+ROUTE_FLAG_INUSE (bit 3 in route_flags) cleared. For reference I have included the serialize and deserialize functions used by the 
+remote node. 
+
+If a route table transfer is not completed within a 2 second period, consider the operation as timed out and alert the user. 
+
+After selecting "e" for edit or "a" for add, the script should into a question and answer type interview, prompting for each of the fields
+contained in route_entry_t. When adding a new entry, the fields should default to 0. The script should also implement command "q" for quit,
+to cleanly exit the program and commit data to CSV. Before writing the new or updated route to the bus, display
+a summary table of all field names and values, and ask the user if they are ready to proceed.
+
+Here is the timeline for writing a routing table entry to the node:
+1. Send CFG_ROUTE_BEGIN, payload bytes 0-3 node id, byte 4 route index, byte 5 total chunk count
+2. Send CFG_ROUTE_DATA, payload bytes 0-3 node id, byte 4 chunk index number, bytes 5-7 serialized route data
+3. Repeat stop 2 until all chunks are transferred
+4. Send CFG_ROUTE_END, payload bytes 0-3 node id, byte 4 route index, byte 5 commit flag set to 0x01
+5. Remote node will send DATA_ROUTE_ACK after successful commit, payload byte 0-3 node id, byte 4 route index, bytes 5-6 16-bit crc value (msb first)
+
+
+Additional information: 
+
+In the route_entry_t struct there are two anonymous unions with multiple uint32_t fields. Prompt for the first field in each union. That
+would be "match_value" and "match_mask". The additional fields in each union can be ignored for the
+purpose of this script.
+
+The remote node will immediately return a CRC value after a route was successfully saved to internal NVS. The script should also calculate 
+a local CRC of the same route table entry, and alert the user if there is a mismatch. No further action is required in the event of a 
+mismatch. The CRC does not need to be sent back to the remote node, or stored in the CSV file.
+
+The columns in the CSV file should follow the field names from the C-struct. For storing the anonymous unions, the CSV fields can use match_value
+and match_mask.
+
+All multi-byte fields are little-endian unless indicated otherwise in the instructions.
+
+To describe the event and action types, the enum names are sufficient. 
+
+The CAN interface is already setup and operation on the system that will be running the script, the interface name is "can0". The script 
+does not need to preform any initialization steps on the interface. 
+
+Here is the structure that defines a route table entry.
+
+typedef struct __attribute__((packed)) route_entry {
+  /* Source information fields */
+  uint32_t source_node_id; /* source (producer) node ID */
+  uint16_t source_msg_id;  /* source CAN message ID */
+  uint8_t source_msg_dlc;  /* source DLC */
+  uint8_t source_sub_idx;  /* source submodule index */
+
+  /* Target information fields */
+  uint16_t target_msg_id; /* target CAN message ID */
+  uint8_t target_msg_dlc; /* target DLC */
+  uint8_t target_sub_idx; /* target submodule index */
+
+  /* Routing information fields */
+  uint8_t event_type;      /* See event_type_t enum and EVENT_ */
+  uint8_t action_type;     /* See action_type_t enum and ACTION_ */
+  uint8_t route_flags;     /* Route control flags, see ROUTE_FLAG_ */
+
+  /* Comparison fields */
+  union __attribute__((packed)) {
+    uint32_t match_value;   /* strict match, masked match, identifier match */
+    uint32_t threshold_low; /* lower bound for range */
+    uint32_t threshold_center; /* EVENT_WITHIN_TOLERANCE center */
+    uint32_t id_low;           /* identifier range low */
+  };
+
+  union __attribute__((packed)) {
+    uint32_t match_mask;     /* masked match, bit index (0–23) */
+    uint32_t threshold_high; /* upper bound for range */
+    uint32_t id_high;        /* identifier range high */
+    uint32_t bit_index;      /* bit-level comparisons (0–23) */
+  };
+
+  /* Static payload parameters */
+  uint8_t parameters[3]; /* 3 bytes of static payload parameters */
+
+  /* Reserved for future use */
+  uint8_t reserved; /* 1 byte of padding */
+} route_entry_t;
+
+
+These macros are used "route_flags" field:
+#define ROUTE_FLAG_ENABLED         (1u << 0) /**< routing is enabled */
+#define ROUTE_FLAG_WILDCARD        (1u << 1) /**< route will match any node id */
+#define ROUTE_FLAG_DYNAMIC_PARAMS  (1u << 2) /**< route has uses dynamic parameters (not typical) */
+#define ROUTE_FLAG_INUSE           (1u << 3) /**< slot is populated */
+
+
+These are the enum typedefs for the event_type and action_type fields:
+
+typedef enum event_type {
+  EVENT_ALWAYS = (0U),            /**< Fire on every matching message */
+  EVENT_ON_BINARY_CHANGE = (1U),  /**< Fire only when payload changes */
+  EVENT_ON_BINARY_RISING = (2U),  /**< Fire when value goes 0 → 1 */
+  EVENT_ON_BINARY_FALLING = (3U), /**< Fire when value goes 1 → 0 */
+  EVENT_ON_BINARY_MATCH = (4U), /**< Fire when 3-byte payload is a full match */
+  EVENT_ON_FULL_MATCH = (5U),   /**< Fire when 4-byte payload is a full match */
+  EVENT_MASKED_BINARY_MATCH =
+      (6U), /**< Fire when 3-byte payload is a partial match */
+  EVENT_MASKED_FULL_MATCH =
+      (7U),                  /**< Fire when 4-byte payload is a partial match */
+  EVENT_THRESHOLD_GT = (8U), /**< Fire when value is greater than threshold */
+  EVENT_THRESHOLD_LT = (9U), /**< Fire when value is less than threshold */
+  EVENT_THRESHOLD_IN_RANGE = (10U),  /**< Fire when value is within range */
+  EVENT_THRESHOLD_OUT_RANGE = (11U), /**< Fire when value is outside range */
+  EVENT_THRESHOLD_TOLERANCE = (12U), /**< Fire when value is within tolerance */
+  EVENT_BIT_SET = (13U),             /**< Fire when bit is set */
+  EVENT_BIT_CLEAR = (14U),           /**< Fire when bit is clear */
+  EVENT_BIT_TOGGLE = (15U),          /**< Fire when bit is toggled */
+  EVENT_BIT_RISING = (16U),          /**< Fire when bit goes 0 → 1 */
+  EVENT_BIT_FALLING = (17U),         /**< Fire when bit goes 1 → 0 */
+  EVENT_MATCH_BYTE4 = (18U),         /**< Fire when byte 4 matches */
+  EVENT_MATCH_BYTE5 = (19U),         /**< Fire when byte 5 matches */
+  EVENT_MATCH_BYTE6 = (20U),         /**< Fire when byte 6 matches */
+  EVENT_MATCH_BYTE7 = (21U),         /**< Fire when byte 7 matches */
+  EVENT_IDENTIFIER_MATCH = (22U),    /**< Fire when identifier matches */
+  EVENT_IDENTIFIER_RANGE = (23U), /**< Fire when identifier is within range */
+  EVENT_NEVER = (31U)             /**< Never match any message - stop here */
+
+} event_type_t;
+
+typedef enum action_type {
+  /** No action */
+  ACTION_NO_ACTION = (0U),
+  /** Follow binary value */
+  ACTION_FOLLOW_BINARY = (1U),
+  /** Send synthetic message with dynamic payload */
+  ACTION_SEND_DYNAMIC_PAYLOAD = (2U),
+  /** Send synthetic message with static payload */
+  ACTION_SEND_STATIC_PAYLOAD = (3U),
+  /** Send synthetic message with 32-bit payload */
+  ACTION_USE_32BIT_PAYLOAD = (4U),
+  /** Send synthetic message with 64-bit payload */
+  ACTION_USE_64BIT_PAYLOAD = (5U),
+  /** Reserved for future use */
+  ACTION_RESERVED_6 = (6U),
+  /**< Reserved for future use - stop here */
+  ACTION_RESERVED_7 = (7U)
+} action_type_t;
+
+
+Here are constants for the CAN message ids used to interact with the routing table:
+
+CFG_ROUTE_BEGIN = 0x300 DLC = 6 - bidirectional, used to receive data and send it
+CFG_ROUTE_DATA  = 0x301 DLC = 8 - bidirectional, used to receive data and send it
+CFG_ROUTE_END   = 0x302 DLC = 6 - bidirectional, used to receive data and send it
+ROUTE_LIST_BEGIN = 0x309 DLC = 7 - one way, the node will emit this message but not respond to it
+ROUTE_LIST_END = 0x30B DLC = 7 - one way, the node will emit this message but not respond to it
+DATA_ROUTE_ACK = 0x303 DLC = 7 - one way, the node will emit this message but not respond to it
+REQ_ROUTE_LIST  = 0x308 DLC = 4 - one way, the node will respond to this message but not emit it
+
+Requesting a route table transfer over the wire:
+
+The message REQ_ROUTE_LIST can be sent to the bus, requesting a node to write the contents of the routing table to the bus. 
+The first 4 bytes of payload are the remote node ID to read the routing table from.
+
+Notes on writing a route table entry to a node:
+
+After the script sends CFG_ROUTE_END the node will commit the route to NVS. If the save operation was successful the node
+will send the DATA_ROUTE_ACK 0x303 will be sent by the node . Data bytes 0 - 3 are the node id. Data byte 4 is the route 
+index, and bytes 5-6 comprise the CRC value. 
+
+These constants describe the data sizes involved with serializing or deserializing the data:
+
+ROUTE_CHUNK_SIZE = 3
+ROUTE_ENTRY_SIZE = 27
+ROUTE_CHUNKS_PER_ROUTE = (ROUTE_ENTRY_SIZE + ROUTE_CHUNK_SIZE - 1)
+MAX_ROUTES = 80
+
+I am using the socketcan Python library, here is an exmaple implementation:
+
+        with can.Bus(interface="socketcan", channel="can0") as bus:
+            for f in frames:
+                bus.send(f)
+            print("Frames sent.")
+
+Here are the functions used to deserialize the route data received from the CAN bus:
+
+static void handleRouteBegin(const can_msg_t *msg) { // CFG_ROUTE_BEGIN_ID = 0x300
+  // router_logf("[ROUTER] handleRouteBegin()\n");
+
+  if (msg->data_length_code < (uint8_t)CFG_ROUTE_BEGIN_DLC) {
+    router_logf(
+        "[ROUTER] Error: invalid data length code, command %u ignored\n",
+        msg->identifier);
+    return;
+  }
+
+  uint8_t route_idx =
+      msg->data[MSG_DATA_4]; /* data byte 4 is the index value */
+  uint8_t total_chunks =
+      msg->data[5]; /* data byte 5 is the total chunk count */
+
+  if (route_idx >= (uint8_t)MAX_ROUTES) {
+    router_logf("[ROUTER] Error: invalid route index, command %u ignored\n",
+                msg->identifier);
+    return;
+  }
+
+  if (total_chunks != (uint8_t)ROUTE_CHUNKS_PER_ROUTE) {
+    router_logf(
+        "[ROUTER] Error: invalid chunk count %u we expected %u, command %u "
+        "ignored\n",
+        total_chunks, (uint8_t)ROUTE_CHUNKS_PER_ROUTE, msg->identifier);
+    return;
+  }
+
+  rxRouteSlot = route_idx;
+  rxRouteTotal = total_chunks; /* store expected chunk count */
+  rxRouteReceived = 0;         /* track how many we got */
+
+  g_routeCrc[route_idx].crc = 0xFFFF;         /* reset crc */
+  g_routeCrc[route_idx].ts = 0x00;            /* reset timestamp */
+  routerClearRouteUseFlag(route_idx);     /* reset in_use flag */
+  routerClearRouteEnableFlag(route_idx);  /* reset enabled flag */
+
+  memset(&rxRouteBuffer, 0, sizeof(rxRouteBuffer));
+  router_logf("[ROUTER] Route begin, index: %u chunks: %u\n", route_idx,
+              total_chunks);
+}
+
+static void handleRouteData(const can_msg_t *msg) { // CFG_ROUTE_DATA_ID = 0x301
+  if (msg->data_length_code < CFG_ROUTE_DATA_DLC)
+    return;
+  if (rxRouteSlot >= MAX_ROUTES)
+    return;
+
+  uint8_t chunk_idx = msg->data[4]; // <-- NEW: chunk index
+  uint8_t *dst = (uint8_t *)&rxRouteBuffer;
+
+  /* Each chunk carries 3 bytes: D5, D6, D7 */
+  uint8_t base = chunk_idx * ROUTE_DATA_PAYLOAD_LEN; /* payload is 3 bytes */
+
+  if (base >= sizeof(route_entry_t))
+    return;
+
+  if (base + 0 < sizeof(route_entry_t))
+    dst[base + 0] = msg->data[5];
+  if (base + 1 < sizeof(route_entry_t))
+    dst[base + 1] = msg->data[6];
+  if (base + 2 < sizeof(route_entry_t))
+    dst[base + 2] = msg->data[7];
+
+  rxRouteReceived++; // <-- NEW: count chunks
+  router_logf("[ROUTER] Route data: Route %u chunk received %u\n",
+              rxRouteReceived, chunk_idx);
+}
+
+static uint8_t handleRouteEnd(const can_msg_t *msg) { // CFG_ROUTE_END_ID = 0x302
+
+  if (msg->data_length_code < 6)
+    return ROUTE_INVALID_RX;
+
+  uint8_t route_idx = msg->data[4];
+  uint8_t commitFlag = msg->data[5];
+
+  if (route_idx != rxRouteSlot) {
+    router_logf("[ROUTER] Error: route_idx (%u) != rxRouteSlot (%u)", route_idx,
+                rxRouteSlot);
+    return ROUTE_INVALID_RX;
+  }
+
+  if (!commitFlag) {
+    router_logf("[ROUTER] Error: commit flag not set");
+    return ROUTE_INVALID_RX; // ignore incomplete transfers
+  }
+
+  if (rxRouteReceived != rxRouteTotal) {
+    router_logf("[ROUTER] Error: rxRouteReceived (%u) != rxRouteTotal (%u)",
+                rxRouteReceived, rxRouteTotal);
+    return ROUTE_INVALID_RX; // incomplete or missing chunks
+  }
+
+  memcpy(&g_routes[rxRouteSlot], &rxRouteBuffer, sizeof(route_entry_t));
+
+  routerSetRouteEnableFlag(rxRouteSlot); /* set enabled flag even if the sender did not */
+
+  router_logf("[ROUTER] Route %u programming complete", rxRouteSlot);
+
+  const uint8_t savedIdx = rxRouteSlot;
+
+  routerSetRouteUseFlag(savedIdx); /* set in_use flag */
+
+  uint16_t crc = 0xFFFF;
+
+  if (g_crc_callback) {
+    crc = g_crc_callback((const uint8_t *)&g_routes[savedIdx],
+                         sizeof(route_entry_t));
+  }
+
+  g_routeCrc[savedIdx].crc = crc;
+
+  /* save routing table to nvs */
+  handleRouteWriteNVS();
+
+  /* reset pointer */
+  rxRouteSlot = 0xFF;
+
+  /* let the route command handler know the rx was complete */
+  return savedIdx;
+}
+
+Here are the functions used to serialize the route table so it may be written to the bus:
+
+static inline void write_node_id(can_msg_t *msg, const uint32_t node_id) {
+    msg->data[0] = (node_id >> 24) & 0xFF;
+    msg->data[1] = (node_id >> 16) & 0xFF;
+    msg->data[2] = (node_id >> 8)  & 0xFF;
+    msg->data[3] = (node_id)       & 0xFF;
+}
+
+int router_serialize_all_routes(const uint32_t node_id, can_msg_t *out, int max_msgs) {
+  int total = 0;
+
+  for (uint8_t i = 0; i < MAX_ROUTES; i++) {
+    if (!routerIsRouteInUse(i))
+      continue;
+
+    int written = router_serialize_route(node_id, i, &out[total], max_msgs - total);
+    if (written < 0)
+      return -1; // caller didn't allocate enough space
+
+    total += written;
+  }
+
+  return total;
+}
+
+int router_serialize_all_routes(const uint32_t node_id, can_msg_t *out, int max_msgs) {
+  int count = 0;
+  uint8_t active = router_get_active_route_count();
+  uint16_t total_msgs = router_get_total_msgs_required();
+
+  if (total_msgs > max_msgs) {
+    router_logf("[ROUTER] Error: failed to serialize route table, "
+                    "insufficient space! Required %u > provided %u", total_msgs, max_msgs);
+    return -1;
+  }
+  /* Add Route List Header */
+  count = router_route_list_header(count, node_id, active, total_msgs, out);
+
+  for (int i = 0; i < (MAX_ROUTES); i++) {
+    if (!routerIsRouteInUse(i))
+      continue;
+
+    int written = router_serialize_route(node_id, i, &out[count], max_msgs - count);
+    if (written < 0) {
+      router_logf("[ROUTER] Error: failed to serialize route table, insufficient space %u", max_msgs - count);
+      return -1; // caller didn't allocate enough space
+    }
+
+    count += written;
+  }
+
+  /* Add Route List Footer */
+  count = router_route_list_footer(count, node_id, active, total_msgs, out);
+
+  return count;
+}
+
+static int router_route_list_header(int count, const uint32_t node_id, uint8_t active_route_count, int total_msg_count, can_msg_t *out) {
+  /* Route List Begin */
+  can_msg_t header = {0};
+  write_node_id(&header, node_id);
+  header.identifier = ROUTE_LIST_BEGIN_ID;
+  header.data_length_code = 7; //TODO: Update this to a a macro
+  header.data[4] = active_route_count;
+  header.data[5] = (uint8_t)(total_msg_count >> 8);
+  header.data[6] = (uint8_t)(total_msg_count);
+  out[count++] = (header);                                    
+                                  
+return count;
+}
+
+static int router_route_list_footer(int count, const uint32_t node_id, uint8_t active_route_count, int total_msg_count, can_msg_t *out){
+  /* Route List End */
+  can_msg_t footer = {0};
+  write_node_id(&footer, node_id);
+  footer.identifier = ROUTE_LIST_END_ID;
+  footer.data_length_code = 7; //TODO: Update this to a a macro
+  footer.data[4] = active_route_count;
+  footer.data[5] = (uint8_t)(total_msg_count >> 8);
+  footer.data[6] = (uint8_t)(total_msg_count);
+  out[count++] = (footer);                                    
+                                 
+return count;
+}
+
+static int router_route_list_header(int count, const uint32_t node_id, uint8_t active_route_count, int total_msg_count, can_msg_t *out) {
+  /* Route List Begin */
+  can_msg_t header = {0};
+  write_node_id(&header, node_id);
+  header.identifier = ROUTE_LIST_BEGIN_ID;
+  header.data_length_code = 7; //TODO: Update this to a a macro
+  header.data[4] = active_route_count;
+  header.data[5] = (uint8_t)(total_msg_count >> 8);
+  header.data[6] = (uint8_t)(total_msg_count);
+  out[count++] = (header);                                    
+                                  
+return count;
+}
+
+static int router_route_list_footer(int count, const uint32_t node_id, uint8_t active_route_count, int total_msg_count, can_msg_t *out){
+  /* Route List End */
+  can_msg_t footer = {0};
+  write_node_id(&footer, node_id);
+  footer.identifier = ROUTE_LIST_END_ID;
+  footer.data_length_code = 7; //TODO: Update this to a a macro
+  footer.data[4] = active_route_count;
+  footer.data[5] = (uint8_t)(total_msg_count >> 8);
+  footer.data[6] = (uint8_t)(total_msg_count);
+  out[count++] = (footer);                                    
+                                 
+return count;
+}
+
+Here is the CRC routine used:
+uint16_t crc16_ccitt(const uint8_t* data, uint16_t length) 
+{
+  uint16_t crc = 0xFFFF; // Initial value
+  while (length--) {
+    crc ^= (uint16_t)*data++ << 8;
+    for (int i = 0; i < 8; i++) {
+      if (crc & 0x8000) {
+        crc = (crc << 1) ^ 0x1021; // Polynomial
+      } else {
+        crc <<= 1;
+      }
+    }
+  }
+  return crc;
+}
+
+// end of message

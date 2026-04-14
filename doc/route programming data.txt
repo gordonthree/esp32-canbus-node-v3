@@ -1,0 +1,26 @@
+  node_id       : 0x2597511C
+  route_index   : 0
+  source_node_id: 0x2597511C
+  source_msg_id : 0x0500  dlc=7  sub=2
+  target_msg_id : 0x0210  dlc=6  sub=0
+  ea            : 0x20  (event=0, action=1)
+  flags         : 0x09  (enabled=1, wildcard=0, dynamic=0, inUse=1)
+  match_value   : 0x00000000
+  match_mask    : 0x00000000
+  parameters    : ['0x14', '0x0', '0x0']
+  packed bytes  : 1C 51 97 25 00 05 07 02 10 02 06 00 20 09 00 00 00 00 00 00 00 00 14 00 00 00 00
+  chunks        : 9
+
+  === Summary ===
+  node_id       : 0x2597511C
+  route_index   : 15
+  source_node_id: 0xDEADBEEF
+  source_msg_id : 0x040C  dlc=8  sub=0
+  target_msg_id : 0x040C  dlc=8  sub=0
+  ea            : 0x96  (event=22, action=4)
+  flags         : 0x09  (enabled=1, wildcard=0, dynamic=0, inUse=1)
+  match_value   : 0x00000000
+  match_mask    : 0x00000000
+  parameters    : ['0x0', '0x0', '0x0']
+  packed bytes  : EF BE AD DE 0C 04 08 00 0C 04 08 00 96 09 00 00 00 00 00 00 00 00 00 00 00 00 00
+  chunks        : 9
